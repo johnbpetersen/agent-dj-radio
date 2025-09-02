@@ -542,6 +542,44 @@ See [docs/RUNBOOK.md](docs/RUNBOOK.md) for detailed operational procedures.
 - **[Decisions](DECISIONS.md)** - Architectural decisions and rationale
 - **[TODO](TODO.md)** - Next phase roadmap for live testing and API integration
 
+## 🎨 User Interface
+
+### Turntable.fm-Inspired Design
+Agent DJ Radio features a beautiful, modern interface inspired by the classic Turntable.fm experience:
+
+**🎪 Main Stage** - Center stage with DJ booth, progress visualization, and track metadata
+- Circular progress ring with vinyl record animation during playback
+- DJ avatar with "ON AIR" indicator and animated EQ bars
+- Scrolling marquee for long track titles
+- Real-time status badges and track information
+
+**👥 Audience Wall** - Interactive grid of listener avatars
+- Mix of real users (from queue/current track) and ambient audience members
+- Color-coded avatars with online/offline indicators
+- DJ badges for active track submitters
+
+**📋 Queue Panel** - Upcoming tracks with metadata
+- Next track highlighted with "UP NEXT" badge
+- ETA estimates and status indicators (READY/GENERATING/PAID)
+- Collapsible on mobile, persistent sidebar on desktop
+
+**⚡ Reaction Bar** - Bold, accessible interaction buttons
+- Large emoji buttons: ❤️ Love, 🔥 Fire, ⏭️ Skip
+- Keyboard shortcuts (L/F/S) with visual feedback
+- Live reaction animations and success notifications
+
+**📱 Responsive Design**
+- **Desktop**: 3-column layout (audience/stage/queue)
+- **Tablet**: 2-column layout with optimized spacing
+- **Mobile**: Stacked vertical layout with collapsible elements
+
+### Key Features
+- **Dark theme** with gradient backgrounds and glass-card effects
+- **Smooth animations** using CSS keyframes (no heavy animation libraries)
+- **Accessibility focus** with proper ARIA labels, keyboard shortcuts, and screen reader support
+- **Real-time updates** showing live playback progress and queue changes
+- **Modal submit form** triggered from the top navigation "Queue a Track" button
+
 ## 🔧 Next Phase: Live Testing
 
 **Current Status**: Development Complete (7 sprints) - Ready for production deployment  
