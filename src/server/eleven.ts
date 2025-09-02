@@ -1,6 +1,8 @@
-// ElevenLabs Music API integration
+// ElevenLabs Music API integration with enhanced rate limiting and retries
 
 import type { ElevenTrackRequest, ElevenTrackResponse, ElevenPollResponse } from '../types'
+import { logger, generateCorrelationId } from '../lib/logger'
+import { errorTracker } from '../lib/error-tracking'
 
 const ELEVEN_API_KEY = process.env.ELEVEN_API_KEY
 const ELEVEN_MUSIC_MODEL_ID = process.env.ELEVEN_MUSIC_MODEL_ID || 'eleven_music_v1'
@@ -10,9 +12,51 @@ const ELEVEN_BASE_URL = 'https://api.elevenlabs.io/v1'
 const VALID_DURATIONS = [60, 90, 120] as const
 export type ValidDuration = typeof VALID_DURATIONS[number]
 
-// Timeout for generation (3 minutes)
-const GENERATION_TIMEOUT_MS = 3 * 60 * 1000
+// Timeout for generation (3 minutes in staging, 5 minutes in production)
+const isStaging = process.env.NODE_ENV === 'staging'
+const GENERATION_TIMEOUT_MS = isStaging ? 3 * 60 * 1000 : 5 * 60 * 1000
 const POLL_INTERVAL_MS = 5000 // Poll every 5 seconds
+
+// Rate limiting configuration
+const RATE_LIMIT_REQUESTS_PER_MINUTE = isStaging ? 5 : 20 // Conservative limit for staging
+const RATE_LIMIT_WINDOW_MS = 60 * 1000 // 1 minute window
+const MAX_RETRY_ATTEMPTS = isStaging ? 2 : 3 // Fewer retries in staging
+const RETRY_BACKOFF_BASE_MS = 2000 // 2 seconds base backoff
+
+// Rate limiting state (in-memory for simplicity)
+let rateLimitRequests: number[] = []
+
+/**
+ * Check if we're within rate limits
+ */
+function checkRateLimit(): { allowed: boolean; resetTimeMs?: number } {
+  const now = Date.now()
+  const windowStart = now - RATE_LIMIT_WINDOW_MS
+  
+  // Remove expired requests
+  rateLimitRequests = rateLimitRequests.filter(timestamp => timestamp > windowStart)
+  
+  if (rateLimitRequests.length >= RATE_LIMIT_REQUESTS_PER_MINUTE) {
+    const oldestRequest = Math.min(...rateLimitRequests)
+    const resetTimeMs = oldestRequest + RATE_LIMIT_WINDOW_MS - now
+    
+    return {
+      allowed: false,
+      resetTimeMs: Math.max(0, resetTimeMs)
+    }
+  }
+  
+  // Record this request
+  rateLimitRequests.push(now)
+  return { allowed: true }
+}
+
+/**
+ * Sleep for retry backoff
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
 
 export function validateDuration(duration: number): duration is ValidDuration {
   return VALID_DURATIONS.includes(duration as ValidDuration)
@@ -28,9 +72,12 @@ export interface CreateTrackResult {
 }
 
 /**
- * Create a track generation request with ElevenLabs
+ * Create a track generation request with ElevenLabs (with rate limiting and retries)
  */
 export async function createTrack({ prompt, durationSeconds }: CreateTrackParams): Promise<CreateTrackResult> {
+  const correlationId = generateCorrelationId()
+  const startTime = Date.now()
+  
   if (!ELEVEN_API_KEY) {
     throw new Error('ElevenLabs API key not configured')
   }
@@ -47,33 +94,140 @@ export async function createTrack({ prompt, durationSeconds }: CreateTrackParams
     throw new Error('Prompt too long (max 500 characters)')
   }
 
-  const response = await fetch(`${ELEVEN_BASE_URL}/music/generation`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'xi-api-key': ELEVEN_API_KEY,
-    },
-    body: JSON.stringify({
-      text: prompt.trim(),
-      model_id: ELEVEN_MUSIC_MODEL_ID,
-      duration: durationSeconds,
-    }),
+  logger.info('Starting ElevenLabs track creation', {
+    correlationId,
+    prompt: prompt.slice(0, 100), // Log first 100 chars only
+    durationSeconds,
+    modelId: ELEVEN_MUSIC_MODEL_ID,
+    isStaging
   })
 
-  if (!response.ok) {
-    const error = await response.text()
-    throw new Error(`ElevenLabs API error: ${response.status} ${error}`)
+  // Check rate limits before making request
+  const rateLimitCheck = checkRateLimit()
+  if (!rateLimitCheck.allowed) {
+    const error = new Error(`ElevenLabs rate limit exceeded. Try again in ${Math.ceil((rateLimitCheck.resetTimeMs || 0) / 1000)} seconds`)
+    
+    errorTracker.trackError(error, {
+      operation: 'eleven-create-track',
+      correlationId,
+      rateLimitResetMs: rateLimitCheck.resetTimeMs
+    })
+    
+    throw error
   }
 
-  const data = await response.json()
+  let lastError: Error | null = null
   
-  if (!data.request_id) {
-    throw new Error('Invalid response from ElevenLabs API: missing request_id')
-  }
+  // Retry loop with exponential backoff
+  for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+    try {
+      logger.info('ElevenLabs API request attempt', {
+        correlationId,
+        attempt,
+        maxAttempts: MAX_RETRY_ATTEMPTS
+      })
 
-  return {
-    requestId: data.request_id
+      const response = await fetch(`${ELEVEN_BASE_URL}/music/generation`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'xi-api-key': ELEVEN_API_KEY,
+          'User-Agent': 'Agent-DJ-Radio/1.0'
+        },
+        body: JSON.stringify({
+          text: prompt.trim(),
+          model_id: ELEVEN_MUSIC_MODEL_ID,
+          duration: durationSeconds,
+        }),
+        signal: AbortSignal.timeout(30000) // 30 second timeout for creation request
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        const error = new Error(`ElevenLabs API error: ${response.status} ${errorText}`)
+        
+        // Check if it's a retryable error
+        if (response.status === 429 || response.status >= 500) {
+          lastError = error
+          
+          logger.warn('Retryable ElevenLabs error', {
+            correlationId,
+            attempt,
+            status: response.status,
+            error: errorText
+          })
+          
+          if (attempt < MAX_RETRY_ATTEMPTS) {
+            const backoffMs = RETRY_BACKOFF_BASE_MS * Math.pow(2, attempt - 1)
+            logger.info('Retrying ElevenLabs request', {
+              correlationId,
+              attempt,
+              backoffMs
+            })
+            
+            await sleep(backoffMs)
+            continue
+          }
+        }
+        
+        // Non-retryable error
+        errorTracker.trackError(error, {
+          operation: 'eleven-create-track',
+          correlationId,
+          status: response.status,
+          attempt,
+          prompt: prompt.slice(0, 100)
+        })
+        
+        throw error
+      }
+
+      const data = await response.json()
+      
+      if (!data.request_id) {
+        throw new Error('Invalid response from ElevenLabs API: missing request_id')
+      }
+
+      logger.info('ElevenLabs track creation successful', {
+        correlationId,
+        requestId: data.request_id,
+        duration: Date.now() - startTime,
+        attempt
+      })
+
+      return {
+        requestId: data.request_id
+      }
+
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+      
+      logger.warn('ElevenLabs request attempt failed', {
+        correlationId,
+        attempt,
+        error: lastError.message
+      })
+      
+      if (attempt < MAX_RETRY_ATTEMPTS) {
+        const backoffMs = RETRY_BACKOFF_BASE_MS * Math.pow(2, attempt - 1)
+        await sleep(backoffMs)
+        continue
+      }
+    }
   }
+  
+  // All attempts failed
+  const finalError = lastError || new Error('ElevenLabs request failed after all retries')
+  
+  errorTracker.trackError(finalError, {
+    operation: 'eleven-create-track',
+    correlationId,
+    attempts: MAX_RETRY_ATTEMPTS,
+    prompt: prompt.slice(0, 100)
+  })
+  
+  logger.error('ElevenLabs track creation failed', { correlationId }, finalError)
+  throw finalError
 }
 
 export interface PollTrackParams {
@@ -87,55 +241,124 @@ export interface PollTrackResult {
 }
 
 /**
- * Poll track generation status
+ * Poll track generation status (with retry logic)
  */
 export async function pollTrack({ requestId }: PollTrackParams): Promise<PollTrackResult> {
+  const correlationId = generateCorrelationId()
+  
   if (!ELEVEN_API_KEY) {
     throw new Error('ElevenLabs API key not configured')
   }
 
-  const response = await fetch(`${ELEVEN_BASE_URL}/music/generation/${requestId}`, {
-    headers: {
-      'xi-api-key': ELEVEN_API_KEY,
-    },
+  logger.debug('Polling ElevenLabs track status', {
+    correlationId,
+    requestId
   })
 
-  if (!response.ok) {
-    if (response.status === 404) {
-      return {
-        status: 'failed',
-        error: 'Generation request not found'
+  let lastError: Error | null = null
+  
+  // Retry polling with shorter retry count (it's called repeatedly)
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const response = await fetch(`${ELEVEN_BASE_URL}/music/generation/${requestId}`, {
+        headers: {
+          'xi-api-key': ELEVEN_API_KEY,
+          'User-Agent': 'Agent-DJ-Radio/1.0'
+        },
+        signal: AbortSignal.timeout(10000) // 10 second timeout for polling
+      })
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          logger.warn('ElevenLabs generation request not found', {
+            correlationId,
+            requestId
+          })
+          
+          return {
+            status: 'failed',
+            error: 'Generation request not found'
+          }
+        }
+        
+        const errorText = await response.text()
+        const error = new Error(`ElevenLabs API error: ${response.status} ${errorText}`)
+        
+        // Retry on 429 or 5xx errors
+        if ((response.status === 429 || response.status >= 500) && attempt < 2) {
+          lastError = error
+          logger.warn('Retryable ElevenLabs poll error', {
+            correlationId,
+            requestId,
+            attempt,
+            status: response.status
+          })
+          
+          await sleep(1000) // 1 second backoff for polling
+          continue
+        }
+        
+        throw error
+      }
+
+      const data = await response.json()
+      
+      // Map ElevenLabs status to our status
+      let result: PollTrackResult
+      switch (data.state) {
+        case 'pending':
+          result = { status: 'queued' }
+          break
+        case 'processing':
+          result = { status: 'processing' }
+          break
+        case 'complete':
+          result = { 
+            status: 'ready', 
+            audioUrl: data.audio_url 
+          }
+          break
+        case 'failed':
+          result = { 
+            status: 'failed', 
+            error: data.error || 'Generation failed' 
+          }
+          break
+        default:
+          result = { 
+            status: 'failed', 
+            error: `Unknown status: ${data.state}` 
+          }
+      }
+
+      logger.debug('ElevenLabs poll result', {
+        correlationId,
+        requestId,
+        status: result.status,
+        hasAudioUrl: !!result.audioUrl
+      })
+
+      return result
+
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+      
+      if (attempt < 2) {
+        await sleep(1000)
+        continue
       }
     }
-    
-    const error = await response.text()
-    throw new Error(`ElevenLabs API error: ${response.status} ${error}`)
   }
-
-  const data = await response.json()
   
-  // Map ElevenLabs status to our status
-  switch (data.state) {
-    case 'pending':
-      return { status: 'queued' }
-    case 'processing':
-      return { status: 'processing' }
-    case 'complete':
-      return { 
-        status: 'ready', 
-        audioUrl: data.audio_url 
-      }
-    case 'failed':
-      return { 
-        status: 'failed', 
-        error: data.error || 'Generation failed' 
-      }
-    default:
-      return { 
-        status: 'failed', 
-        error: `Unknown status: ${data.state}` 
-      }
-  }
+  const finalError = lastError || new Error('ElevenLabs polling failed')
+  
+  errorTracker.trackError(finalError, {
+    operation: 'eleven-poll-track',
+    correlationId,
+    requestId
+  })
+  
+  throw finalError
 }
 
 /**

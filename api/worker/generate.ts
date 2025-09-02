@@ -78,7 +78,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         audioUrl
       })
     } else {
-      // Real ElevenLabs generation
+      // Real ElevenLabs generation with fallback to mock
+      let usedFallback = false
+      
       try {
         logger.info('Starting ElevenLabs generation', { 
           correlationId, 
@@ -129,37 +131,73 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         })
         
       } catch (error) {
-        logger.error('ElevenLabs generation failed', { 
+        logger.warn('ElevenLabs generation failed, attempting fallback to mock', { 
           correlationId, 
           trackId: trackToGenerate.id,
-          elevenRequestId: elevenRequestId || null
-        }, error instanceof Error ? error : new Error(String(error)))
-        
-        // Mark track as FAILED (idempotent operation)
-        await updateTrackStatus(
-          supabaseAdmin,
-          trackToGenerate.id,
-          'FAILED',
-          {
-            eleven_request_id: elevenRequestId || null
-          }
-        )
-        
-        const duration = Date.now() - startTime
-        logger.cronJobComplete('worker/generate', duration, { 
-          correlationId,
-          processed: true,
-          result: 'failed',
-          trackId: trackToGenerate.id
+          elevenRequestId: elevenRequestId || null,
+          error: error instanceof Error ? error.message : 'Unknown error'
         })
         
-        return res.status(200).json({
-          message: 'Track generation failed',
-          processed: true,
-          error: error instanceof Error ? error.message : 'Generation failed',
-          track_id: trackToGenerate.id,
-          correlationId
-        })
+        // Fallback to mock generation
+        try {
+          const siteUrl = process.env.VITE_SITE_URL || 'http://localhost:5173'
+          audioUrl = `${siteUrl}/sample-track.mp3`
+          elevenRequestId = `fallback_${trackToGenerate.id}_${Date.now()}`
+          usedFallback = true
+          
+          logger.info('Fallback to mock generation successful', { 
+            correlationId, 
+            trackId: trackToGenerate.id,
+            audioUrl,
+            originalError: error instanceof Error ? error.message : 'Unknown error'
+          })
+          
+          // Track the fallback in error tracking for monitoring
+          errorTracker.trackError(new Error('ElevenLabs generation failed, used fallback'), {
+            operation: 'worker/generate-fallback',
+            correlationId,
+            trackId: trackToGenerate.id,
+            elevenRequestId: elevenRequestId || null,
+            originalError: error instanceof Error ? error.message : 'Unknown error'
+          })
+          
+        } catch (fallbackError) {
+          // If even fallback fails, mark as FAILED
+          logger.error('Both ElevenLabs generation and fallback failed', { 
+            correlationId, 
+            trackId: trackToGenerate.id,
+            originalError: error instanceof Error ? error.message : 'Unknown error',
+            fallbackError: fallbackError instanceof Error ? fallbackError.message : 'Unknown error'
+          })
+          
+          await updateTrackStatus(
+            supabaseAdmin,
+            trackToGenerate.id,
+            'FAILED',
+            {
+              eleven_request_id: elevenRequestId || null
+            }
+          )
+          
+          const duration = Date.now() - startTime
+          logger.cronJobComplete('worker/generate', duration, { 
+            correlationId,
+            processed: true,
+            result: 'failed',
+            trackId: trackToGenerate.id,
+            usedFallback: false,
+            fallbackFailed: true
+          })
+          
+          return res.status(200).json({
+            message: 'Track generation and fallback both failed',
+            processed: true,
+            error: error instanceof Error ? error.message : 'Generation failed',
+            fallback_error: fallbackError instanceof Error ? fallbackError.message : 'Fallback failed',
+            track_id: trackToGenerate.id,
+            correlationId
+          })
+        }
       }
     }
 
@@ -181,7 +219,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     logger.trackStatusChanged(trackToGenerate.id, 'GENERATING', 'READY', { 
       correlationId,
       audioUrl,
-      elevenRequestId
+      elevenRequestId,
+      usedFallback: usedFallback || false
     })
 
     // Broadcast final status update
@@ -196,7 +235,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       correlationId,
       processed: true,
       result: 'success',
-      trackId: readyTrack.id
+      trackId: readyTrack.id,
+      elevenEnabled,
+      usedFallback: usedFallback || false
     })
 
     res.status(200).json({
@@ -204,6 +245,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       processed: true,
       track: readyTrack,
       eleven_enabled: elevenEnabled,
+      used_fallback: usedFallback || false,
       correlationId
     })
     

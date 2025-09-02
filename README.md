@@ -25,6 +25,13 @@ A real-time AI-generated music station where users pay to queue short songs that
 - **Admin Monitoring**: Real-time visibility into queue state and recent activity
 - **Production Ready**: Token-based security with staging launch readiness
 
+### Sprint 5 Additions 🚀
+- **x402 Sandbox Integration**: Real Base-Sepolia USDC test payments via Coinbase CDP
+- **Enhanced Payment Verification**: Retry logic, rate limiting, and comprehensive audit trail
+- **ElevenLabs Production Ready**: Rate limiting, exponential backoff, and automatic fallback to mock
+- **Comprehensive Monitoring**: Structured logging with correlation IDs and error tracking
+- **Real Integration Testing**: Staging environment with actual service integration capability
+
 ## 🛠 Tech Stack
 
 **Frontend:**
@@ -111,11 +118,18 @@ npm run typecheck
 ### Reactions Endpoint
 - `POST /api/reactions` - Add reaction and update rating
 
+### Admin Endpoints (Sprint 5)
+- `GET /api/admin/state` - Get comprehensive system state with authentication
+- `POST /api/admin/generate` - Manually trigger track generation
+- `POST /api/admin/advance` - Force station to advance to next track
+- `POST /api/admin/track/[id]` - Skip, requeue, or delete specific track
+- `GET /api/admin/audit` - View x402 payment audit trail and statistics
+
 ### Cron Jobs (Vercel)
-- `POST /api/worker/generate` - Every minute for track processing (idempotent)
+- `POST /api/worker/generate` - Every minute for track processing (idempotent, with fallback)
 - `POST /api/station/advance` - Every minute for station progression (idempotent)
 
-*Note: Vercel Cron runs minutely; handlers are idempotent; UI also polls every ~5s and uses Supabase Realtime.*
+*Note: Vercel Cron runs minutely; handlers are idempotent with comprehensive logging; UI also polls every ~5s and uses Supabase Realtime.*
 
 ## 🏗 Architecture
 
@@ -147,11 +161,11 @@ agent-dj-radio/
 4. **React**: Users react to tracks, updating ratings
 5. **Replay**: When queue empty, best DONE tracks become REPLAY tracks
 
-#### Sprint 2 Mode (x402):
-1. **Submit**: User submits prompt → Creates PENDING_PAYMENT + returns 402 challenge
-2. **Payment**: User pays HTTP 402 challenge → Confirms payment via `/confirm`
-3. **Generate**: Worker claims PAID track → ElevenLabs generation → READY
-4. **Play**: Station advances READY → PLAYING → DONE + broadcasts updates
+#### Sprint 5 Mode (Full Integration):
+1. **Submit**: User submits prompt → Creates PENDING_PAYMENT + returns 402 challenge with audit logging
+2. **Payment**: User pays via Base-Sepolia USDC → Confirms payment via CDP verification with retries
+3. **Generate**: Worker claims PAID track → ElevenLabs generation with rate limiting + fallback → READY
+4. **Play**: Station advances READY → PLAYING → DONE + broadcasts updates with correlation tracking
 5. **React**: Users react to tracks, updating ratings
 6. **Replay**: When queue empty, best DONE tracks become REPLAY tracks
 
@@ -268,38 +282,58 @@ ADMIN_TOKEN=your-staging-admin-token
 # Configure custom domain if needed
 ```
 
-**3. Feature Flag Rollout Strategy:**
+**3. Feature Flag Rollout Strategy (Sprint 5 Enhanced):**
 ```bash
-# Stage 1: Staging with mock services (current)
+# Stage 1: Staging with mock services (reliable testing)
 ENABLE_REAL_ELEVEN=false
 ENABLE_X402=false
 
-# Stage 2: Staging with real ElevenLabs
+# Stage 2: Staging with real ElevenLabs (test music generation)
 ENABLE_REAL_ELEVEN=true  
 ENABLE_X402=false
 
-# Stage 3: Production with real ElevenLabs
+# Stage 3: Staging with full x402 integration (test payments)
+ENABLE_REAL_ELEVEN=true
+ENABLE_X402=true
+# Use Base-Sepolia testnet for safe payment testing
+
+# Stage 4: Production with ElevenLabs only (paid music, free for users)
 ENABLE_REAL_ELEVEN=true
 ENABLE_X402=false
 
-# Stage 4: Full production with payments
+# Stage 5: Full production with real payments (Base mainnet)
 ENABLE_REAL_ELEVEN=true
 ENABLE_X402=true
+# Switch to Base mainnet, update X402_CHAIN and receiving address
 ```
 
-### Monitoring & Observability
+### Monitoring & Observability (Sprint 5 Enhanced)
 
 **Structured Logging:**
-- All API requests logged with correlation IDs
-- Cron job execution timing and results
-- Track lifecycle state changes
-- Admin operations audit trail
+- All API requests logged with correlation IDs for end-to-end tracking
+- Cron job execution timing and results with performance metrics
+- Track lifecycle state changes with context (including fallback usage)
+- Admin operations audit trail with detailed action logging
+- x402 payment verification attempts and retry tracking
 
 **Error Tracking:**
-- Application errors with full context
-- Performance issues and timeouts
-- Business logic failures
-- External service integration errors
+- Application errors with full context and correlation IDs
+- Performance issues and timeouts with detailed timing
+- Business logic failures with retry attempt tracking
+- External service integration errors (ElevenLabs, Coinbase CDP)
+- Automatic fallback tracking when ElevenLabs fails
+
+**Payment Audit Trail:**
+```bash
+# View payment audit for specific track
+GET /api/admin/audit?track_id=TRACK_ID
+
+# View payment statistics
+GET /api/admin/audit?stats=true&since=2024-01-01
+
+# View recent payment events
+GET /api/admin/audit?limit=100
+```
 
 **Health Monitoring:**
 ```bash
@@ -307,8 +341,11 @@ ENABLE_X402=true
 GET /api/station/state  # Basic health
 GET /api/admin/state    # Admin functionality (with auth)
 
-# Cron job monitoring via logs
-POST /api/worker/generate  # Should complete < 10s
+# Advanced health checks
+GET /api/admin/audit?stats=true  # Payment system health
+
+# Cron job monitoring via logs (with correlation IDs)
+POST /api/worker/generate  # Should complete < 10s (or fallback in 3s)
 POST /api/station/advance  # Should complete < 5s
 ```
 
@@ -438,7 +475,7 @@ For development and staging environments, you can access a web-based admin inter
 ### Emergency Procedures
 See [docs/RUNBOOK.md](docs/RUNBOOK.md) for detailed operational procedures.
 
-## 🚧 Next Steps (Sprint 4+)
+## 🚧 Next Steps (Sprint 6+)
 
 ### Planned Features
 - **User Authentication**: Proper login and user management
@@ -446,12 +483,21 @@ See [docs/RUNBOOK.md](docs/RUNBOOK.md) for detailed operational procedures.
 - **Advanced Features**: Stems, HLS streaming, scheduled content
 - **Mobile Optimization**: Progressive Web App features
 - **Analytics Dashboard**: Track usage, revenue, popular prompts
+- **Production Mainnet**: Move from Base-Sepolia to Base mainnet for real payments
+
+### Sprint 5 Improvements ✅
+- **Real Payment Integration**: Base-Sepolia USDC payments via Coinbase CDP sandbox
+- **Enhanced Error Handling**: Comprehensive retry logic and fallback mechanisms
+- **Production Monitoring**: Correlation ID tracking and audit trails
+- **Rate Limiting**: Smart ElevenLabs API management with staging-specific limits
+- **Comprehensive Testing**: End-to-end payment flows and integration tests
 
 ### Current Limitations
 - Audio sync may drift over time
 - No offline handling or retry logic
-- Simple in-memory rate limiting (resets on server restart)
+- In-memory rate limiting for ElevenLabs (resets on server restart)
 - Single-station architecture
+- Payments currently on testnet (Base-Sepolia)
 
 ## 🤝 Contributing
 

@@ -5,6 +5,8 @@ import { createTrack, upsertUser, updateUserLastSubmit } from '../../src/server/
 import { checkSubmitCooldown, recordSubmit } from '../../src/server/rate-limit'
 import { buildChallenge } from '../../src/server/x402'
 import { broadcastQueueUpdate } from '../../src/server/realtime'
+import { logger, generateCorrelationId } from '../../src/lib/logger'
+import { errorTracker, handleApiError } from '../../src/lib/error-tracking'
 import type { SubmitTrackRequest, X402ChallengeResponse } from '../../src/types'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -126,7 +128,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Build x402 challenge
-    const { challenge } = buildChallenge({
+    const { challenge } = await buildChallenge({
       priceUsd: price_usd,
       trackId: track.id
     })
