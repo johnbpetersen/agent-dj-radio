@@ -1,7 +1,7 @@
 // Database types matching the Supabase schema
 
 export type TrackSource = 'GENERATED' | 'REPLAY'
-export type TrackStatus = 'PAID' | 'GENERATING' | 'READY' | 'PLAYING' | 'DONE' | 'FAILED' | 'ARCHIVED'
+export type TrackStatus = 'PENDING_PAYMENT' | 'PAID' | 'GENERATING' | 'READY' | 'PLAYING' | 'DONE' | 'FAILED' | 'ARCHIVED'
 export type ReactionKind = 'LOVE' | 'FIRE' | 'SKIP'
 
 export interface User {
@@ -9,6 +9,7 @@ export interface User {
   display_name: string
   banned: boolean
   created_at: string
+  last_submit_at?: string | null // For rate limiting
 }
 
 export interface Track {
@@ -69,6 +70,47 @@ export interface SubmitTrackResponse {
   track: Track
 }
 
+// x402 Payment types
+export interface X402Challenge {
+  amount: string
+  asset: string
+  chain: string
+  payTo: string
+  nonce: string
+  expiresAt: string
+}
+
+export interface X402ChallengeResponse {
+  challenge: X402Challenge
+  track_id: string
+}
+
+export interface X402ConfirmRequest {
+  track_id: string
+  payment_proof: string
+}
+
+export interface X402ConfirmResponse {
+  track: Track
+  payment_verified: boolean
+}
+
+// ElevenLabs types
+export interface ElevenTrackRequest {
+  prompt: string
+  duration_seconds: number
+}
+
+export interface ElevenTrackResponse {
+  request_id: string
+}
+
+export interface ElevenPollResponse {
+  status: 'queued' | 'processing' | 'ready' | 'failed'
+  audio_url?: string
+  error?: string
+}
+
 export interface StationStateResponse {
   station_state: StationState
   queue: Track[]
@@ -93,4 +135,11 @@ export interface StationData {
   queue: Track[]
   isLoading: boolean
   error: string | null
+}
+
+// Rate limiting
+export interface RateLimitInfo {
+  user_id: string
+  last_submit_at: number
+  cooldown_seconds: number
 }

@@ -3,6 +3,7 @@ import { supabaseAdmin } from '../_shared/supabase'
 import { getStationState, updateStationState, getTracksByStatus, updateTrackStatus, createTrack } from '../../src/server/db'
 import { selectNextTrack, createReplayTrack } from '../../src/server/selectors'
 import { calculatePlayhead, isTrackFinished } from '../../src/server/station'
+import { broadcastStationUpdate, broadcastTrackAdvance } from '../../src/server/realtime'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -28,6 +29,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         playhead_seconds: playheadSeconds
       })
     }
+
+    const previousTrackId = currentTrack?.id || null
 
     // Mark current track as DONE if it exists
     if (currentTrack) {
@@ -61,10 +64,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!nextTrack) {
       // No tracks available, clear station state
-      await updateStationState(supabaseAdmin, {
+      const clearedState = await updateStationState(supabaseAdmin, {
         current_track_id: null,
         current_started_at: null
       })
+
+      // Broadcast station update
+      if (clearedState) {
+        await broadcastStationUpdate({
+          stationState: clearedState,
+          currentTrack: null
+        })
+      }
 
       return res.status(200).json({
         message: 'No tracks available to play',
@@ -95,6 +106,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!newStationState) {
       return res.status(500).json({ error: 'Failed to update station state' })
     }
+
+    // Broadcast station update
+    await broadcastStationUpdate({
+      stationState: newStationState,
+      currentTrack: playingTrack
+    })
+
+    // Broadcast track advance
+    await broadcastTrackAdvance({
+      previousTrackId,
+      newTrack: playingTrack,
+      playheadSeconds: 0
+    })
 
     res.status(200).json({
       message: 'Station advanced successfully',

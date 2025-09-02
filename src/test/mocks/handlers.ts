@@ -4,6 +4,9 @@ import type {
   PriceQuoteResponse, 
   SubmitTrackRequest, 
   SubmitTrackResponse,
+  X402ChallengeResponse,
+  X402ConfirmRequest,
+  X402ConfirmResponse,
   StationStateResponse,
   ReactionRequest,
   ReactionResponse,
@@ -20,6 +23,9 @@ let mockStationState: StationState = {
   updated_at: new Date().toISOString()
 }
 let trackIdCounter = 1
+
+// Test configuration - can be set by tests
+let mockX402Enabled = false
 
 // Helper to create mock track
 function createMockTrack(data: Partial<Track>): Track {
@@ -94,17 +100,108 @@ export const handlers = [
       )
     }
 
-    const track = createMockTrack({
-      prompt: body.prompt.trim(),
-      duration_seconds: body.duration_seconds,
-      user_id: body.user_id
-    })
+    // Calculate price based on duration
+    const priceMap = { 60: 3.00, 90: 4.27, 120: 5.40 }
+    const price_usd = priceMap[body.duration_seconds]
 
-    mockTracks.push(track)
-    
-    const response: SubmitTrackResponse = { track }
-    return HttpResponse.json(response, { status: 201 })
+    if (!mockX402Enabled) {
+      // Sprint 1 behavior: create PAID track immediately
+      const track = createMockTrack({
+        prompt: body.prompt.trim(),
+        duration_seconds: body.duration_seconds,
+        user_id: body.user_id,
+        status: 'PAID',
+        price_usd
+      })
+
+      mockTracks.push(track)
+      
+      const response: SubmitTrackResponse = { track }
+      return HttpResponse.json(response, { status: 201 })
+    } else {
+      // x402 flow: create PENDING_PAYMENT track and return challenge
+      const track = createMockTrack({
+        prompt: body.prompt.trim(),
+        duration_seconds: body.duration_seconds,
+        user_id: body.user_id,
+        status: 'PENDING_PAYMENT',
+        price_usd
+      })
+
+      mockTracks.push(track)
+      
+      const challenge = {
+        amount: price_usd.toFixed(2),
+        asset: 'USD',
+        chain: 'test',
+        payTo: 'test-address',
+        nonce: crypto.randomUUID(),
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString()
+      }
+
+      const response: X402ChallengeResponse = {
+        challenge,
+        track_id: track.id
+      }
+      return HttpResponse.json(response, { status: 402 })
+    }
   }),
+
+  // Confirm payment endpoint  
+  http.post('/api/queue/confirm', async ({ request }) => {
+    const body = await request.json() as X402ConfirmRequest
+    
+    if (!body.track_id) {
+      return HttpResponse.json(
+        { error: 'Track ID is required' },
+        { status: 400 }
+      )
+    }
+
+    if (!body.payment_proof) {
+      return HttpResponse.json(
+        { error: 'Payment proof is required' },
+        { status: 400 }
+      )
+    }
+
+    const track = mockTracks.find(t => t.id === body.track_id)
+    
+    if (!track) {
+      return HttpResponse.json(
+        { error: 'Track not found' },
+        { status: 404 }
+      )
+    }
+
+    // Idempotency: if already PAID, return success
+    if (track.status === 'PAID') {
+      const response: X402ConfirmResponse = {
+        track,
+        payment_verified: true
+      }
+      return HttpResponse.json(response, { status: 200 })
+    }
+
+    // Only allow confirmation for PENDING_PAYMENT tracks
+    if (track.status !== 'PENDING_PAYMENT') {
+      return HttpResponse.json({
+        error: `Cannot confirm payment for track with status: ${track.status}`
+      }, { status: 400 })
+    }
+
+    // Update track to PAID status
+    track.status = 'PAID'
+    track.x402_payment_tx = body.payment_proof
+
+    const response: X402ConfirmResponse = {
+      track,
+      payment_verified: true
+    }
+    return HttpResponse.json(response, { status: 200 })
+  }),
+
+  http.get('/api/queue/confirm', () => HttpResponse.json({ error: 'Method not allowed' }, { status: 405 })),
 
   // Generate worker endpoint
   http.post('/api/worker/generate', async () => {
@@ -306,6 +403,7 @@ export const testUtils = {
       updated_at: new Date().toISOString()
     }
     trackIdCounter = 1
+    mockX402Enabled = false // Reset to Sprint 1 mode by default
   },
   
   addMockTrack: (data: Partial<Track>) => {
@@ -318,6 +416,17 @@ export const testUtils = {
     mockStationState.current_track_id = trackId
     mockStationState.current_started_at = new Date().toISOString()
   },
+  
+  // X402 test configuration
+  enableX402Mode: () => {
+    mockX402Enabled = true
+  },
+  
+  disableX402Mode: () => {
+    mockX402Enabled = false
+  },
+  
+  isX402Enabled: () => mockX402Enabled,
   
   getMockTracks: () => [...mockTracks],
   getMockStationState: () => ({ ...mockStationState })

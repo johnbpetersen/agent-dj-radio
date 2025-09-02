@@ -77,6 +77,30 @@ export async function getTracksByStatus(
 }
 
 /**
+ * Claim next PAID track with concurrency control
+ */
+export async function claimNextPaidTrack(supabase: SupabaseClient): Promise<Track | null> {
+  try {
+    // Use FOR UPDATE SKIP LOCKED for safe concurrent processing
+    const { data, error } = await supabase.rpc('claim_next_paid_track')
+    
+    if (error) {
+      console.error('Error claiming paid track:', error)
+      return null
+    }
+    
+    if (!data || data.length === 0) {
+      return null
+    }
+    
+    return data[0] as Track
+  } catch (error) {
+    console.error('Error in claim operation:', error)
+    return null
+  }
+}
+
+/**
  * Update track status
  */
 export async function updateTrackStatus(
@@ -132,6 +156,108 @@ export async function createTrack(
   }
 
   return data as Track
+}
+
+/**
+ * Get track by ID
+ */
+export async function getTrackById(
+  supabase: SupabaseClient,
+  trackId: string
+): Promise<Track | null> {
+  const { data, error } = await supabase
+    .from('tracks')
+    .select(`
+      *,
+      user:users(*)
+    `)
+    .eq('id', trackId)
+    .single()
+
+  if (error || !data) {
+    console.error('Error fetching track by ID:', error)
+    return null
+  }
+
+  return data as Track
+}
+
+/**
+ * Update track payment status with x402 proof
+ */
+export async function confirmTrackPayment(
+  supabase: SupabaseClient,
+  trackId: string,
+  paymentProof: any
+): Promise<Track | null> {
+  const { data, error } = await supabase
+    .from('tracks')
+    .update({
+      status: 'PAID',
+      x402_payment_tx: paymentProof
+    })
+    .eq('id', trackId)
+    .select(`
+      *,
+      user:users(*)
+    `)
+    .single()
+
+  if (error || !data) {
+    console.error('Error confirming track payment:', error)
+    return null
+  }
+
+  return data as Track
+}
+
+/**
+ * Get or create user
+ */
+export async function upsertUser(
+  supabase: SupabaseClient,
+  userData: {
+    id: string
+    display_name: string
+  }
+): Promise<any> {
+  const { data, error } = await supabase
+    .from('users')
+    .upsert({
+      id: userData.id,
+      display_name: userData.display_name
+    })
+    .select()
+    .single()
+
+  if (error) {
+    console.error('Error upserting user:', error)
+    return null
+  }
+
+  return data
+}
+
+/**
+ * Update user last submit time for rate limiting
+ */
+export async function updateUserLastSubmit(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<boolean> {
+  const { error } = await supabase
+    .from('users')
+    .update({
+      last_submit_at: new Date().toISOString()
+    })
+    .eq('id', userId)
+
+  if (error) {
+    console.error('Error updating user last submit:', error)
+    return false
+  }
+
+  return true
 }
 
 /**
