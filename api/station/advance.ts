@@ -6,8 +6,9 @@ import { calculatePlayhead, isTrackFinished } from '../../src/server/station'
 import { broadcastStationUpdate, broadcastTrackAdvance } from '../../src/server/realtime'
 import { logger, generateCorrelationId } from '../../src/lib/logger'
 import { errorTracker, handleApiError } from '../../src/lib/error-tracking'
+import { secureHandler, securityConfigs } from '../_shared/secure-handler'
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function advanceHandler(req: VercelRequest, res: VercelResponse) {
   const correlationId = generateCorrelationId()
   const startTime = Date.now()
 
@@ -212,3 +213,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json(errorResponse)
   }
 }
+
+export default secureHandler(advanceHandler, securityConfigs.worker)

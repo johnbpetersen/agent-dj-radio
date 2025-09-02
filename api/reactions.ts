@@ -1,11 +1,13 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from './_shared/supabase'
 import { upsertReaction, updateTrackRating } from '../src/server/db'
+import { secureHandler, securityConfigs } from './_shared/secure-handler'
+import { sanitizeForClient } from './_shared/security'
 import type { ReactionRequest, ReactionResponse, ReactionKind } from '../src/types'
 
 const VALID_REACTION_KINDS: ReactionKind[] = ['LOVE', 'FIRE', 'SKIP']
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function reactionsHandler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -66,7 +68,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const response: ReactionResponse = {
       reaction,
-      track: updatedTrack
+      track: sanitizeForClient(updatedTrack, ['eleven_request_id', 'x402_payment_tx'])
     }
 
     res.status(200).json(response)
@@ -75,3 +77,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json({ error: 'Internal server error' })
   }
 }
+
+export default secureHandler(reactionsHandler, securityConfigs.user)

@@ -1,8 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { calculatePrice, validateDuration } from '../../src/server/pricing'
+import { secureHandler, securityConfigs } from '../_shared/secure-handler'
 import type { PriceQuoteRequest, PriceQuoteResponse } from '../../src/types'
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function priceQuoteHandler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -29,3 +30,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json({ error: 'Internal server error' })
   }
 }
+
+export default secureHandler(priceQuoteHandler, securityConfigs.user)

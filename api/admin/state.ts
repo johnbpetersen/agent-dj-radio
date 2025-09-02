@@ -3,9 +3,10 @@ import { requireAdminAuth } from '../_shared/admin-auth'
 import { supabaseAdmin } from '../_shared/supabase'
 import { getStationState, getTracksByStatus } from '../../src/server/db'
 import { calculatePlayhead } from '../../src/server/station'
+import { secureHandler, securityConfigs } from '../_shared/secure-handler'
 import type { StationStateResponse } from '../../src/types'
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function adminStateHandler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -51,3 +52,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json({ error: 'Internal server error' })
   }
 }
+
+export default secureHandler(adminStateHandler, securityConfigs.admin)

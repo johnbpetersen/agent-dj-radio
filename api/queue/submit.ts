@@ -7,9 +7,11 @@ import { buildChallenge } from '../../src/server/x402'
 import { broadcastQueueUpdate } from '../../src/server/realtime'
 import { logger, generateCorrelationId } from '../../src/lib/logger'
 import { errorTracker, handleApiError } from '../../src/lib/error-tracking'
+import { secureHandler, securityConfigs } from '../_shared/secure-handler'
+import { sanitizeForClient } from '../_shared/security'
 import type { SubmitTrackRequest, X402ChallengeResponse } from '../../src/types'
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function submitHandler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -102,7 +104,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         trackId: track.id
       })
 
-      return res.status(201).json({ track })
+      return res.status(201).json({ track: sanitizeForClient(track, ['eleven_request_id', 'x402_payment_tx']) })
     }
 
     // x402 flow: create PENDING_PAYMENT track and return challenge
@@ -152,3 +154,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json({ error: 'Internal server error' })
   }
 }
+
+export default secureHandler(submitHandler, securityConfigs.user)

@@ -6,9 +6,11 @@ import { broadcastQueueUpdate } from '../../src/server/realtime'
 import { logger, generateCorrelationId } from '../../src/lib/logger'
 import { errorTracker, handleApiError } from '../../src/lib/error-tracking'
 import { auditPaymentSubmitted, auditPaymentConfirmed } from '../../src/server/x402-audit'
+import { secureHandler, securityConfigs } from '../_shared/secure-handler'
+import { sanitizeForClient } from '../_shared/security'
 import type { X402ConfirmRequest, X402ConfirmResponse } from '../../src/types'
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function confirmHandler(req: VercelRequest, res: VercelResponse) {
   const correlationId = generateCorrelationId()
   const startTime = Date.now()
   
@@ -201,7 +203,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
 
     const response: X402ConfirmResponse = {
-      track: paidTrack,
+      track: sanitizeForClient(paidTrack, ['eleven_request_id', 'x402_payment_tx']),
       payment_verified: true,
       correlationId
     }
@@ -225,3 +227,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json(errorResponse)
   }
 }
+
+export default secureHandler(confirmHandler, securityConfigs.user)
