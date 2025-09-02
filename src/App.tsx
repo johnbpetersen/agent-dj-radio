@@ -1,13 +1,48 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useStation } from './hooks/useStation'
 import NowPlaying from './components/NowPlaying'
 import QueueList from './components/QueueList'
 import SubmitForm from './components/SubmitForm'
 import Reactions from './components/Reactions'
+import { AdminPanel } from './components/AdminPanel'
 
 function App() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [showAdminPanel, setShowAdminPanel] = useState(false)
   const { currentTrack, playheadSeconds, queue, isLoading, error, refetch, advanceStation } = useStation()
+
+  // Check for ?admin=1 in URL
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search)
+    const isAdmin = urlParams.get('admin') === '1'
+    setShowAdminPanel(isAdmin)
+  }, [])
+
+  // Admin panel view
+  if (showAdminPanel) {
+    return (
+      <div className="min-h-screen bg-gray-100">
+        <div className="container mx-auto px-4 py-8">
+          <div className="mb-6">
+            <button
+              onClick={() => {
+                setShowAdminPanel(false)
+                // Remove ?admin=1 from URL
+                const url = new URL(window.location.href)
+                url.searchParams.delete('admin')
+                window.history.replaceState({}, '', url.toString())
+              }}
+              className="text-blue-600 hover:text-blue-800 text-sm"
+            >
+              ← Back to Radio
+            </button>
+          </div>
+          
+          <AdminPanel />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -99,8 +134,23 @@ function App() {
 
         <footer className="text-center mt-8 text-sm text-gray-500">
           <p>
-            Agent DJ Radio Sprint 1 MVP - Payments simulated, generation mocked
+            Agent DJ Radio Sprint 3 MVP - Admin controls available
           </p>
+          {/* Hidden admin link for development - only show in dev mode */}
+          {import.meta.env.DEV && (
+            <div className="mt-2">
+              <button
+                onClick={() => {
+                  const url = new URL(window.location.href)
+                  url.searchParams.set('admin', '1')
+                  window.location.href = url.toString()
+                }}
+                className="text-xs text-gray-400 hover:text-gray-600 underline"
+              >
+                Admin Panel
+              </button>
+            </div>
+          )}
         </footer>
       </div>
     </div>

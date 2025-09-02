@@ -1,0 +1,77 @@
+name: Staging Smoke Tests
+
+on:
+  # Run after successful deployments to staging
+  deployment_status:
+  # Manual trigger for testing
+  workflow_dispatch:
+  # Scheduled smoke tests
+  schedule:
+    - cron: '0 */6 * * *' # Every 6 hours
+
+jobs:
+  smoke-tests:
+    if: github.event.deployment_status.state == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+        
+      - name: Run staging smoke tests
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          ADMIN_TOKEN: ${{ secrets.STAGING_ADMIN_TOKEN }}
+          PLAYWRIGHT_BASE_URL: ${{ secrets.STAGING_URL }}
+          PLAYWRIGHT_SKIP_SERVER: true
+          CI: true
+        run: npm run test:smoke
+        
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+          
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: smoke-test-results
+          path: test-results/
+          retention-days: 7
+          
+      - name: Notify on failure
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Staging Smoke Tests Failed',
+              body: `
+              🚨 Staging smoke tests failed
+              
+              **Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+              **Environment:** ${{ secrets.STAGING_URL }}
+              **Time:** ${new Date().toISOString()}
+              
+              Please investigate the staging environment and fix any issues.
+              `,
+              labels: ['bug', 'staging', 'smoke-test']
+            })

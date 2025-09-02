@@ -11,7 +11,7 @@
 4) Feature flags are strings: `process.env.FLAG === 'true'`.
 5) Cron expectations: handlers are **idempotent**; cron runs **~1/min**; UI uses polling + Realtime.
 6) Realtime via `supabase-js` channels only.
-7) Server recomputes price; never trusts client amounts (x402).
+7) Server recomputes price; never trusts client amounts (x402 HTTP 402 payment challenges).
 8) Keep mock paths working when flags are false.
 
 ## Commit Discipline

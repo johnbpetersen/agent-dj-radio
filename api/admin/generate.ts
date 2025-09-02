@@ -1,51 +1,41 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
+import { requireAdminAuth } from '../_shared/admin-auth'
 import { supabaseAdmin } from '../_shared/supabase'
 import { claimNextPaidTrack, updateTrackStatus } from '../../src/server/db'
 import { createTrack, pollTrackWithTimeout, fetchToBuffer } from '../../src/server/eleven'
 import { uploadAudioBuffer, ensureTracksBucket } from '../../src/server/storage'
 import { broadcastQueueUpdate } from '../../src/server/realtime'
-import { logger, generateCorrelationId } from '../../src/lib/logger'
-import { errorTracker, handleApiError } from '../../src/lib/error-tracking'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const correlationId = generateCorrelationId()
-  const startTime = Date.now()
-
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
-  logger.cronJobStart('worker/generate', { correlationId })
+  // Admin authentication
+  const authError = requireAdminAuth(req)
+  if (authError === 'NOT_FOUND') {
+    return res.status(404).json({ error: 'Not found' })
+  }
+  if (authError) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
 
   try {
     const elevenEnabled = process.env.ENABLE_REAL_ELEVEN === 'true'
     
-    // Claim next PAID track with concurrency control (idempotent operation)
+    // Claim next PAID track with concurrency control
     const trackToGenerate = await claimNextPaidTrack(supabaseAdmin)
     
     if (!trackToGenerate) {
-      const duration = Date.now() - startTime
-      logger.cronJobComplete('worker/generate', duration, { 
-        correlationId, 
-        processed: false,
-        reason: 'no_paid_tracks'
-      })
-      
       return res.status(200).json({ 
         message: 'No tracks to generate',
-        processed: false,
-        correlationId
+        processed: false 
       })
     }
 
-    logger.trackStatusChanged(trackToGenerate.id, 'PAID', 'GENERATING', { 
-      correlationId,
-      elevenEnabled,
-      prompt: trackToGenerate.prompt,
-      duration: trackToGenerate.duration_seconds
-    })
+    console.log(`Admin: Processing track ${trackToGenerate.id} with ElevenLabs=${elevenEnabled}`)
 
-    // Update status to GENERATING (idempotent - won't double-process if already GENERATING)
+    // Update status to GENERATING
     const generatingTrack = await updateTrackStatus(
       supabaseAdmin,
       trackToGenerate.id,
@@ -53,7 +43,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     )
 
     if (!generatingTrack) {
-      throw new Error(`Failed to update track ${trackToGenerate.id} to GENERATING status`)
+      return res.status(500).json({ error: 'Failed to update track to GENERATING' })
     }
 
     // Broadcast status update
@@ -70,22 +60,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Mock generation path
       const siteUrl = process.env.VITE_SITE_URL || 'http://localhost:5173'
       audioUrl = `${siteUrl}/sample-track.mp3`
-      elevenRequestId = `mock_${trackToGenerate.id}_${Date.now()}`
+      elevenRequestId = `admin_mock_${trackToGenerate.id}_${Date.now()}`
       
-      logger.info('Using mock audio generation', { 
-        correlationId, 
-        trackId: trackToGenerate.id,
-        audioUrl
-      })
+      console.log('Admin: Using mock audio generation')
     } else {
       // Real ElevenLabs generation
       try {
-        logger.info('Starting ElevenLabs generation', { 
-          correlationId, 
-          trackId: trackToGenerate.id,
-          prompt: trackToGenerate.prompt,
-          duration: trackToGenerate.duration_seconds
-        })
+        console.log('Admin: Starting ElevenLabs generation...')
         
         // Ensure storage bucket exists
         await ensureTracksBucket()
@@ -102,15 +83,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const pollResult = await pollTrackWithTimeout({ requestId })
         
         if (pollResult.status === 'failed' || !pollResult.audioUrl) {
-          throw new Error(pollResult.error || 'ElevenLabs generation failed')
+          throw new Error(pollResult.error || 'Generation failed')
         }
         
-        logger.info('ElevenLabs generation completed', { 
-          correlationId, 
-          trackId: trackToGenerate.id,
-          requestId,
-          status: pollResult.status
-        })
+        console.log('Admin: Generation complete, downloading audio...')
         
         // Download audio
         const audioBuffer = await fetchToBuffer(pollResult.audioUrl)
@@ -122,20 +98,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         })
         
         audioUrl = publicUrl
-        logger.info('Audio uploaded to storage', { 
-          correlationId, 
-          trackId: trackToGenerate.id,
-          publicUrl
-        })
+        console.log('Admin: Audio uploaded to storage:', publicUrl)
         
       } catch (error) {
-        logger.error('ElevenLabs generation failed', { 
-          correlationId, 
-          trackId: trackToGenerate.id,
-          elevenRequestId: elevenRequestId || null
-        }, error instanceof Error ? error : new Error(String(error)))
+        console.error('Admin: ElevenLabs generation failed:', error)
         
-        // Mark track as FAILED (idempotent operation)
+        // Mark track as FAILED
         await updateTrackStatus(
           supabaseAdmin,
           trackToGenerate.id,
@@ -145,25 +113,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         )
         
-        const duration = Date.now() - startTime
-        logger.cronJobComplete('worker/generate', duration, { 
-          correlationId,
-          processed: true,
-          result: 'failed',
-          trackId: trackToGenerate.id
-        })
-        
         return res.status(200).json({
           message: 'Track generation failed',
           processed: true,
           error: error instanceof Error ? error.message : 'Generation failed',
-          track_id: trackToGenerate.id,
-          correlationId
+          track_id: trackToGenerate.id
         })
       }
     }
 
-    // Update to READY with audio URL (idempotent - final state)
+    // Update to READY with audio URL
     const readyTrack = await updateTrackStatus(
       supabaseAdmin,
       trackToGenerate.id,
@@ -175,14 +134,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     )
 
     if (!readyTrack) {
-      throw new Error(`Failed to update track ${trackToGenerate.id} to READY status`)
+      return res.status(500).json({ error: 'Failed to update track to READY' })
     }
-
-    logger.trackStatusChanged(trackToGenerate.id, 'GENERATING', 'READY', { 
-      correlationId,
-      audioUrl,
-      elevenRequestId
-    })
 
     // Broadcast final status update
     await broadcastQueueUpdate({
@@ -191,32 +144,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       trackId: readyTrack.id
     })
 
-    const duration = Date.now() - startTime
-    logger.cronJobComplete('worker/generate', duration, { 
-      correlationId,
-      processed: true,
-      result: 'success',
-      trackId: readyTrack.id
-    })
-
     res.status(200).json({
       message: 'Track generated successfully',
       processed: true,
       track: readyTrack,
-      eleven_enabled: elevenEnabled,
-      correlationId
+      eleven_enabled: elevenEnabled
     })
     
   } catch (error) {
-    const duration = Date.now() - startTime
-    const errorResponse = handleApiError(error, 'worker/generate', { correlationId })
-    
-    logger.cronJobComplete('worker/generate', duration, { 
-      correlationId,
-      processed: false,
-      result: 'error'
-    })
-    
-    res.status(500).json(errorResponse)
+    console.error('Admin generate track error:', error)
+    res.status(500).json({ error: 'Internal server error' })
   }
 }

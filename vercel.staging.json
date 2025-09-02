@@ -1,0 +1,14 @@
+{
+  "crons": [
+    { "path": "/api/worker/generate", "schedule": "*/1 * * * *" },
+    { "path": "/api/station/advance", "schedule": "*/1 * * * *" }
+  ],
+  "env": {
+    "NODE_ENV": "staging"
+  },
+  "build": {
+    "env": {
+      "NODE_ENV": "staging"
+    }
+  }
+}

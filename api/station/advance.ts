@@ -4,35 +4,58 @@ import { getStationState, updateStationState, getTracksByStatus, updateTrackStat
 import { selectNextTrack, createReplayTrack } from '../../src/server/selectors'
 import { calculatePlayhead, isTrackFinished } from '../../src/server/station'
 import { broadcastStationUpdate, broadcastTrackAdvance } from '../../src/server/realtime'
+import { logger, generateCorrelationId } from '../../src/lib/logger'
+import { errorTracker, handleApiError } from '../../src/lib/error-tracking'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const correlationId = generateCorrelationId()
+  const startTime = Date.now()
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
+
+  logger.cronJobStart('station/advance', { correlationId })
 
   try {
     // Get current station state
     const stationState = await getStationState(supabaseAdmin)
     if (!stationState) {
-      return res.status(500).json({ error: 'Failed to get station state' })
+      throw new Error('Failed to get station state')
     }
 
     const currentTrack = stationState.current_track || null
     const playheadSeconds = calculatePlayhead(stationState)
     
-    // If current track is still playing, don't advance
+    logger.info('Station advance check', {
+      correlationId,
+      currentTrackId: currentTrack?.id || null,
+      playheadSeconds,
+      trackFinished: currentTrack ? isTrackFinished(currentTrack, playheadSeconds) : null
+    })
+    
+    // If current track is still playing, don't advance (idempotent behavior)
     if (currentTrack && !isTrackFinished(currentTrack, playheadSeconds)) {
+      const duration = Date.now() - startTime
+      logger.cronJobComplete('station/advance', duration, { 
+        correlationId,
+        advanced: false,
+        reason: 'track_still_playing',
+        currentTrackId: currentTrack.id
+      })
+      
       return res.status(200).json({
         message: 'Current track still playing',
         advanced: false,
         current_track: currentTrack,
-        playhead_seconds: playheadSeconds
+        playhead_seconds: playheadSeconds,
+        correlationId
       })
     }
 
     const previousTrackId = currentTrack?.id || null
 
-    // Mark current track as DONE if it exists
+    // Mark current track as DONE if it exists (idempotent operation)
     if (currentTrack) {
       await updateTrackStatus(
         supabaseAdmin,
@@ -40,10 +63,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         'DONE',
         { last_played_at: new Date().toISOString() }
       )
+      
+      logger.trackStatusChanged(currentTrack.id, 'PLAYING', 'DONE', { 
+        correlationId,
+        playheadSeconds
+      })
     }
 
     // Get available tracks for selection
     const availableTracks = await getTracksByStatus(supabaseAdmin, ['READY', 'DONE'])
+    
+    logger.info('Available tracks for selection', {
+      correlationId,
+      readyTracks: availableTracks.filter(t => t.status === 'READY').length,
+      doneTracks: availableTracks.filter(t => t.status === 'DONE').length
+    })
     
     // Select next track
     let nextTrack = selectNextTrack(availableTracks)
@@ -58,16 +92,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const replayData = createReplayTrack(bestReplay)
           replayCreated = await createTrack(supabaseAdmin, replayData)
           nextTrack = replayCreated
+          
+          logger.trackCreated(replayCreated.id, {
+            correlationId,
+            source: 'REPLAY',
+            originalTrackId: bestReplay.id,
+            prompt: replayData.prompt
+          })
         }
       }
     }
 
     if (!nextTrack) {
-      // No tracks available, clear station state
+      // No tracks available, clear station state (idempotent operation)
       const clearedState = await updateStationState(supabaseAdmin, {
         current_track_id: null,
         current_started_at: null
       })
+
+      logger.info('Station cleared - no tracks available', { correlationId })
 
       // Broadcast station update
       if (clearedState) {
@@ -77,16 +120,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         })
       }
 
+      const duration = Date.now() - startTime
+      logger.cronJobComplete('station/advance', duration, { 
+        correlationId,
+        advanced: true,
+        result: 'no_tracks'
+      })
+
       return res.status(200).json({
         message: 'No tracks available to play',
         advanced: true,
         current_track: null,
         playhead_seconds: 0,
-        replay_created: null
+        replay_created: null,
+        correlationId
       })
     }
 
-    // Update track to PLAYING
+    // Update track to PLAYING (idempotent - only one track can be PLAYING)
     const playingTrack = await updateTrackStatus(
       supabaseAdmin,
       nextTrack.id,
@@ -94,18 +145,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     )
 
     if (!playingTrack) {
-      return res.status(500).json({ error: 'Failed to update track to PLAYING' })
+      throw new Error(`Failed to update track ${nextTrack.id} to PLAYING status`)
     }
 
-    // Update station state
+    logger.trackStatusChanged(nextTrack.id, nextTrack.status, 'PLAYING', { 
+      correlationId,
+      wasReplay: nextTrack.source === 'REPLAY'
+    })
+
+    // Update station state (idempotent - sets current track)
     const newStationState = await updateStationState(supabaseAdmin, {
       current_track_id: playingTrack.id,
       current_started_at: new Date().toISOString()
     })
 
     if (!newStationState) {
-      return res.status(500).json({ error: 'Failed to update station state' })
+      throw new Error('Failed to update station state')
     }
+
+    logger.info('Station advanced successfully', {
+      correlationId,
+      previousTrackId,
+      newTrackId: playingTrack.id,
+      replayCreated: !!replayCreated
+    })
 
     // Broadcast station update
     await broadcastStationUpdate({
@@ -120,15 +183,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       playheadSeconds: 0
     })
 
+    const duration = Date.now() - startTime
+    logger.cronJobComplete('station/advance', duration, { 
+      correlationId,
+      advanced: true,
+      result: 'success',
+      newTrackId: playingTrack.id
+    })
+
     res.status(200).json({
       message: 'Station advanced successfully',
       advanced: true,
       current_track: playingTrack,
       playhead_seconds: 0,
-      replay_created: replayCreated
+      replay_created: replayCreated,
+      correlationId
     })
   } catch (error) {
-    console.error('Advance station error:', error)
-    res.status(500).json({ error: 'Internal server error' })
+    const duration = Date.now() - startTime
+    const errorResponse = handleApiError(error, 'station/advance', { correlationId })
+    
+    logger.cronJobComplete('station/advance', duration, { 
+      correlationId,
+      advanced: false,
+      result: 'error'
+    })
+    
+    res.status(500).json(errorResponse)
   }
 }

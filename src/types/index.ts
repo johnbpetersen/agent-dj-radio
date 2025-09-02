@@ -143,3 +143,20 @@ export interface RateLimitInfo {
   last_submit_at: number
   cooldown_seconds: number
 }
+
+// Admin API types
+export interface AdminStateResponse extends StationStateResponse {
+  recent_tracks: Track[]
+}
+
+export interface AdminActionResponse {
+  message: string
+  processed?: boolean
+  advanced?: boolean
+  track?: Track
+  track_id?: string
+  current_track?: Track | null
+  playhead_seconds?: number
+  replay_created?: Track | null
+  error?: string
+}
