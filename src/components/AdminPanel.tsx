@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { adminApi } from '../lib/admin'
+import { HealthDashboard } from './HealthDashboard'
 
 interface AdminState {
   station_state: {
@@ -183,6 +184,11 @@ export function AdminPanel() {
             Disconnect
           </button>
         </div>
+      </div>
+
+      {/* Health Dashboard */}
+      <div className="mb-6">
+        <HealthDashboard />
       </div>
 
       {/* Status Messages */}
