@@ -3,6 +3,8 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = process.env.SUPABASE_URL
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
+let supabaseAdmin: any
+
 // For local development without Supabase setup
 if (!supabaseUrl || !supabaseServiceRoleKey) {
   console.warn('⚠️  Using mock Supabase client for local development. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY for real data.')
@@ -43,10 +45,11 @@ if (!supabaseUrl || !supabaseServiceRoleKey) {
     })
   }
   
-  export const supabaseAdmin = mockClient as any
-  export default supabaseAdmin
+  supabaseAdmin = mockClient
+} else {
+  // Service role client for API endpoints (bypasses RLS)
+  supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey)
 }
 
-// Service role client for API endpoints (bypasses RLS)
-export const supabaseAdmin = createClient(supabaseUrl!, supabaseServiceRoleKey!)
+export { supabaseAdmin }
 export default supabaseAdmin
