@@ -1,10 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from '../_shared/supabase.js'
-import { getStationState, getTracksByStatus } from '../../src/server/db'
-import { calculatePlayhead } from '../../src/server/station'
-import { secureHandler, securityConfigs } from '../_shared/secure-handler'
-import { sanitizeForClient } from '../_shared/security'
-import type { StationStateResponse } from '../../src/types'
+import { getStationState, getTracksByStatus } from '../../src/server/db.js'
+import { calculatePlayhead } from '../../src/server/station.js'
+import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
+import { sanitizeForClient } from '../_shared/security.js'
+import type { StationStateResponse } from '../../src/types/index.js'
 
 async function stationStateHandler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
