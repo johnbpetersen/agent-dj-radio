@@ -60,8 +60,9 @@ export function secureHandler(
 
       // Log request if enabled
       if (options.logRequests) {
-        logger.apiRequest(req.method || 'UNKNOWN', req.url || 'unknown', {
+        logger.request(req.url || 'unknown', {
           correlationId,
+          method: req.method || 'UNKNOWN',
           ip: req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || 'unknown',
           userAgent: req.headers['user-agent']
         })
@@ -72,12 +73,14 @@ export function secureHandler(
 
       // Log response if enabled and not already logged by handler
       if (options.logRequests && !res.headersSent) {
-        logger.apiResponse(
-          req.method || 'UNKNOWN',
+        logger.requestComplete(
           req.url || 'unknown',
-          res.statusCode,
           Date.now() - startTime,
-          { correlationId }
+          { 
+            correlationId,
+            method: req.method || 'UNKNOWN',
+            statusCode: res.statusCode
+          }
         )
       }
 

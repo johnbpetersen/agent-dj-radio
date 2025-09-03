@@ -111,7 +111,7 @@ export function validateOrigin(req: VercelRequest): boolean {
 export function sanitizeForClient<T extends Record<string, any>>(
   data: T,
   sensitiveFields: (keyof T)[] = []
-): Omit<T, keyof T> {
+): T {
   const sanitized = { ...data }
   
   // Always remove these fields
