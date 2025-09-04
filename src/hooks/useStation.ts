@@ -75,16 +75,28 @@ export function useStation() {
 
   // Auto-advance logic: advance station when no track is playing but queue has ready tracks
   useEffect(() => {
-    const { currentTrack, queue, isLoading } = stationData
+    const { currentTrack, queue, isLoading, playheadSeconds } = stationData
     
-    // Skip if still loading or if there's already a track playing
-    if (isLoading || currentTrack) return
+    // Skip if still loading
+    if (isLoading) return
     
-    // Check if there are any READY tracks in the queue
-    const readyTracks = queue.filter(track => track.status === 'READY')
-    
-    if (readyTracks.length > 0) {
-      console.log('No current track playing but READY tracks found, auto-advancing station...')
+    // Case 1: No current track but READY tracks available
+    if (!currentTrack) {
+      const readyTracks = queue.filter(track => track.status === 'READY')
+      if (readyTracks.length > 0) {
+        console.log('No current track playing but READY tracks found, auto-advancing station...')
+        advanceStation()
+      }
+      return
+    }
+
+    // Case 2: Current track has finished playing (server-side check)
+    if (currentTrack && playheadSeconds >= currentTrack.duration_seconds) {
+      console.log('Current track finished on server, auto-advancing station...', {
+        trackId: currentTrack.id,
+        playheadSeconds,
+        duration: currentTrack.duration_seconds
+      })
       advanceStation()
     }
   }, [stationData, advanceStation])
