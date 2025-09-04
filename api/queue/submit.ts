@@ -104,6 +104,22 @@ async function submitHandler(req: VercelRequest, res: VercelResponse) {
         trackId: track.id
       })
 
+      // Trigger worker to process the PAID track immediately (mock mode)
+      try {
+        const baseUrl = process.env.VITE_SITE_URL || 'http://localhost:5173'
+        const workerUrl = `${baseUrl}/api/worker/generate`
+        
+        // Fire-and-forget call to worker - don't wait for completion
+        fetch(workerUrl, { 
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        }).catch(error => {
+          console.warn('Worker trigger failed (non-blocking):', error.message)
+        })
+      } catch (error) {
+        console.warn('Worker trigger error (non-blocking):', error)
+      }
+
       return res.status(201).json({ track: sanitizeForClient(track, ['eleven_request_id', 'x402_payment_tx']) })
     }
 
