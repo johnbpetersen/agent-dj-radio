@@ -91,8 +91,31 @@ export async function createTrack({ prompt, durationSeconds }: CreateTrackParams
     throw new Error('Prompt cannot be empty')
   }
 
-  if (prompt.length > 500) {
-    throw new Error('Prompt too long (max 500 characters)')
+  // Truncate prompt if too long, but try to keep it meaningful
+  let truncatedPrompt = prompt.trim()
+  if (truncatedPrompt.length > 500) {
+    // Try to truncate at a sentence or phrase boundary
+    let cutoff = 490 // Leave room for "..."
+    
+    // Find the last sentence/phrase boundary before cutoff
+    const boundaries = ['. ', '! ', '? ', ', ', ': ', '; ', ' - ', ' — ']
+    let bestCutoff = cutoff
+    
+    for (const boundary of boundaries) {
+      const lastIndex = truncatedPrompt.lastIndexOf(boundary, cutoff)
+      if (lastIndex > cutoff * 0.7) { // Don't cut too early (keep at least 70%)
+        bestCutoff = lastIndex + boundary.length - 1
+        break
+      }
+    }
+    
+    truncatedPrompt = truncatedPrompt.slice(0, bestCutoff).trim() + '...'
+    
+    logger.warn('Prompt truncated for ElevenLabs API', {
+      correlationId,
+      originalLength: prompt.length,
+      truncatedLength: truncatedPrompt.length
+    })
   }
 
   logger.info('Starting ElevenLabs track creation', {
@@ -136,7 +159,7 @@ export async function createTrack({ prompt, durationSeconds }: CreateTrackParams
           'User-Agent': 'Agent-DJ-Radio/1.0'
         },
         body: JSON.stringify({
-          prompt: prompt.trim(),
+          prompt: truncatedPrompt,
           music_length_ms: durationSeconds * 1000,
           instrumental: true
         }),
