@@ -16,42 +16,71 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
   const [isAudioLoaded, setIsAudioLoaded] = useState(false)
   const lastUpdateRef = useRef<number>(0)
 
-  // OPTIMIZED TIMER: Use audio timeupdate events + optimized React renders
+  // HYBRID TIMER: Smooth JavaScript timer synchronized with audio element
   useEffect(() => {
     const audio = audioRef.current
     if (!audio || !track) return
 
-    const handleTimeUpdate = () => {
+    let animationFrame: number
+    let isDestroyed = false
+
+    const updateTimer = () => {
+      if (isDestroyed || !audio) return
+      
       const audioCurrentTime = audio.currentTime
       const currentSecond = Math.floor(audioCurrentTime)
       
-      // Only update state when seconds change to reduce re-renders
-      if (currentSecond !== lastUpdateRef.current) {
-        lastUpdateRef.current = currentSecond
-        setCurrentPlayheadSeconds(audioCurrentTime)
-        
-        // Check if track finished
-        if (audioCurrentTime >= track.duration_seconds && audioCurrentTime > 0) {
-          console.log('🎵 Track finished (audio timeupdate), advancing...')
-          onAdvance()
-          return
-        }
+      // Always update current time for smooth display
+      setCurrentPlayheadSeconds(audioCurrentTime)
+      
+      // Check if track finished
+      if (audioCurrentTime >= track.duration_seconds && audioCurrentTime > 0) {
+        console.log('🎵 Track finished, advancing...')
+        onAdvance()
+        return
+      }
+      
+      // Continue animation loop
+      animationFrame = requestAnimationFrame(updateTimer)
+    }
+
+    // Start the timer loop when audio is playing
+    const startTimer = () => {
+      if (!isDestroyed) {
+        animationFrame = requestAnimationFrame(updateTimer)
       }
     }
 
-    // Audio events for smooth timer updates
-    audio.addEventListener('timeupdate', handleTimeUpdate)
+    const stopTimer = () => {
+      if (animationFrame) {
+        cancelAnimationFrame(animationFrame)
+      }
+    }
+
+    // Audio events for loading and playback state
     audio.addEventListener('loadstart', () => console.log('🎵 Audio loading started...'))
     audio.addEventListener('canplay', () => {
       console.log('🎵 Audio can start playing')
       setIsAudioLoaded(true)
     })
     audio.addEventListener('waiting', () => console.log('🎵 Audio waiting/buffering...'))
-    audio.addEventListener('playing', () => console.log('🎵 Audio playing event'))
-    audio.addEventListener('pause', () => console.log('🎵 Audio paused event'))
+    audio.addEventListener('playing', () => {
+      console.log('🎵 Audio playing event')
+      startTimer()
+    })
+    audio.addEventListener('pause', () => {
+      console.log('🎵 Audio paused event')
+      stopTimer()
+    })
+
+    // If already playing when effect runs, start timer
+    if (!audio.paused) {
+      startTimer()
+    }
 
     return () => {
-      audio.removeEventListener('timeupdate', handleTimeUpdate)
+      isDestroyed = true
+      stopTimer()
       audio.removeEventListener('loadstart', () => {})
       audio.removeEventListener('canplay', () => {})
       audio.removeEventListener('waiting', () => {})
@@ -79,7 +108,7 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
     const audio = audioRef.current
     if (!audio || !track?.audio_url) {
       setIsPlaying(false)
-      setLocalPlayheadSeconds(0)
+      setCurrentPlayheadSeconds(0)
       return
     }
 
@@ -332,11 +361,9 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
         </div>
         <div className="w-full bg-gray-200 rounded-full h-2">
           <div
-            className="bg-blue-500 h-2 rounded-full transition-all duration-[1000ms] ease-linear"
+            className="bg-blue-500 h-2 rounded-full"
             style={{ 
-              width: `${Math.min(100, progressPercent)}%`,
-              // For smoother animation, we can add CSS custom properties
-              '--progress': `${Math.min(100, progressPercent)}%`
+              width: `${Math.min(100, progressPercent)}%`
             }}
           />
         </div>
