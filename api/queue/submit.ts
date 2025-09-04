@@ -1,19 +1,20 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { supabaseAdmin } from '../_shared/supabase'
-import { calculatePrice, validateDuration } from '../../src/server/pricing'
-import { createTrack, upsertUser, updateUserLastSubmit } from '../../src/server/db'
-import { checkSubmitCooldown, recordSubmit } from '../../src/server/rate-limit'
-import { buildChallenge } from '../../src/server/x402'
-import { broadcastQueueUpdate } from '../../src/server/realtime'
-import { logger, generateCorrelationId } from '../../src/lib/logger'
-import { errorTracker, handleApiError } from '../../src/lib/error-tracking'
-import { secureHandler, securityConfigs } from '../_shared/secure-handler'
-import { sanitizeForClient } from '../_shared/security'
+import { supabaseAdmin } from '../_shared/supabase.js'
+import { calculatePrice, validateDuration } from '../../src/server/pricing.js'
+import { createTrack, upsertUser, updateUserLastSubmit } from '../../src/server/db.js'
+import { checkSubmitCooldown, recordSubmit } from '../../src/server/rate-limit.js'
+import { buildChallenge } from '../../src/server/x402.js'
+import { broadcastQueueUpdate } from '../../src/server/realtime.js'
+import { logger, generateCorrelationId } from '../../src/lib/logger.js'
+import { errorTracker, handleApiError } from '../../src/lib/error-tracking.js'
+import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
+import { sanitizeForClient } from '../_shared/security.js'
 import type { SubmitTrackRequest, X402ChallengeResponse } from '../../src/types'
 
-async function submitHandler(req: VercelRequest, res: VercelResponse) {
+async function submitHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    res.status(405).json({ error: 'Method not allowed' })
+    return
   }
 
   try {
@@ -21,31 +22,36 @@ async function submitHandler(req: VercelRequest, res: VercelResponse) {
 
     // Validation
     if (!prompt || !prompt.trim()) {
-      return res.status(400).json({ error: 'Prompt is required' })
+      res.status(400).json({ error: 'Prompt is required' })
+      return
     }
 
     if (!user_id) {
-      return res.status(400).json({ error: 'User ID is required' })
+      res.status(400).json({ error: 'User ID is required' })
+      return
     }
 
     if (prompt.trim().length > 500) {
-      return res.status(400).json({ error: 'Prompt too long (max 500 characters)' })
+      res.status(400).json({ error: 'Prompt too long (max 500 characters)' })
+      return
     }
 
     // Server-side duration validation (security)
     if (!validateDuration(duration_seconds)) {
-      return res.status(400).json({ 
+      res.status(400).json({ 
         error: 'Invalid duration. Must be 60, 90, or 120 seconds.' 
       })
+      return
     }
 
     // Check rate limiting
     const cooldownCheck = checkSubmitCooldown({ userId: user_id })
     if (!cooldownCheck.allowed) {
-      return res.status(429).json({ 
+      res.status(429).json({ 
         error: 'Rate limit exceeded',
         retry_after_seconds: cooldownCheck.remainingSeconds 
       })
+      return
     }
 
     // Verify user exists and is not banned
@@ -56,11 +62,13 @@ async function submitHandler(req: VercelRequest, res: VercelResponse) {
       .single()
 
     if (userError || !user) {
-      return res.status(400).json({ error: 'Invalid user' })
+      res.status(400).json({ error: 'Invalid user' })
+      return
     }
 
     if (user.banned) {
-      return res.status(403).json({ error: 'User is banned' })
+      res.status(403).json({ error: 'User is banned' })
+      return
     }
 
     // Server calculates price (ignore any client-provided price)
@@ -88,7 +96,8 @@ async function submitHandler(req: VercelRequest, res: VercelResponse) {
       })
 
       if (!track) {
-        return res.status(500).json({ error: 'Failed to create track' })
+        res.status(500).json({ error: 'Failed to create track' })
+        return
       }
 
       // Record successful submit for rate limiting
@@ -120,7 +129,8 @@ async function submitHandler(req: VercelRequest, res: VercelResponse) {
         console.warn('Worker trigger error (non-blocking):', error)
       }
 
-      return res.status(201).json({ track: sanitizeForClient(track, ['eleven_request_id', 'x402_payment_tx']) })
+      res.status(201).json({ track: sanitizeForClient(track, ['eleven_request_id', 'x402_payment_tx']) })
+      return
     }
 
     // x402 flow: create PENDING_PAYMENT track and return challenge
@@ -142,7 +152,8 @@ async function submitHandler(req: VercelRequest, res: VercelResponse) {
     })
 
     if (!track) {
-      return res.status(500).json({ error: 'Failed to create track' })
+      res.status(500).json({ error: 'Failed to create track' })
+      return
     }
 
     // Build x402 challenge

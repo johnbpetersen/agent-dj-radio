@@ -1,19 +1,20 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { supabaseAdmin } from '../_shared/supabase'
-import { getStationState, updateStationState, getTracksByStatus, updateTrackStatus, createTrack } from '../../src/server/db'
-import { selectNextTrack, createReplayTrack } from '../../src/server/selectors'
-import { calculatePlayhead, isTrackFinished } from '../../src/server/station'
-import { broadcastStationUpdate, broadcastTrackAdvance } from '../../src/server/realtime'
-import { logger, generateCorrelationId } from '../../src/lib/logger'
-import { errorTracker, handleApiError } from '../../src/lib/error-tracking'
-import { secureHandler, securityConfigs } from '../_shared/secure-handler'
+import { supabaseAdmin } from '../_shared/supabase.js'
+import { getStationState, updateStationState, getTracksByStatus, updateTrackStatus, createTrack } from '../../src/server/db.js'
+import { selectNextTrack, createReplayTrack } from '../../src/server/selectors.js'
+import { calculatePlayhead, isTrackFinished } from '../../src/server/station.js'
+import { broadcastStationUpdate, broadcastTrackAdvance } from '../../src/server/realtime.js'
+import { logger, generateCorrelationId } from '../../src/lib/logger.js'
+import { errorTracker, handleApiError } from '../../src/lib/error-tracking.js'
+import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
 
-async function advanceHandler(req: VercelRequest, res: VercelResponse) {
+async function advanceHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
   const correlationId = generateCorrelationId()
   const startTime = Date.now()
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    res.status(405).json({ error: 'Method not allowed' })
+    return
   }
 
   logger.cronJobStart('station/advance', { correlationId })
@@ -45,13 +46,14 @@ async function advanceHandler(req: VercelRequest, res: VercelResponse) {
         currentTrackId: currentTrack.id
       })
       
-      return res.status(200).json({
+      res.status(200).json({
         message: 'Current track still playing',
         advanced: false,
         current_track: currentTrack,
         playhead_seconds: playheadSeconds,
         correlationId
       })
+      return
     }
 
     const previousTrackId = currentTrack?.id || null
@@ -128,7 +130,7 @@ async function advanceHandler(req: VercelRequest, res: VercelResponse) {
         result: 'no_tracks'
       })
 
-      return res.status(200).json({
+      res.status(200).json({
         message: 'No tracks available to play',
         advanced: true,
         current_track: null,
@@ -136,6 +138,7 @@ async function advanceHandler(req: VercelRequest, res: VercelResponse) {
         replay_created: null,
         correlationId
       })
+      return
     }
 
     // Update track to PLAYING (idempotent - only one track can be PLAYING)
