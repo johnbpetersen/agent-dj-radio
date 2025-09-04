@@ -69,6 +69,7 @@ export interface CreateTrackParams {
 
 export interface CreateTrackResult {
   requestId: string
+  audioBuffer?: Buffer // For synchronous responses
 }
 
 /**
@@ -181,21 +182,21 @@ export async function createTrack({ prompt, durationSeconds }: CreateTrackParams
         throw error
       }
 
-      const data = await response.json() as any
-      
-      if (!data.generation_id) {
-        throw new Error('Invalid response from ElevenLabs API: missing generation_id')
-      }
+      // ElevenLabs returns the MP3 file directly, not JSON
+      const audioBuffer = await response.arrayBuffer()
+      const audioBufferData = Buffer.from(audioBuffer)
 
-      logger.info('ElevenLabs track creation successful', {
+      logger.info('ElevenLabs track creation successful (synchronous)', {
         correlationId,
-        requestId: data.generation_id,
+        audioSize: audioBufferData.length,
         duration: Date.now() - startTime,
         attempt
       })
 
+      // Return the audio buffer directly since it's synchronous
       return {
-        requestId: data.generation_id
+        requestId: `sync_${correlationId}`, // Generate a fake request ID for compatibility
+        audioBuffer: audioBufferData
       }
 
     } catch (error) {

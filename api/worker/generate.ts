@@ -97,29 +97,43 @@ async function generateHandler(req: VercelRequest, res: VercelResponse): Promise
         await ensureTracksBucket()
         
         // Start generation
-        const { requestId } = await createTrack({
+        const result = await createTrack({
           prompt: trackToGenerate.prompt,
           durationSeconds: trackToGenerate.duration_seconds
         })
         
-        elevenRequestId = requestId
+        elevenRequestId = result.requestId
         
-        // Poll for completion with timeout
-        const pollResult = await pollTrackWithTimeout({ requestId })
+        let audioBuffer: Buffer
         
-        if (pollResult.status === 'failed' || !pollResult.audioUrl) {
-          throw new Error(pollResult.error || 'ElevenLabs generation failed')
+        if (result.audioBuffer) {
+          // Synchronous generation - audio is ready immediately
+          logger.info('ElevenLabs synchronous generation completed', { 
+            correlationId, 
+            trackId: trackToGenerate.id,
+            requestId: result.requestId,
+            audioSize: result.audioBuffer.length
+          })
+          
+          audioBuffer = result.audioBuffer
+        } else {
+          // Asynchronous generation - need to poll
+          const pollResult = await pollTrackWithTimeout({ requestId: result.requestId })
+          
+          if (pollResult.status === 'failed' || !pollResult.audioUrl) {
+            throw new Error(pollResult.error || 'ElevenLabs generation failed')
+          }
+          
+          logger.info('ElevenLabs asynchronous generation completed', { 
+            correlationId, 
+            trackId: trackToGenerate.id,
+            requestId: result.requestId,
+            status: pollResult.status
+          })
+          
+          // Download audio
+          audioBuffer = await fetchToBuffer(pollResult.audioUrl)
         }
-        
-        logger.info('ElevenLabs generation completed', { 
-          correlationId, 
-          trackId: trackToGenerate.id,
-          requestId,
-          status: pollResult.status
-        })
-        
-        // Download audio
-        const audioBuffer = await fetchToBuffer(pollResult.audioUrl)
         
         // Upload to Supabase Storage
         const { publicUrl } = await uploadAudioBuffer({
