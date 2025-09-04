@@ -73,6 +73,22 @@ export function useStation() {
     return () => clearInterval(interval)
   }, [fetchStationState])
 
+  // Auto-advance logic: advance station when no track is playing but queue has ready tracks
+  useEffect(() => {
+    const { currentTrack, queue, isLoading } = stationData
+    
+    // Skip if still loading or if there's already a track playing
+    if (isLoading || currentTrack) return
+    
+    // Check if there are any READY tracks in the queue
+    const readyTracks = queue.filter(track => track.status === 'READY')
+    
+    if (readyTracks.length > 0) {
+      console.log('No current track playing but READY tracks found, auto-advancing station...')
+      advanceStation()
+    }
+  }, [stationData, advanceStation])
+
   // Real-time subscriptions
   useEffect(() => {
     const channel = supabase
