@@ -175,32 +175,30 @@ export function getCorrelationId(req: any): string {
 export const logger = new Logger()
 
 // Request middleware helper
-export function withLogging<T>(
+export async function withLogging<T>(
   endpoint: string,
   handler: (correlationId: string) => Promise<T>
 ): Promise<T> {
-  return async function(this: any) {
-    const correlationId = generateCorrelationId()
-    const startTime = Date.now()
+  const correlationId = generateCorrelationId()
+  const startTime = Date.now()
+  
+  logger.request(endpoint, { correlationId })
+  
+  try {
+    const result = await handler(correlationId)
+    const duration = Date.now() - startTime
     
-    logger.request(endpoint, { correlationId })
+    logger.requestComplete(endpoint, duration, { correlationId })
+    return result
+  } catch (error) {
+    const duration = Date.now() - startTime
     
-    try {
-      const result = await handler(correlationId)
-      const duration = Date.now() - startTime
-      
-      logger.requestComplete(endpoint, duration, { correlationId })
-      return result
-    } catch (error) {
-      const duration = Date.now() - startTime
-      
-      logger.error('Request failed', { 
-        endpoint, 
-        correlationId, 
-        duration 
-      }, error instanceof Error ? error : new Error(String(error)))
-      
-      throw error
-    }
-  }.call(this)
+    logger.error('Request failed', { 
+      endpoint, 
+      correlationId, 
+      duration 
+    }, error instanceof Error ? error : new Error(String(error)))
+    
+    throw error
+  }
 }

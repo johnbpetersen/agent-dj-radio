@@ -307,7 +307,8 @@ export async function updateTrackRating(
 
   // Calculate rating score
   const reactionCounts = reactions.reduce((acc, reaction) => {
-    acc[reaction.kind] = (acc[reaction.kind] || 0) + 1
+    const kind = reaction.kind as ReactionKind
+    acc[kind] = (acc[kind] || 0) + 1
     return acc
   }, {} as Record<ReactionKind, number>)
 

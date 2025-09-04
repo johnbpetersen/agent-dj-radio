@@ -2,9 +2,9 @@
 // Sprint 6: Apply security headers and rate limiting to all endpoints
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { applyCorsAndSecurity, checkRateLimit, applyRateLimitHeaders, SecurityOptions } from './security.js'
-import { logger, generateCorrelationId } from '../../src/lib/logger.js'
-import { errorTracker } from '../../src/lib/error-tracking.js'
+import { applyCorsAndSecurity, checkRateLimit, applyRateLimitHeaders, SecurityOptions } from './security'
+import { logger, generateCorrelationId } from '../../src/lib/logger'
+import { errorTracker } from '../../src/lib/error-tracking'
 
 export interface SecureHandlerOptions extends SecurityOptions {
   rateLimitOptions?: {
