@@ -39,7 +39,7 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
     setLocalPlayheadSeconds(playheadSeconds)
   }, [playheadSeconds])
 
-  // Handle track changes
+  // Handle track changes - SIMPLIFIED FOR AUDIO DEBUG
   useEffect(() => {
     const audio = audioRef.current
     if (!audio || !track?.audio_url) {
@@ -48,40 +48,51 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
       return
     }
 
-    console.log('Loading new track:', track.prompt, track.audio_url)
+    console.log('🎵 DEBUG: Loading new track:', {
+      prompt: track.prompt,
+      audio_url: track.audio_url,
+      trackId: track.id
+    })
+
+    // Reset audio element completely
+    audio.pause()
+    audio.currentTime = 0
+    audio.volume = 1.0 // Ensure volume is at max
     audio.src = track.audio_url
-    audio.currentTime = playheadSeconds
-    setLocalPlayheadSeconds(playheadSeconds)
+    
+    setLocalPlayheadSeconds(0)
 
-    // Try to autoplay, but handle browser restrictions
-    const attemptPlay = async () => {
-      try {
-        await audio.play()
-        setIsPlaying(true)
-        console.log('Audio started playing')
-      } catch (error) {
-        console.log('Autoplay blocked, need user interaction:', error)
-        setIsPlaying(false)
-      }
+    // Add load event listener to debug
+    const handleLoad = () => {
+      console.log('🎵 DEBUG: Audio loaded successfully', {
+        duration: audio.duration,
+        readyState: audio.readyState
+      })
     }
 
-    if (hasUserInteracted) {
-      attemptPlay()
+    const handleLoadError = (e: Event) => {
+      console.error('🎵 DEBUG: Audio load error:', e)
+      console.error('🎵 DEBUG: Audio error details:', {
+        error: audio.error,
+        networkState: audio.networkState,
+        readyState: audio.readyState,
+        src: audio.src
+      })
     }
 
-    // Keep audio element in sync with local playhead
-    const syncInterval = setInterval(() => {
-      if (audio && !audio.paused && Math.abs(audio.currentTime - localPlayheadSeconds) > 1) {
-        audio.currentTime = localPlayheadSeconds
-      }
-    }, 1000)
+    audio.addEventListener('loadeddata', handleLoad)
+    audio.addEventListener('error', handleLoadError)
+
+    // Try to load the audio
+    audio.load()
 
     return () => {
-      clearInterval(syncInterval)
+      audio.removeEventListener('loadeddata', handleLoad)
+      audio.removeEventListener('error', handleLoadError)
       audio.pause()
       setIsPlaying(false)
     }
-  }, [track?.id, track?.audio_url, playheadSeconds, hasUserInteracted])
+  }, [track?.id, track?.audio_url])
 
   // Handle audio events
   useEffect(() => {
@@ -122,19 +133,69 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
     }
   }, [onAdvance])
 
-  // Handle user interaction to enable autoplay
+  // Handle user interaction to enable autoplay - SIMPLIFIED FOR AUDIO DEBUG
   const handleUserInteraction = async () => {
+    console.log('🎵 DEBUG: User clicked play button')
     setHasUserInteracted(true)
+    
     const audio = audioRef.current
-    if (audio && track?.audio_url && !isPlaying) {
-      try {
-        audio.currentTime = localPlayheadSeconds
-        await audio.play()
-        setIsPlaying(true)
-        console.log('Manual play successful')
-      } catch (error) {
-        console.error('Manual play failed:', error)
+    if (!audio) {
+      console.error('🎵 DEBUG: No audio element found')
+      return
+    }
+
+    if (!track?.audio_url) {
+      console.error('🎵 DEBUG: No audio URL available')
+      return
+    }
+
+    console.log('🎵 DEBUG: Attempting to play audio:', {
+      src: audio.src,
+      readyState: audio.readyState,
+      networkState: audio.networkState,
+      paused: audio.paused,
+      volume: audio.volume,
+      currentTime: audio.currentTime,
+      duration: audio.duration
+    })
+
+    try {
+      // Ensure audio is loaded and ready
+      if (audio.readyState < 3) {
+        console.log('🎵 DEBUG: Audio not ready, waiting for load...')
+        await new Promise((resolve, reject) => {
+          const handleCanPlay = () => {
+            audio.removeEventListener('canplay', handleCanPlay)
+            audio.removeEventListener('error', handleError)
+            resolve(true)
+          }
+          const handleError = (e: Event) => {
+            audio.removeEventListener('canplay', handleCanPlay)
+            audio.removeEventListener('error', handleError)
+            reject(e)
+          }
+          audio.addEventListener('canplay', handleCanPlay)
+          audio.addEventListener('error', handleError)
+        })
       }
+
+      console.log('🎵 DEBUG: Audio ready, attempting play...')
+      audio.currentTime = localPlayheadSeconds
+      const playPromise = audio.play()
+      
+      if (playPromise !== undefined) {
+        await playPromise
+      }
+      
+      setIsPlaying(true)
+      console.log('🎵 DEBUG: ✅ Audio is now playing!', {
+        paused: audio.paused,
+        currentTime: audio.currentTime,
+        volume: audio.volume
+      })
+    } catch (error) {
+      console.error('🎵 DEBUG: ❌ Manual play failed:', error)
+      setIsPlaying(false)
     }
   }
 
@@ -202,7 +263,14 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
         </div>
       </div>
 
-      <audio ref={audioRef} />
+      {/* DEBUG: Show audio controls for testing */}
+      <div className="mb-4 p-2 bg-gray-100 rounded">
+        <p className="text-xs text-gray-600 mb-2">DEBUG: Audio Element</p>
+        <audio ref={audioRef} controls className="w-full" />
+        {track.audio_url && (
+          <p className="text-xs text-gray-500 mt-1 break-all">URL: {track.audio_url}</p>
+        )}
+      </div>
 
       <div className="mb-4">
         <div className="flex justify-between text-sm text-gray-600 mb-2">
