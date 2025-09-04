@@ -48,10 +48,13 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
       return
     }
 
-    console.log('🎵 DEBUG: Loading new track:', {
+    console.log('🎵 AUDIO URL DEBUG:', track.audio_url)
+    console.log('🎵 TRACK DEBUG:', {
+      id: track.id,
       prompt: track.prompt,
       audio_url: track.audio_url,
-      trackId: track.id
+      status: track.status,
+      source: track.source
     })
 
     // Reset audio element completely
