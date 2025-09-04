@@ -15,7 +15,7 @@ if (!supabaseUrl || !supabaseServiceRoleKey) {
       select: (query: string) => ({
         eq: (column: string, value: any) => ({
           single: () => Promise.resolve({
-            data: {
+            data: table === 'station_state' ? {
               id: 1,
               current_track_id: 'mock-track-1',
               current_started_at: new Date().toISOString(),
@@ -29,7 +29,7 @@ if (!supabaseUrl || !supabaseServiceRoleKey) {
                 audio_url: 'https://example.com/mock-audio.mp3',
                 created_at: new Date().toISOString()
               }
-            },
+            } : null,
             error: null
           }),
           limit: (count: number) => Promise.resolve({
@@ -37,9 +37,25 @@ if (!supabaseUrl || !supabaseServiceRoleKey) {
             error: null
           })
         }),
-        in: (column: string, values: any[]) => Promise.resolve({
-          data: [],
-          error: null
+        in: (column: string, values: any[]) => ({
+          order: (orderBy: string, options?: any) => Promise.resolve({
+            data: table === 'tracks' ? [
+              {
+                id: 'mock-track-2',
+                user_id: 'mock-user-2',
+                prompt: 'Upbeat electronic dance music',
+                duration_seconds: 200,
+                status: 'READY',
+                audio_url: 'https://example.com/mock-audio-2.mp3',
+                created_at: new Date(Date.now() - 60000).toISOString(),
+                user: {
+                  id: 'mock-user-2',
+                  username: 'dj_mock'
+                }
+              }
+            ] : [],
+            error: null
+          })
         })
       })
     })
