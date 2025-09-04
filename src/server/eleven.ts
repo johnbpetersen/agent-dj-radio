@@ -127,7 +127,7 @@ export async function createTrack({ prompt, durationSeconds }: CreateTrackParams
         maxAttempts: MAX_RETRY_ATTEMPTS
       })
 
-      const response = await fetch(`${ELEVEN_BASE_URL}/music/generation`, {
+      const response = await fetch(`${ELEVEN_BASE_URL}/music`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -135,9 +135,8 @@ export async function createTrack({ prompt, durationSeconds }: CreateTrackParams
           'User-Agent': 'Agent-DJ-Radio/1.0'
         },
         body: JSON.stringify({
-          text: prompt.trim(),
-          model_id: ELEVEN_MUSIC_MODEL_ID,
-          duration: durationSeconds,
+          prompt: prompt.trim(),
+          music_length_ms: durationSeconds * 1000,
         }),
         signal: AbortSignal.timeout(30000) // 30 second timeout for creation request
       })
@@ -184,19 +183,19 @@ export async function createTrack({ prompt, durationSeconds }: CreateTrackParams
 
       const data = await response.json() as any
       
-      if (!data.request_id) {
-        throw new Error('Invalid response from ElevenLabs API: missing request_id')
+      if (!data.generation_id) {
+        throw new Error('Invalid response from ElevenLabs API: missing generation_id')
       }
 
       logger.info('ElevenLabs track creation successful', {
         correlationId,
-        requestId: data.request_id,
+        requestId: data.generation_id,
         duration: Date.now() - startTime,
         attempt
       })
 
       return {
-        requestId: data.request_id
+        requestId: data.generation_id
       }
 
     } catch (error) {
@@ -260,7 +259,7 @@ export async function pollTrack({ requestId }: PollTrackParams): Promise<PollTra
   // Retry polling with shorter retry count (it's called repeatedly)
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const response = await fetch(`${ELEVEN_BASE_URL}/music/generation/${requestId}`, {
+      const response = await fetch(`${ELEVEN_BASE_URL}/music/${requestId}`, {
         headers: {
           'xi-api-key': ELEVEN_API_KEY,
           'User-Agent': 'Agent-DJ-Radio/1.0'
@@ -305,14 +304,14 @@ export async function pollTrack({ requestId }: PollTrackParams): Promise<PollTra
       
       // Map ElevenLabs status to our status
       let result: PollTrackResult
-      switch (data.state) {
+      switch (data.status) {
         case 'pending':
           result = { status: 'queued' }
           break
         case 'processing':
           result = { status: 'processing' }
           break
-        case 'complete':
+        case 'completed':
           result = { 
             status: 'ready', 
             audioUrl: data.audio_url 
@@ -327,7 +326,7 @@ export async function pollTrack({ requestId }: PollTrackParams): Promise<PollTra
         default:
           result = { 
             status: 'failed', 
-            error: `Unknown status: ${data.state}` 
+            error: `Unknown status: ${data.status}` 
           }
       }
 
