@@ -138,6 +138,7 @@ export async function createTrack({ prompt, durationSeconds }: CreateTrackParams
         body: JSON.stringify({
           prompt: prompt.trim(),
           music_length_ms: durationSeconds * 1000,
+          instrumental: true
         }),
         signal: AbortSignal.timeout(30000) // 30 second timeout for creation request
       })
