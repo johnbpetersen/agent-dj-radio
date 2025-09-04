@@ -8,21 +8,7 @@ interface AudienceWallProps {
   className?: string
 }
 
-// Generate some fake audience members to make the room feel alive
-const generateFakeAudience = () => {
-  const names = [
-    'Alex', 'Sam', 'Jordan', 'Casey', 'Riley', 'Quinn', 'Avery', 'Morgan',
-    'Jamie', 'Taylor', 'Sage', 'Phoenix', 'River', 'Sky', 'Rain', 'Ocean',
-    'Luna', 'Star', 'Nova', 'Cosmos', 'Neo', 'Zoe', 'Max', 'Kai'
-  ]
-  
-  return names.map((name, index) => ({
-    id: `fake-${index}`,
-    name,
-    isOnline: Math.random() > 0.3, // 70% appear online
-    lastSeen: Math.random() * 10 // minutes ago
-  }))
-}
+// Only show real users - no fake audience simulation
 
 export default function AudienceWall({ queue, currentTrack, className = '' }: AudienceWallProps) {
   // Get real users from queue and current track
@@ -54,16 +40,8 @@ export default function AudienceWall({ queue, currentTrack, className = '' }: Au
     return Array.from(users.values())
   }, [queue, currentTrack])
   
-  // Mix real users with fake audience for a lively feel
-  const allAudience = useMemo(() => {
-    const fakeAudience = generateFakeAudience()
-    
-    // Combine real users (first) with some fake users
-    return [
-      ...realUsers,
-      ...fakeAudience.slice(0, 20 - realUsers.length) // Fill up to ~20 total
-    ].slice(0, 24) // Cap at 24 for good grid layout
-  }, [realUsers])
+  // Show only real users from tracks and queue
+  const allAudience = realUsers
 
   return (
     <div className={`glass-card ${className}`}>
@@ -136,7 +114,7 @@ export default function AudienceWall({ queue, currentTrack, className = '' }: Au
             {realUsers.length > 0 && (
               <span>{realUsers.length} active DJs • </span>
             )}
-            Room capacity: {allAudience.length}/24
+            Active users: {allAudience.length}
           </div>
         </div>
       </div>
