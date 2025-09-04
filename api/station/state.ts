@@ -6,16 +6,18 @@ import { secureHandler, securityConfigs } from '../_shared/secure-handler'
 import { sanitizeForClient } from '../_shared/security'
 import type { StationStateResponse } from '../../src/types'
 
-async function stationStateHandler(req: VercelRequest, res: VercelResponse) {
+async function stationStateHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    res.status(405).json({ error: 'Method not allowed' })
+    return
   }
 
   try {
     // Get station state with current track
     const stationState = await getStationState(supabaseAdmin)
     if (!stationState) {
-      return res.status(500).json({ error: 'Failed to get station state' })
+      res.status(500).json({ error: 'Failed to get station state' })
+      return
     }
 
     // Calculate current playhead
