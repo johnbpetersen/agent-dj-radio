@@ -2,8 +2,8 @@
 // Comprehensive tracking of payment challenges, submissions, and verifications
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { logger } from '../lib/logger'
-import { errorTracker } from '../lib/error-tracking'
+import { logger } from '../lib/logger.js'
+import { errorTracker } from '../lib/error-tracking.js'
 
 export type X402EventType = 
   | 'CHALLENGE_CREATED'

@@ -1,6 +1,6 @@
 // Supabase Realtime broadcasting utilities
 
-import { supabaseAdmin } from '../../api/_shared/supabase'
+import { supabaseAdmin } from '../../api/_shared/supabase.js'
 import type { StationState, Track } from '../types'
 
 const STATION_CHANNEL = 'station'

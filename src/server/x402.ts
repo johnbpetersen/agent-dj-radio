@@ -1,10 +1,10 @@
 // x402 payment challenge and verification logic
 
 import type { X402Challenge } from '../types'
-import { logger, generateCorrelationId } from '../lib/logger'
-import { errorTracker } from '../lib/error-tracking'
-import { auditChallengeCreated, auditVerificationStarted, auditVerificationSuccess, auditVerificationFailed } from './x402-audit'
-import { supabaseAdmin } from '../../api/_shared/supabase'
+import { logger, generateCorrelationId } from '../lib/logger.js'
+import { errorTracker } from '../lib/error-tracking.js'
+import { auditChallengeCreated, auditVerificationStarted, auditVerificationSuccess, auditVerificationFailed } from './x402-audit.js'
+import { supabaseAdmin } from '../../api/_shared/supabase.js'
 
 // x402 Configuration
 const X402_PROVIDER_URL = process.env.X402_PROVIDER_URL || 'https://api.cdp.coinbase.com/x402'

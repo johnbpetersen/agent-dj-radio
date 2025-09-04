@@ -1,6 +1,6 @@
 // Supabase Storage operations for audio files
 
-import { supabaseAdmin } from '../../api/_shared/supabase'
+import { supabaseAdmin } from '../../api/_shared/supabase.js'
 
 const TRACKS_BUCKET = 'tracks'
 

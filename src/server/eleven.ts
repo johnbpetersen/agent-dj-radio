@@ -1,8 +1,8 @@
 // ElevenLabs Music API integration with enhanced rate limiting and retries
 
 import type { ElevenTrackRequest, ElevenTrackResponse, ElevenPollResponse } from '../types'
-import { logger, generateCorrelationId } from '../lib/logger'
-import { errorTracker } from '../lib/error-tracking'
+import { logger, generateCorrelationId } from '../lib/logger.js'
+import { errorTracker } from '../lib/error-tracking.js'
 
 const ELEVEN_API_KEY = process.env.ELEVEN_API_KEY
 const ELEVEN_MUSIC_MODEL_ID = process.env.ELEVEN_MUSIC_MODEL_ID || 'eleven_music_v1'
