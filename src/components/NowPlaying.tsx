@@ -13,38 +13,50 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
   const [currentPlayheadSeconds, setCurrentPlayheadSeconds] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [hasUserInteracted, setHasUserInteracted] = useState(false)
-  const animationRef = useRef<number>()
+  const [isAudioLoaded, setIsAudioLoaded] = useState(false)
+  const lastUpdateRef = useRef<number>(0)
 
-  // SILKY SMOOTH TIMER: Use audio element's currentTime with requestAnimationFrame (60fps)
+  // OPTIMIZED TIMER: Use audio timeupdate events + optimized React renders
   useEffect(() => {
-    const updateTimer = () => {
-      const audio = audioRef.current
-      if (!audio || !track) return
+    const audio = audioRef.current
+    if (!audio || !track) return
 
-      // Use the audio element's actual currentTime for perfect sync
+    const handleTimeUpdate = () => {
       const audioCurrentTime = audio.currentTime
-      setCurrentPlayheadSeconds(audioCurrentTime)
-
-      // Check if track finished (use audio element time, not artificial timer)
-      if (audioCurrentTime >= track.duration_seconds && audioCurrentTime > 0) {
-        console.log('Track finished (audio-driven), advancing...')
-        onAdvance()
-        return
+      const currentSecond = Math.floor(audioCurrentTime)
+      
+      // Only update state when seconds change to reduce re-renders
+      if (currentSecond !== lastUpdateRef.current) {
+        lastUpdateRef.current = currentSecond
+        setCurrentPlayheadSeconds(audioCurrentTime)
+        
+        // Check if track finished
+        if (audioCurrentTime >= track.duration_seconds && audioCurrentTime > 0) {
+          console.log('🎵 Track finished (audio timeupdate), advancing...')
+          onAdvance()
+          return
+        }
       }
-
-      // Continue the animation loop
-      animationRef.current = requestAnimationFrame(updateTimer)
     }
 
-    // Start the smooth 60fps update loop
-    if (track) {
-      animationRef.current = requestAnimationFrame(updateTimer)
-    }
+    // Audio events for smooth timer updates
+    audio.addEventListener('timeupdate', handleTimeUpdate)
+    audio.addEventListener('loadstart', () => console.log('🎵 Audio loading started...'))
+    audio.addEventListener('canplay', () => {
+      console.log('🎵 Audio can start playing')
+      setIsAudioLoaded(true)
+    })
+    audio.addEventListener('waiting', () => console.log('🎵 Audio waiting/buffering...'))
+    audio.addEventListener('playing', () => console.log('🎵 Audio playing event'))
+    audio.addEventListener('pause', () => console.log('🎵 Audio paused event'))
 
     return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current)
-      }
+      audio.removeEventListener('timeupdate', handleTimeUpdate)
+      audio.removeEventListener('loadstart', () => {})
+      audio.removeEventListener('canplay', () => {})
+      audio.removeEventListener('waiting', () => {})
+      audio.removeEventListener('playing', () => {})
+      audio.removeEventListener('pause', () => {})
     }
   }, [track, onAdvance])
 
@@ -84,9 +96,11 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
     audio.pause()
     audio.currentTime = 0
     audio.volume = 1.0 // Ensure volume is at max
+    audio.preload = 'auto' // Preload audio for smooth playback
     audio.src = track.audio_url
     
-    setLocalPlayheadSeconds(0)
+    setCurrentPlayheadSeconds(0)
+    setIsAudioLoaded(false)
 
     // Add load event listener to debug
     const handleLoad = () => {
@@ -291,11 +305,24 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
 
       {/* DEBUG: Show audio controls for testing */}
       <div className="mb-4 p-2 bg-gray-100 rounded">
-        <p className="text-xs text-gray-600 mb-2">DEBUG: Audio Element</p>
-        <audio ref={audioRef} controls className="w-full" />
+        <p className="text-xs text-gray-600 mb-2">
+          DEBUG: Audio Element {!isAudioLoaded && '(Loading...)'}
+        </p>
+        <audio 
+          ref={audioRef} 
+          controls 
+          preload="auto"
+          crossOrigin="anonymous"
+          className="w-full" 
+        />
         {track.audio_url && (
           <p className="text-xs text-gray-500 mt-1 break-all">URL: {track.audio_url}</p>
         )}
+        <div className="text-xs text-gray-500 mt-1">
+          Status: {isPlaying ? 'Playing' : 'Paused'} | 
+          Loaded: {isAudioLoaded ? 'Yes' : 'No'} |
+          Time: {currentPlayheadSeconds.toFixed(1)}s
+        </div>
       </div>
 
       <div className="mb-4">
@@ -305,8 +332,12 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
         </div>
         <div className="w-full bg-gray-200 rounded-full h-2">
           <div
-            className="bg-blue-500 h-2 rounded-full"
-            style={{ width: `${Math.min(100, progressPercent)}%` }}
+            className="bg-blue-500 h-2 rounded-full transition-all duration-[1000ms] ease-linear"
+            style={{ 
+              width: `${Math.min(100, progressPercent)}%`,
+              // For smoother animation, we can add CSS custom properties
+              '--progress': `${Math.min(100, progressPercent)}%`
+            }}
           />
         </div>
         <div className="flex justify-between text-xs text-gray-500 mt-1">
