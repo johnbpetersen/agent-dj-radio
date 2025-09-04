@@ -14,13 +14,13 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
   const [isPlaying, setIsPlaying] = useState(false)
   const [hasUserInteracted, setHasUserInteracted] = useState(false)
 
-  // Update local playhead smoothly every 100ms
+  // Smooth timer that updates every second (much more natural than 100ms)
   useEffect(() => {
     if (!isPlaying || !track) return
 
     const interval = setInterval(() => {
       setLocalPlayheadSeconds(prev => {
-        const newTime = prev + 0.1
+        const newTime = prev + 1 // Increment by 1 second for smooth, natural progression
         // Auto-advance when track finishes
         if (newTime >= track.duration_seconds) {
           console.log('Track finished, advancing...')
@@ -29,15 +29,30 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
         }
         return newTime
       })
-    }, 100)
+    }, 1000) // Update every 1 second for smooth, consistent timer
 
     return () => clearInterval(interval)
   }, [isPlaying, track, onAdvance])
 
-  // Sync with server playhead periodically
+  // Sync with server playhead, but only if drift is significant (prevents jumpy corrections)
   useEffect(() => {
-    setLocalPlayheadSeconds(playheadSeconds)
-  }, [playheadSeconds])
+    const serverTime = playheadSeconds
+    const localTime = localPlayheadSeconds
+    const drift = Math.abs(serverTime - localTime)
+
+    // Only sync if drift is more than 3 seconds (prevents constant jumping)
+    if (drift > 3) {
+      console.log(`🕐 Timer sync: correcting ${drift}s drift (server: ${serverTime}s, local: ${localTime}s)`)
+      setLocalPlayheadSeconds(serverTime)
+    }
+  }, [playheadSeconds, localPlayheadSeconds])
+
+  // Initialize local playhead when track changes or starts
+  useEffect(() => {
+    if (track && playheadSeconds >= 0) {
+      setLocalPlayheadSeconds(playheadSeconds)
+    }
+  }, [track?.id, playheadSeconds])
 
   // Handle track changes - SIMPLIFIED FOR AUDIO DEBUG
   useEffect(() => {
@@ -282,7 +297,7 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
         </div>
         <div className="w-full bg-gray-200 rounded-full h-2">
           <div
-            className="bg-blue-500 h-2 rounded-full transition-all duration-100"
+            className="bg-blue-500 h-2 rounded-full transition-all duration-1000 ease-linear"
             style={{ width: `${Math.min(100, progressPercent)}%` }}
           />
         </div>
