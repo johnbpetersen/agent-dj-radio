@@ -1,19 +1,21 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { supabaseAdmin } from '../_shared/supabase'
-import { claimNextPaidTrack, updateTrackStatus } from '../../src/server/db'
-import { createTrack, pollTrackWithTimeout, fetchToBuffer } from '../../src/server/eleven'
-import { uploadAudioBuffer, ensureTracksBucket } from '../../src/server/storage'
-import { broadcastQueueUpdate } from '../../src/server/realtime'
-import { logger, generateCorrelationId } from '../../src/lib/logger'
-import { errorTracker, handleApiError } from '../../src/lib/error-tracking'
-import { secureHandler, securityConfigs } from '../_shared/secure-handler'
+import { supabaseAdmin } from '../_shared/supabase.js'
+import { claimNextPaidTrack, updateTrackStatus } from '../../src/server/db.js'
+import { createTrack, pollTrackWithTimeout, fetchToBuffer } from '../../src/server/eleven.js'
+import { uploadAudioBuffer, ensureTracksBucket } from '../../src/server/storage.js'
+import { broadcastQueueUpdate } from '../../src/server/realtime.js'
+import { logger, generateCorrelationId } from '../../src/lib/logger.js'
+import { errorTracker, handleApiError } from '../../src/lib/error-tracking.js'
+import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
 
-async function generateHandler(req: VercelRequest, res: VercelResponse) {
+async function generateHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
   const correlationId = generateCorrelationId()
   const startTime = Date.now()
+  let usedFallback = false
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    res.status(405).json({ error: 'Method not allowed' })
+    return
   }
 
   logger.cronJobStart('worker/generate', { correlationId })
@@ -32,11 +34,12 @@ async function generateHandler(req: VercelRequest, res: VercelResponse) {
         reason: 'no_paid_tracks'
       })
       
-      return res.status(200).json({ 
+      res.status(200).json({ 
         message: 'No tracks to generate',
         processed: false,
         correlationId
       })
+      return
     }
 
     logger.trackStatusChanged(trackToGenerate.id, 'PAID', 'GENERATING', { 
@@ -80,7 +83,7 @@ async function generateHandler(req: VercelRequest, res: VercelResponse) {
       })
     } else {
       // Real ElevenLabs generation with fallback to mock
-      let usedFallback = false
+      usedFallback = false
       
       try {
         logger.info('Starting ElevenLabs generation', { 
@@ -190,7 +193,7 @@ async function generateHandler(req: VercelRequest, res: VercelResponse) {
             fallbackFailed: true
           })
           
-          return res.status(200).json({
+          res.status(200).json({
             message: 'Track generation and fallback both failed',
             processed: true,
             error: error instanceof Error ? error.message : 'Generation failed',
@@ -198,6 +201,7 @@ async function generateHandler(req: VercelRequest, res: VercelResponse) {
             track_id: trackToGenerate.id,
             correlationId
           })
+          return
         }
       }
     }

@@ -182,7 +182,7 @@ export async function createTrack({ prompt, durationSeconds }: CreateTrackParams
         throw error
       }
 
-      const data = await response.json()
+      const data = await response.json() as any
       
       if (!data.request_id) {
         throw new Error('Invalid response from ElevenLabs API: missing request_id')
@@ -301,7 +301,7 @@ export async function pollTrack({ requestId }: PollTrackParams): Promise<PollTra
         throw error
       }
 
-      const data = await response.json()
+      const data = await response.json() as any
       
       // Map ElevenLabs status to our status
       let result: PollTrackResult
