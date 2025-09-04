@@ -141,11 +141,13 @@ async function generateHandler(req: VercelRequest, res: VercelResponse): Promise
           audioBuffer
         })
         
-        audioUrl = publicUrl
+        // Ensure the URL is clean (no newlines or extra whitespace)
+        audioUrl = publicUrl.replace(/\s+/g, '').trim()
+        
         logger.info('Audio uploaded to storage', { 
           correlationId, 
           trackId: trackToGenerate.id,
-          publicUrl
+          publicUrl: audioUrl
         })
         
       } catch (error) {

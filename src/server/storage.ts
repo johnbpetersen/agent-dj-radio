@@ -56,7 +56,10 @@ export function getPublicUrl(path: string): string {
     .from(TRACKS_BUCKET)
     .getPublicUrl(path)
   
-  return data.publicUrl
+  // Clean up the URL to remove any newlines or extra whitespace
+  const cleanUrl = data.publicUrl.replace(/\s+/g, '').trim()
+  
+  return cleanUrl
 }
 
 /**
