@@ -1,20 +1,22 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { calculatePrice, validateDuration } from '../../src/server/pricing'
+import { calculatePrice, validateDuration } from '../../src/server/pricing.js'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler'
 import type { PriceQuoteRequest, PriceQuoteResponse } from '../../src/types'
 
-async function priceQuoteHandler(req: VercelRequest, res: VercelResponse) {
+async function priceQuoteHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    res.status(405).json({ error: 'Method not allowed' })
+    return
   }
 
   try {
     const { duration_seconds }: PriceQuoteRequest = req.body
 
     if (!duration_seconds || !validateDuration(duration_seconds)) {
-      return res.status(400).json({ 
+      res.status(400).json({ 
         error: 'Invalid duration. Must be 60, 90, or 120 seconds.' 
       })
+      return
     }
 
     const price_usd = calculatePrice(duration_seconds)
