@@ -10,15 +10,22 @@ import SubmitForm from '../../SubmitForm'
 export default function Layout() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [showSubmitForm, setShowSubmitForm] = useState(false)
-  const { currentTrack, playheadSeconds, queue, isLoading, error, refetch } = useStation()
+  const { currentTrack, playheadSeconds, queue, isLoading, error, refetch, advanceStation } = useStation()
 
-  // Set up a temporary user ID for reactions if we don't have one
-  // This mimics the behavior from the original App component
+  // Set up a session-based user ID for reactions
+  // In a production app this would come from authentication
   useEffect(() => {
     if (!currentUserId) {
-      // Generate a temporary ID - in a real app this would come from auth
-      const tempId = `temp-${Math.random().toString(36).substr(2, 9)}`
-      setCurrentUserId(tempId)
+      // Use sessionStorage to maintain user ID across page refreshes
+      let sessionUserId = sessionStorage.getItem('agent-radio-user-id')
+      
+      if (!sessionUserId) {
+        // Generate a session-based ID
+        sessionUserId = `session-${Math.random().toString(36).substr(2, 9)}`
+        sessionStorage.setItem('agent-radio-user-id', sessionUserId)
+      }
+      
+      setCurrentUserId(sessionUserId)
     }
   }, [currentUserId])
 
@@ -100,6 +107,7 @@ export default function Layout() {
                 track={currentTrack}
                 playheadSeconds={playheadSeconds}
                 isLoading={isLoading}
+                onAdvance={advanceStation}
               />
               
               <ReactionBar
@@ -127,6 +135,7 @@ export default function Layout() {
                 track={currentTrack}
                 playheadSeconds={playheadSeconds}
                 isLoading={isLoading}
+                onAdvance={advanceStation}
               />
               
               <ReactionBar
@@ -157,6 +166,7 @@ export default function Layout() {
               track={currentTrack}
               playheadSeconds={playheadSeconds}
               isLoading={isLoading}
+              onAdvance={advanceStation}
             />
             
             {/* Reaction Bar */}

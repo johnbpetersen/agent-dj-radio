@@ -1,3 +1,4 @@
+import { useRef, useEffect } from 'react'
 import type { Track } from '../../../types'
 import Avatar from './Avatar'
 import NowPlayingMeta from './NowPlayingMeta'
@@ -7,6 +8,7 @@ interface StageProps {
   playheadSeconds: number
   isLoading: boolean
   className?: string
+  onAdvance?: () => void
 }
 
 // EQ Bars Component
@@ -133,10 +135,54 @@ function ProgressRing({
   )
 }
 
-export default function Stage({ track, playheadSeconds, isLoading, className = '' }: StageProps) {
+export default function Stage({ track, playheadSeconds, isLoading, className = '', onAdvance }: StageProps) {
+  const audioRef = useRef<HTMLAudioElement>(null)
+  
   const progressPercent = track?.duration_seconds 
     ? Math.min(100, (playheadSeconds / track.duration_seconds) * 100)
     : 0
+
+  // Audio player integration - sync with track changes
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!audio || !track?.audio_url) return
+
+    audio.src = track.audio_url
+    audio.currentTime = playheadSeconds
+    audio.play().catch(console.error)
+
+    return () => {
+      audio.pause()
+    }
+  }, [track?.id, track?.audio_url])
+
+  // Sync playhead with audio element
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!audio || !track) return
+
+    const targetTime = playheadSeconds
+    const actualTime = audio.currentTime
+    const drift = Math.abs(targetTime - actualTime)
+
+    // Resync if drift is more than 2 seconds
+    if (drift > 2 && !audio.seeking) {
+      audio.currentTime = targetTime
+    }
+  }, [playheadSeconds, track])
+
+  // Auto-advance when track ends
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!audio || !onAdvance) return
+
+    const handleEnded = () => {
+      onAdvance()
+    }
+
+    audio.addEventListener('ended', handleEnded)
+    return () => audio.removeEventListener('ended', handleEnded)
+  }, [onAdvance])
 
   if (isLoading) {
     return (
@@ -152,6 +198,9 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
 
   return (
     <div className={`${className}`}>
+      {/* Hidden audio element for playback */}
+      <audio ref={audioRef} />
+      
       <div className="glass-card p-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-center">
           {/* DJ Booth - Left */}

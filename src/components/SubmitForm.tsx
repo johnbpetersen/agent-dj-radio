@@ -68,14 +68,13 @@ export default function SubmitForm({ onSubmitSuccess }: SubmitFormProps) {
         body: JSON.stringify({ display_name: userDisplayName.trim() })
       })
 
-      let userId: string
-      if (userResponse.ok) {
-        const userData = await userResponse.json()
-        userId = userData.user.id
-      } else {
-        // For Sprint 1, use a mock user ID
-        userId = 'mock-user-id'
+      if (!userResponse.ok) {
+        const errorData = await userResponse.json()
+        throw new Error(errorData.error || 'Failed to create user')
       }
+
+      const userData = await userResponse.json()
+      const userId = userData.user.id
 
       // Submit track
       const response = await fetch('/api/queue/submit', {
@@ -196,7 +195,7 @@ export default function SubmitForm({ onSubmitSuccess }: SubmitFormProps) {
               Price quote: <strong>${priceQuote.price_usd.toFixed(2)}</strong> for {priceQuote.duration_seconds} seconds
             </p>
             <p className="text-blue-600 text-xs mt-1">
-              Payment is simulated in Sprint 1
+              Complete payment to add track to queue
             </p>
           </div>
         )}

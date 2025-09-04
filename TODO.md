@@ -1,191 +1,101 @@
-# Next Phase TODO: Live Testing & Real API Integration
+# Front-End Player & Experience TODO
 
 ## Project Status
-- **Development Status:** ✅ COMPLETE (7 sprints delivered)
-- **Production Readiness:** ✅ GO (85/100 score)
-- **Current Phase:** Live Testing & Real User Validation
+- **Backend Status:** ✅ COMPLETE (AI music generation working!)
+- **Current Phase:** Front-End Player Experience
+- **Goal:** Get real AI tracks playing through fully functional UI
 
 ---
 
-## PHASE 1: API Integration & Environment Setup
+## PHASE 1: Core Music Player (PRIORITY 1)
 
-### 🔑 Real API Keys Setup
-- [ ] **ElevenLabs API Key**
-  - [ ] Create ElevenLabs account
-  - [ ] Generate API key with music generation permissions
-  - [ ] Set `ELEVEN_API_KEY` in production environment
-  - [ ] Set `ELEVEN_MUSIC_MODEL_ID` (get from ElevenLabs dashboard)
-  - [ ] Test generation with: `curl -H "xi-api-key: YOUR_KEY" https://api.elevenlabs.io/v1/user`
+### 🎵 Audio Playback
+- [ ] **Investigate Layout/NowPlaying Components**
+  - [ ] Find current audio implementation in Layout component
+  - [ ] Identify how audio player is structured
+  - [ ] Test with sample URLs to verify functionality
 
-- [ ] **Blockchain/Payment Setup**
-  - [ ] Set up wallet for receiving payments on Base network
-  - [ ] Configure Base Sepolia (testnet) or Base (mainnet) RPC endpoint
-  - [ ] Set `X402_RECEIVING_ADDRESS` to wallet address
-  - [ ] Set `X402_PROVIDER_URL` to RPC endpoint
-  - [ ] Set `X402_CHAIN` to "base-sepolia" or "base"
-  - [ ] Test blockchain connectivity
+- [ ] **Connect to Real Audio URLs**
+  - [ ] Connect player to station state API
+  - [ ] Use real Supabase Storage URLs from generated tracks
+  - [ ] Test playback with your 2 generated AI tracks
+  - [ ] Fix progress bar and time display
+  - [ ] Ensure player controls (play/pause/skip) work
 
-- [ ] **Supabase Production Configuration**
-  - [ ] Create production Supabase project (or use existing)
-  - [ ] Apply RLS schema: `supabase db push` or manual SQL from `supabase/schema-sprint6-rls.sql`
-  - [ ] Configure production `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
-  - [ ] Set up Supabase Storage bucket for audio files
-  - [ ] Test database connectivity and RLS policies
-
-### 🌐 Deployment Environment
-- [ ] **Vercel Production Deployment**
-  - [ ] Set all production environment variables in Vercel dashboard
-  - [ ] Set `VITE_SITE_URL` to production domain
-  - [ ] Configure `ADMIN_TOKEN` with secure random value
-  - [ ] Enable `ENABLE_REAL_ELEVEN=true` and `ENABLE_X402=true`
-  - [ ] Deploy and verify health check passes
-
-- [ ] **Domain & Security**
-  - [ ] Configure custom domain (if applicable)
-  - [ ] Update CORS `ALLOWED_ORIGINS` in `api/_shared/security.ts`
-  - [ ] Test CORS policy with production domain
-  - [ ] Verify SSL certificate is working
+### 🔗 Station API Integration
+- [ ] **Debug Station/Queue APIs**
+  - [ ] Fix station state endpoint (currently returning errors)
+  - [ ] Fix queue endpoint to return real database tracks
+  - [ ] Test API responses with real track data
+  - [ ] Ensure proper track status handling (READY, GENERATING, PAID)
 
 ---
 
-## PHASE 2: System Validation & Testing
+## PHASE 2: Queue & Real Data (PRIORITY 2)
 
-### 🏥 Health & Monitoring Verification
-- [ ] **Health Dashboard Validation**
-  - [ ] Access `/api/health` endpoint
-  - [ ] Verify all services show "up" status (database, ElevenLabs, storage)
-  - [ ] Confirm feature flags show as enabled
-  - [ ] Check system metrics are populated correctly
+### 🧹 Mock Data Cleanup  
+- [ ] **Remove Mock/Placeholder Code**
+  - [ ] Replace mock user ID in SubmitForm component
+  - [ ] Clean up any "dummy", "mock", or "placeholder" references
+  - [ ] Connect QueueList to real database tracks
 
-- [ ] **Admin Panel Testing**
-  - [ ] Access admin panel with `/?admin=1`
-  - [ ] Enter production `ADMIN_TOKEN`
-  - [ ] Verify health dashboard loads in admin interface
-  - [ ] Test manual station advance functionality
-  - [ ] Test manual track generation trigger
-
-### 🧪 End-to-End Functionality Testing
-- [ ] **Music Generation Pipeline**
-  - [ ] Submit test track via UI (should get 402 Payment Required)
-  - [ ] Complete payment flow with test transaction
-  - [ ] Verify track moves to PAID status
-  - [ ] Confirm track generation begins (status: GENERATING)
-  - [ ] Wait for generation completion (status: READY)
-  - [ ] Verify audio file is created and playable
-  - [ ] Check track appears in queue
-
-- [ ] **Station Playback**
-  - [ ] Verify station automatically picks up new tracks
-  - [ ] Check playhead timing is accurate
-  - [ ] Test station advance (automatic and manual)
-  - [ ] Verify real-time updates across multiple browser tabs
-  - [ ] Test track completion and queue progression
-
-- [ ] **Payment System**
-  - [ ] Test payment flow with different amounts (60s, 90s, 120s tracks)
-  - [ ] Verify payment verification works correctly
-  - [ ] Test payment failures and error handling
-  - [ ] Check payment audit trail in database
-  - [ ] Test idempotency (same payment multiple times)
-
-### 🚀 Load Testing
-- [ ] **Concurrent User Testing**
-  - [ ] Run `node test-concurrent-submissions.js` with production environment
-  - [ ] Test with 5 concurrent users (default)
-  - [ ] Increase to 10+ concurrent users if system handles well
-  - [ ] Monitor health dashboard during load tests
-  - [ ] Check rate limiting behavior under load
-  - [ ] Verify database performance under concurrent writes
+### ⚡ Real-time Updates
+- [ ] **Supabase Realtime Integration**
+  - [ ] Test real-time queue updates
+  - [ ] Show live track generation progress
+  - [ ] Update UI when tracks change status
 
 ---
 
-## PHASE 3: User Acceptance Testing
+## PHASE 3: Rating System (PRIORITY 3)
 
-### 👥 Real User Testing
-- [ ] **Alpha Testing (Internal)**
-  - [ ] Invite 3-5 internal users for testing
-  - [ ] Provide test USDC for payments (Base Sepolia)
-  - [ ] Collect feedback on user experience
-  - [ ] Document any bugs or issues found
-  - [ ] Test on different devices (mobile, desktop)
-  - [ ] Test on different browsers (Chrome, Safari, Firefox)
+### 🌟 Track Rating
+- [ ] **Backend Rating API**
+  - [ ] Create `POST /api/tracks/[id]/rate` endpoint
+  - [ ] Add rating columns to tracks database table
+  - [ ] Handle rating persistence and retrieval
 
-- [ ] **Beta Testing (External)**
-  - [ ] Invite 10-20 external users for beta testing
-  - [ ] Provide clear instructions and test funds
-  - [ ] Set up feedback collection system
-  - [ ] Monitor system performance during beta
-  - [ ] Track user engagement metrics
-  - [ ] Document all issues and feature requests
-
-### 📊 Analytics & Monitoring
-- [ ] **Usage Metrics**
-  - [ ] Track track submissions per hour/day
-  - [ ] Monitor generation success rates (target >90%)
-  - [ ] Track payment conversion rates (target >90%)
-  - [ ] Monitor user retention and return usage
-  - [ ] Track system performance metrics
-
-- [ ] **Error Monitoring**
-  - [ ] Monitor error rates across all endpoints
-  - [ ] Set up alerts for critical errors
-  - [ ] Track API timeouts and failures
-  - [ ] Monitor blockchain payment failures
-  - [ ] Track music generation failures
+- [ ] **Frontend Rating UI**
+  - [ ] Connect Reactions component to rating API
+  - [ ] Add visual feedback for rating selection
+  - [ ] Show track ratings in queue display
 
 ---
 
-## COMPLETED DEVELOPMENT (Sprints 1-7)
+## PHASE 4: Polish & Testing (PRIORITY 4)
 
-### ✅ Sprint 1-3: Core MVP
-- [x] Basic radio station with queue system
-- [x] Track submission and playback
-- [x] Real-time updates via Supabase Realtime
-- [x] Admin controls and manual overrides
-- [x] Mock music generation system
+### 🎮 User Experience
+- [ ] **Full Integration Testing**
+  - [ ] Test complete flow: submit → generate → queue → play
+  - [ ] Verify smooth track transitions
+  - [ ] Test on mobile and desktop
+  - [ ] Polish UI responsiveness
 
-### ✅ Sprint 4-5: Integrations & Payments
-- [x] ElevenLabs API integration for real music generation
-- [x] X402 payment system with blockchain integration
-- [x] Comprehensive test suite for all functionality
-- [x] Production-ready error handling
-
-### ✅ Sprint 6: Security Hardening
-- [x] Row Level Security (RLS) with anonymous support
-- [x] CORS lockdown and security headers
-- [x] Rate limiting and abuse prevention
-- [x] Data sanitization and privacy controls
-- [x] Legal compliance (privacy policy, terms of service)
-
-### ✅ Sprint 7: Production Readiness
-- [x] Health monitoring dashboard
-- [x] Admin recovery procedures
-- [x] Incident response framework
-- [x] Concurrent load testing capabilities
-- [x] Comprehensive go/no-go assessment (85/100 score)
+- [ ] **Error Handling**
+  - [ ] Handle audio loading failures gracefully
+  - [ ] Show proper loading states during generation
+  - [ ] Display helpful error messages
 
 ---
 
-## FUTURE ENHANCEMENTS (Post-Launch)
+## COMPLETED: Backend AI Music Pipeline ✅
 
-### 🎵 User Experience
-- [ ] User accounts and authentication
-- [ ] Track favorites and playlists
-- [ ] Social features (comments, sharing)
-- [ ] Mobile app development
+### Music Generation (Working!)
+- [x] ElevenLabs API integration with real credits
+- [x] Instrumental-only track generation
+- [x] Prompt length handling and truncation
+- [x] Supabase Storage integration
+- [x] Worker queue processing
+- [x] Fallback system for API failures
 
-### 💰 Business Features
-- [ ] Subscription models
-- [ ] Revenue sharing for creators
-- [ ] Advanced generation parameters
-- [ ] Analytics and insights
-
-### 🚀 Technical Improvements
-- [ ] Redis for distributed caching/rate limiting
-- [ ] CDN for global performance
-- [ ] Advanced monitoring and alerting
-- [ ] Multi-region deployment
+### Infrastructure
+- [x] Database schema with track states
+- [x] Real-time subscriptions setup
+- [x] Security and rate limiting
+- [x] Health monitoring system
 
 ---
 
-**Next Step:** Begin Phase 1 by setting up real API keys and deploying to production environment. 🚀
+**Current Status:** Backend is pumping out real AI beats! Now let's get the front-end jamming along. 🎵🔥
+
+**Next Step:** Start Phase 1 by investigating the current audio player implementation.

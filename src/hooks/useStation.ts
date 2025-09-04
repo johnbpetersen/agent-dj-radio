@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { supabase } from '../lib/supabase'
 import type { StationData, StationStateResponse } from '../types'
 
 const POLL_INTERVAL = 5000 // 5 seconds
@@ -66,10 +67,36 @@ export function useStation() {
     fetchStationState()
   }, [fetchStationState])
 
-  // Polling
+  // Polling (fallback for real-time updates)
   useEffect(() => {
     const interval = setInterval(fetchStationState, POLL_INTERVAL)
     return () => clearInterval(interval)
+  }, [fetchStationState])
+
+  // Real-time subscriptions
+  useEffect(() => {
+    const channel = supabase
+      .channel('station')
+      .on('broadcast', { event: 'station_update' }, (payload) => {
+        console.log('Received station update:', payload)
+        // Refetch state when station updates
+        fetchStationState()
+      })
+      .on('broadcast', { event: 'track_advance' }, (payload) => {
+        console.log('Received track advance:', payload)
+        // Immediately update with new track data
+        fetchStationState()
+      })
+      .on('broadcast', { event: 'queue_update' }, (payload) => {
+        console.log('Received queue update:', payload)
+        // Refetch to get updated queue
+        fetchStationState()
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [fetchStationState])
 
   return {
