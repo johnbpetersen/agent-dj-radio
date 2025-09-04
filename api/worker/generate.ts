@@ -73,7 +73,7 @@ async function generateHandler(req: VercelRequest, res: VercelResponse): Promise
     if (!elevenEnabled) {
       // Mock generation path
       const siteUrl = process.env.VITE_SITE_URL || 'http://localhost:5173'
-      audioUrl = `${siteUrl}/sample-track.mp3`
+      audioUrl = `${siteUrl}/sample-track.wav`
       elevenRequestId = `mock_${trackToGenerate.id}_${Date.now()}`
       
       logger.info('Using mock audio generation', { 
@@ -159,7 +159,7 @@ async function generateHandler(req: VercelRequest, res: VercelResponse): Promise
         // Fallback to mock generation
         try {
           const siteUrl = process.env.VITE_SITE_URL || 'http://localhost:5173'
-          audioUrl = `${siteUrl}/sample-track.mp3`
+          audioUrl = `${siteUrl}/sample-track.wav`
           elevenRequestId = `fallback_${trackToGenerate.id}_${Date.now()}`
           usedFallback = true
           
