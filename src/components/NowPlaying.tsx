@@ -10,47 +10,55 @@ interface NowPlayingProps {
 
 export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvance }: NowPlayingProps) {
   const audioRef = useRef<HTMLAudioElement>(null)
-  const [localPlayheadSeconds, setLocalPlayheadSeconds] = useState(0)
+  const [currentPlayheadSeconds, setCurrentPlayheadSeconds] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [hasUserInteracted, setHasUserInteracted] = useState(false)
+  const animationRef = useRef<number>()
 
-  // Smooth timer that updates every second (much more natural than 100ms)
+  // SILKY SMOOTH TIMER: Use audio element's currentTime with requestAnimationFrame (60fps)
   useEffect(() => {
-    if (!isPlaying || !track) return
+    const updateTimer = () => {
+      const audio = audioRef.current
+      if (!audio || !track) return
 
-    const interval = setInterval(() => {
-      setLocalPlayheadSeconds(prev => {
-        const newTime = prev + 1 // Increment by 1 second for smooth, natural progression
-        // Auto-advance when track finishes
-        if (newTime >= track.duration_seconds) {
-          console.log('Track finished, advancing...')
-          onAdvance()
-          return prev
-        }
-        return newTime
-      })
-    }, 1000) // Update every 1 second for smooth, consistent timer
+      // Use the audio element's actual currentTime for perfect sync
+      const audioCurrentTime = audio.currentTime
+      setCurrentPlayheadSeconds(audioCurrentTime)
 
-    return () => clearInterval(interval)
-  }, [isPlaying, track, onAdvance])
+      // Check if track finished (use audio element time, not artificial timer)
+      if (audioCurrentTime >= track.duration_seconds && audioCurrentTime > 0) {
+        console.log('Track finished (audio-driven), advancing...')
+        onAdvance()
+        return
+      }
 
-  // Sync with server playhead, but only if drift is significant (prevents jumpy corrections)
-  useEffect(() => {
-    const serverTime = playheadSeconds
-    const localTime = localPlayheadSeconds
-    const drift = Math.abs(serverTime - localTime)
-
-    // Only sync if drift is more than 3 seconds (prevents constant jumping)
-    if (drift > 3) {
-      console.log(`🕐 Timer sync: correcting ${drift}s drift (server: ${serverTime}s, local: ${localTime}s)`)
-      setLocalPlayheadSeconds(serverTime)
+      // Continue the animation loop
+      animationRef.current = requestAnimationFrame(updateTimer)
     }
-  }, [playheadSeconds, localPlayheadSeconds])
 
-  // Initialize local playhead when track changes or starts
+    // Start the smooth 60fps update loop
+    if (track) {
+      animationRef.current = requestAnimationFrame(updateTimer)
+    }
+
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current)
+      }
+    }
+  }, [track, onAdvance])
+
+  // Initialize audio element to server time when track changes
   useEffect(() => {
-    if (track && playheadSeconds >= 0) {
-      setLocalPlayheadSeconds(playheadSeconds)
+    const audio = audioRef.current
+    if (!audio || !track || playheadSeconds < 0) return
+
+    // Set audio to server playhead position (but only on track changes or big corrections)
+    const drift = Math.abs(audio.currentTime - playheadSeconds)
+    if (drift > 2) {
+      console.log(`🎵 Setting audio to server time: ${playheadSeconds}s (drift: ${drift}s)`)
+      audio.currentTime = playheadSeconds
+      setCurrentPlayheadSeconds(playheadSeconds)
     }
   }, [track?.id, playheadSeconds])
 
@@ -198,7 +206,7 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
       }
 
       console.log('🎵 DEBUG: Audio ready, attempting play...')
-      audio.currentTime = localPlayheadSeconds
+      audio.currentTime = currentPlayheadSeconds
       const playPromise = audio.play()
       
       if (playPromise !== undefined) {
@@ -244,8 +252,8 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
     )
   }
 
-  const currentSeconds = Math.floor(localPlayheadSeconds)
-  const progressPercent = (localPlayheadSeconds / track.duration_seconds) * 100
+  const currentSeconds = Math.floor(currentPlayheadSeconds)
+  const progressPercent = (currentPlayheadSeconds / track.duration_seconds) * 100
   const remainingSeconds = Math.max(0, track.duration_seconds - currentSeconds)
   const currentMinutes = Math.floor(currentSeconds / 60)
   const currentSecondsDisplay = currentSeconds % 60
@@ -297,7 +305,7 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
         </div>
         <div className="w-full bg-gray-200 rounded-full h-2">
           <div
-            className="bg-blue-500 h-2 rounded-full transition-all duration-1000 ease-linear"
+            className="bg-blue-500 h-2 rounded-full"
             style={{ width: `${Math.min(100, progressPercent)}%` }}
           />
         </div>
