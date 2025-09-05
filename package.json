@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev:web": "vite",
-    "dev:api": "npx vercel dev --listen 3001",
-    "dev:web:wait": "wait-on tcp:3001 && vite",
+    "dev:api": "npx vercel dev --listen 3000",
+    "dev:web:wait": "wait-on tcp:3000 && vite",
     "dev": "concurrently -k -n API,WEB -c magenta,blue \"npm:dev:api\" \"npm:dev:web:wait\"",
     "build": "tsc -b && vite build",
     "lint": "eslint . --ext .ts,.tsx --max-warnings=0",
