@@ -11,15 +11,41 @@ import { parse } from 'url'
 const PORT = 3001
 
 // Simple in-memory responses for development
+const mockTrack = {
+  id: 'test-track-1',
+  prompt: 'A funky electronic beat with synthesizers',
+  user_id: 'test-user',
+  status: 'READY',
+  source: 'MANUAL',
+  duration_seconds: 60,
+  audio_url: '/sample-track.wav',
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+  eleven_request_id: null,
+  rating_score: 4.2,
+  rating_count: 5,
+  user: {
+    id: 'test-user',
+    display_name: 'Test User',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  }
+}
+
 const mockResponses = {
   '/api/station/state': {
-    current_track: null,
-    queue: [],
-    playhead_seconds: 0,
-    last_updated: new Date().toISOString()
+    station_state: {
+      id: 1,
+      current_track_id: mockTrack.id,
+      current_started_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      current_track: mockTrack
+    },
+    queue: [mockTrack],
+    playhead_seconds: 0
   },
   '/api/admin/debug-tracks': {
-    tracks: [],
+    tracks: [mockTrack],
     storage_files: [],
     storage_error: null
   }
