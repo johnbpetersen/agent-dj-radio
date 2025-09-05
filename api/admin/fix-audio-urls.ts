@@ -24,18 +24,52 @@ async function fixAudioUrlsHandler(req: VercelRequest, res: VercelResponse): Pro
     const fixes = []
     
     for (const track of tracks || []) {
+      let needsUpdate = false
+      let newUrl = track.audio_url
+      
+      // Fix whitespace issues
       if (track.audio_url && (track.audio_url.includes('\n') || track.audio_url.includes('  '))) {
-        // Clean up the URL by removing newlines and extra spaces
-        const cleanUrl = track.audio_url.replace(/\n\s*/g, '')
-        
+        newUrl = track.audio_url.replace(/\n\s*/g, '').replace(/\s+/g, ' ').trim()
+        needsUpdate = true
+      }
+      
+      // Fix local URLs to use proper Supabase storage
+      if (track.audio_url && (track.audio_url.startsWith('/sample-track') || track.audio_url.includes('localhost'))) {
+        try {
+          // Upload sample track to Supabase Storage for this track
+          const fs = await import('fs')
+          const path = await import('path')
+          const sampleTrackPath = path.join(process.cwd(), 'public', 'sample-track.wav')
+          const audioBuffer = fs.readFileSync(sampleTrackPath)
+          
+          const { uploadAudioBuffer } = await import('../../src/server/storage.js')
+          const { publicUrl } = await uploadAudioBuffer({
+            trackId: track.id,
+            audioBuffer
+          })
+          
+          newUrl = publicUrl.replace(/\s+/g, '').trim()
+          needsUpdate = true
+          
+          console.log(`Converting local URL to Supabase storage for track ${track.id}:`)
+          console.log(`  OLD: ${track.audio_url}`)
+          console.log(`  NEW: ${newUrl}`)
+        } catch (uploadError) {
+          console.error(`Failed to upload sample track for ${track.id}:`, uploadError)
+          // Keep the old URL if upload fails
+          needsUpdate = false
+        }
+      }
+      
+      if (needsUpdate && newUrl !== track.audio_url) {
         console.log(`Fixing URL for track ${track.id}:`)
         console.log(`  OLD: ${track.audio_url}`)
-        console.log(`  NEW: ${cleanUrl}`)
+        console.log(`  NEW: ${newUrl}`)
         
         // Update the track
         const { error: updateError } = await supabaseAdmin
           .from('tracks')
-          .update({ audio_url: cleanUrl })
+          .update({ audio_url: newUrl })
           .eq('id', track.id)
         
         if (updateError) {
@@ -44,7 +78,7 @@ async function fixAudioUrlsHandler(req: VercelRequest, res: VercelResponse): Pro
           fixes.push({
             track_id: track.id,
             old_url: track.audio_url,
-            new_url: cleanUrl
+            new_url: newUrl
           })
         }
       }

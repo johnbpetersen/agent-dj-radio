@@ -71,16 +71,43 @@ async function generateHandler(req: VercelRequest, res: VercelResponse): Promise
     let elevenRequestId: string
 
     if (!elevenEnabled) {
-      // Mock generation path
-      const siteUrl = process.env.VITE_SITE_URL || 'http://localhost:5173'
-      audioUrl = `${siteUrl}/sample-track.wav`
-      elevenRequestId = `mock_${trackToGenerate.id}_${Date.now()}`
-      
-      logger.info('Using mock audio generation', { 
-        correlationId, 
-        trackId: trackToGenerate.id,
-        audioUrl
-      })
+      // Mock generation path - upload sample track to Supabase
+      try {
+        // Ensure storage bucket exists
+        await ensureTracksBucket()
+        
+        // Read the sample track file
+        const fs = await import('fs')
+        const path = await import('path')
+        const sampleTrackPath = path.join(process.cwd(), 'public', 'sample-track.wav')
+        const audioBuffer = fs.readFileSync(sampleTrackPath)
+        
+        // Upload to Supabase Storage
+        const { publicUrl } = await uploadAudioBuffer({
+          trackId: trackToGenerate.id,
+          audioBuffer
+        })
+        
+        audioUrl = publicUrl.replace(/\s+/g, '').trim()
+        elevenRequestId = `mock_${trackToGenerate.id}_${Date.now()}`
+        
+        logger.info('Mock audio uploaded to Supabase storage', { 
+          correlationId, 
+          trackId: trackToGenerate.id,
+          audioUrl
+        })
+      } catch (error) {
+        logger.error('Failed to upload mock audio to storage, falling back to local URL', {
+          correlationId,
+          trackId: trackToGenerate.id,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        })
+        
+        // Fallback to local URL if storage upload fails
+        const siteUrl = process.env.VITE_SITE_URL || 'http://localhost:5173'
+        audioUrl = `${siteUrl}/sample-track.wav`
+        elevenRequestId = `mock_${trackToGenerate.id}_${Date.now()}`
+      }
     } else {
       // Real ElevenLabs generation with fallback to mock
       usedFallback = false
@@ -158,14 +185,28 @@ async function generateHandler(req: VercelRequest, res: VercelResponse): Promise
           error: error instanceof Error ? error.message : 'Unknown error'
         })
         
-        // Fallback to mock generation
+        // Fallback to mock generation - upload sample track to Supabase
         try {
-          const siteUrl = process.env.VITE_SITE_URL || 'http://localhost:5173'
-          audioUrl = `${siteUrl}/sample-track.wav`
+          // Ensure storage bucket exists
+          await ensureTracksBucket()
+          
+          // Read the sample track file
+          const fs = await import('fs')
+          const path = await import('path')
+          const sampleTrackPath = path.join(process.cwd(), 'public', 'sample-track.wav')
+          const audioBuffer = fs.readFileSync(sampleTrackPath)
+          
+          // Upload to Supabase Storage
+          const { publicUrl } = await uploadAudioBuffer({
+            trackId: trackToGenerate.id,
+            audioBuffer
+          })
+          
+          audioUrl = publicUrl.replace(/\s+/g, '').trim()
           elevenRequestId = `fallback_${trackToGenerate.id}_${Date.now()}`
           usedFallback = true
           
-          logger.info('Fallback to mock generation successful', { 
+          logger.info('Fallback mock audio uploaded to Supabase storage', { 
             correlationId, 
             trackId: trackToGenerate.id,
             audioUrl,
@@ -182,42 +223,25 @@ async function generateHandler(req: VercelRequest, res: VercelResponse): Promise
           })
           
         } catch (fallbackError) {
-          // If even fallback fails, mark as FAILED
-          logger.error('Both ElevenLabs generation and fallback failed', { 
-            correlationId, 
+          // If storage upload fails, try local URL fallback
+          logger.warn('Storage upload failed, trying local URL fallback', {
+            correlationId,
             trackId: trackToGenerate.id,
-            originalError: error instanceof Error ? error.message : 'Unknown error',
             fallbackError: fallbackError instanceof Error ? fallbackError.message : 'Unknown error'
           })
           
-          await updateTrackStatus(
-            supabaseAdmin,
-            trackToGenerate.id,
-            'FAILED',
-            {
-              eleven_request_id: elevenRequestId || null
-            }
-          )
+          // Use local URL as final fallback
+          const siteUrl = process.env.VITE_SITE_URL || 'http://localhost:5173'
+          audioUrl = `${siteUrl}/sample-track.wav`
+          elevenRequestId = `fallback_${trackToGenerate.id}_${Date.now()}`
+          usedFallback = true
           
-          const duration = Date.now() - startTime
-          logger.cronJobComplete('worker/generate', duration, { 
+          logger.info('Local URL fallback used due to storage failure', {
             correlationId,
-            processed: true,
-            result: 'failed',
             trackId: trackToGenerate.id,
-            usedFallback: false,
-            fallbackFailed: true
+            audioUrl,
+            storageError: fallbackError instanceof Error ? fallbackError.message : 'Unknown error'
           })
-          
-          res.status(200).json({
-            message: 'Track generation and fallback both failed',
-            processed: true,
-            error: error instanceof Error ? error.message : 'Generation failed',
-            fallback_error: fallbackError instanceof Error ? fallbackError.message : 'Fallback failed',
-            track_id: trackToGenerate.id,
-            correlationId
-          })
-          return
         }
       }
     }

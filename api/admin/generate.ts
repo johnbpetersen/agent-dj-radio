@@ -57,12 +57,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let elevenRequestId: string
 
     if (!elevenEnabled) {
-      // Mock generation path
-      const siteUrl = process.env.VITE_SITE_URL || 'http://localhost:5173'
-      audioUrl = `${siteUrl}/sample-track.mp3`
-      elevenRequestId = `admin_mock_${trackToGenerate.id}_${Date.now()}`
-      
-      console.log('Admin: Using mock audio generation')
+      // Mock generation path - upload sample track to Supabase
+      try {
+        // Ensure storage bucket exists
+        await ensureTracksBucket()
+        
+        // Read the sample track file
+        const fs = await import('fs')
+        const path = await import('path')
+        const sampleTrackPath = path.join(process.cwd(), 'public', 'sample-track.wav')
+        const audioBuffer = fs.readFileSync(sampleTrackPath)
+        
+        // Upload to Supabase Storage
+        const { publicUrl } = await uploadAudioBuffer({
+          trackId: trackToGenerate.id,
+          audioBuffer
+        })
+        
+        audioUrl = publicUrl.replace(/\s+/g, '').trim()
+        elevenRequestId = `admin_mock_${trackToGenerate.id}_${Date.now()}`
+        
+        console.log('Admin: Mock audio uploaded to Supabase storage:', audioUrl)
+      } catch (error) {
+        console.warn('Admin: Failed to upload mock audio to storage, using local URL fallback:', error)
+        
+        // Fallback to local URL if storage upload fails
+        const siteUrl = process.env.VITE_SITE_URL || 'http://localhost:5173'
+        audioUrl = `${siteUrl}/sample-track.wav`
+        elevenRequestId = `admin_mock_${trackToGenerate.id}_${Date.now()}`
+      }
     } else {
       // Real ElevenLabs generation
       try {
