@@ -1,0 +1,72 @@
+<!doctype html>
+<title>Audio Debug</title>
+<style>
+  body { font-family: monospace; padding: 20px; }
+  #log { margin-top: 20px; padding: 10px; background: #f5f5f5; }
+</style>
+
+<h1>🎵 Audio Debug Test</h1>
+<p>This removes React from the equation to test raw HTML5 audio performance.</p>
+
+<audio id="a" controls preload="auto" crossorigin="anonymous" style="width: 100%; margin: 20px 0;"></audio>
+
+<div>
+  <strong>Current URL:</strong> <span id="current-url"></span><br>
+  <button onclick="useLocal()">Use Local WAV</button>
+  <button onclick="useRemote()">Use Remote URL (paste in console)</button>
+</div>
+
+<div id="log">
+  <strong>Event Log:</strong><br>
+</div>
+
+<script>
+  const log = document.getElementById('log');
+  const currentUrlSpan = document.getElementById('current-url');
+  const a = document.getElementById('a');
+  
+  function logEvent(msg) {
+    const time = new Date().toLocaleTimeString();
+    log.innerHTML += `${time}: ${msg}<br>`;
+    console.log(`🎵 ${time}: ${msg}`);
+  }
+  
+  function setAudioUrl(url) {
+    logEvent(`Setting URL: ${url}`);
+    currentUrlSpan.textContent = url;
+    a.crossOrigin = 'anonymous';
+    a.src = url;
+  }
+  
+  function useLocal() {
+    setAudioUrl('/sample-track.wav');
+  }
+  
+  function useRemote() {
+    const url = prompt('Paste your remote audio URL:');
+    if (url) setAudioUrl(url);
+  }
+  
+  // Get URL from query param or use local as default
+  const url = new URL(location.href).searchParams.get('url') || '/sample-track.wav';
+  setAudioUrl(url);
+  
+  // Add comprehensive event logging
+  [
+    'loadstart', 'loadedmetadata', 'loadeddata', 'canplay', 'canplaythrough',
+    'waiting', 'playing', 'pause', 'ended', 'error', 'stalled', 'progress'
+  ].forEach(event => {
+    a.addEventListener(event, () => {
+      const buffered = a.buffered.length ? `${a.buffered.end(0).toFixed(1)}s` : '0s';
+      logEvent(`${event.toUpperCase()} @ ${a.currentTime.toFixed(1)}s (buffered: ${buffered})`);
+    });
+  });
+  
+  // Timer to show current time
+  setInterval(() => {
+    if (!a.paused) {
+      const buffered = a.buffered.length ? `${a.buffered.end(0).toFixed(1)}s` : '0s';
+      document.title = `🎵 ${a.currentTime.toFixed(1)}s (buf: ${buffered})`;
+    }
+  }, 100);
+</script>

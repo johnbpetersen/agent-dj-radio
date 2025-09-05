@@ -31,6 +31,7 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
   const [isAudioLoaded, setIsAudioLoaded] = useState(false)
   const [isBuffering, setIsBuffering] = useState(false)
   const [useLocalTest, setUseLocalTest] = useState(false)
+  const [useProxy, setUseProxy] = useState(false)
   const lastSecondRef = useRef<number>(-1)
 
   // SMART BUFFERING: Set up audio element with proper buffer management
@@ -43,8 +44,15 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
       return
     }
 
-    // Choose audio source: local test file vs remote URL
-    const audioUrl = useLocalTest ? '/sample-track.wav' : track.audio_url
+    // Choose audio source: local test, proxy, or direct remote URL
+    let audioUrl: string
+    if (useLocalTest) {
+      audioUrl = '/sample-track.wav'
+    } else if (useProxy && track.audio_url) {
+      audioUrl = `/api/audio-proxy?url=${encodeURIComponent(track.audio_url)}`
+    } else {
+      audioUrl = track.audio_url
+    }
     console.log('🎵 Setting up audio with smart buffering:', { 
       useLocalTest, 
       audioUrl,
@@ -144,7 +152,7 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
       audio.removeEventListener('ended', onEnded)
       audio.removeEventListener('error', onError)
     }
-  }, [track?.id, track?.audio_url, useLocalTest, onAdvance])
+  }, [track?.id, track?.audio_url, useLocalTest, useProxy, onAdvance])
 
   // Sync with server playhead when track changes or on big drift
   useEffect(() => {
@@ -292,16 +300,29 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
           <p className="text-xs text-gray-600">
             DEBUG: Audio Element {!isAudioLoaded && '(Loading...)'}
           </p>
-          <button
-            onClick={() => setUseLocalTest(!useLocalTest)}
-            className={`px-2 py-1 text-xs rounded ${
-              useLocalTest 
-                ? 'bg-blue-500 text-white' 
-                : 'bg-gray-300 text-gray-700'
-            }`}
-          >
-            {useLocalTest ? 'Using Local Test' : 'Use Local Test'}
-          </button>
+          <div className="flex space-x-1">
+            <button
+              onClick={() => setUseLocalTest(!useLocalTest)}
+              className={`px-2 py-1 text-xs rounded ${
+                useLocalTest 
+                  ? 'bg-blue-500 text-white' 
+                  : 'bg-gray-300 text-gray-700'
+              }`}
+            >
+              {useLocalTest ? 'Using Local' : 'Local Test'}
+            </button>
+            <button
+              onClick={() => setUseProxy(!useProxy)}
+              className={`px-2 py-1 text-xs rounded ${
+                useProxy 
+                  ? 'bg-purple-500 text-white' 
+                  : 'bg-gray-300 text-gray-700'
+              }`}
+              disabled={useLocalTest}
+            >
+              {useProxy ? 'Using Proxy' : 'Use Proxy'}
+            </button>
+          </div>
         </div>
         <audio 
           ref={audioRef} 
@@ -318,6 +339,11 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
         {useLocalTest && (
           <p className="text-xs text-blue-600 mt-1">
             🧪 Testing with: /sample-track.wav
+          </p>
+        )}
+        {useProxy && !useLocalTest && (
+          <p className="text-xs text-purple-600 mt-1">
+            🔄 Using proxy: /api/audio-proxy
           </p>
         )}
         <div className="text-xs text-gray-500 mt-1">
