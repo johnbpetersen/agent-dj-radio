@@ -97,14 +97,17 @@ Run the SQL schema in your Supabase dashboard:
 ### 4. Add Sample Audio
 Replace `public/sample-track.mp3` with an actual MP3 file, or use any audio file for testing.
 
-### 5. Development (Two Terminals)
+### 5. Development
 ```bash
-# Terminal 1: Start Vercel functions (localhost:3000)
-npx vercel dev
-
-# Terminal 2: Start Vite frontend (localhost:5173)
+# One command starts both API server and frontend
 npm run dev
+
+# This runs:
+# - Local functions server at http://localhost:3001 (serves your ./api/*.ts files)
+# - Vite frontend at http://localhost:5173 (proxies /api to :3001)
 ```
+
+**Note**: No Vercel CLI required for local development! The new setup uses a lightweight local functions server that loads your API routes directly.
 
 ### 6. Testing
 ```bash
@@ -160,14 +163,29 @@ agent-dj-radio/
 │   ├── server/              # Pure business logic
 │   ├── types/               # TypeScript definitions
 │   └── test/                # Test setup + mocks
-├── api/                     # Vercel functions
-│   ├── _shared/             # Service role client
-│   ├── queue/               # Queue management
-│   ├── station/             # Station control
+├── api/                     # API functions (Vercel-compatible)
+│   ├── _shared/             # Shared utilities (Supabase, security)
+│   ├── queue/               # Queue management endpoints
+│   ├── station/             # Station control endpoints
 │   └── worker/              # Background processing
 ├── tests/                   # Test suites
-└── supabase/                # Database schema
+├── supabase/                # Database schema
+└── dev-functions-server.ts  # Local API server for development
 ```
+
+### Local Development Architecture
+
+**Development Setup:**
+- **Port 3001**: Local functions server (`dev-functions-server.ts`) that dynamically imports and serves your `./api/*.ts` files
+- **Port 5173**: Vite dev server that proxies all `/api/*` requests to port 3001
+- **No Vercel CLI required**: Direct TypeScript execution with real Supabase connections
+
+**Key Benefits:**
+- Real Supabase database integration in development
+- Fast TypeScript compilation with `tsx`
+- ESM imports work correctly (no `.js` extensions needed)
+- Environment variables loaded via `dotenv/config`
+- Automatic track bootstrapping on first load
 
 ### Data Flow
 
@@ -217,11 +235,22 @@ npm test pricing    # Run specific test file
 - **Polling only**: No real-time WebSocket updates
 - **Single station**: Multi-room support planned for later
 
-### Debug Controls
-The app includes debug buttons in development:
-- Force advance station
-- Trigger generation manually
-- Refresh station state
+### Development Notes
+
+**Local Functions Server:**
+- Serves your `./api/*.ts` files directly without Vercel CLI
+- Supports hot reloading when you modify API functions
+- Real Supabase database connections in development
+- Automatic station bootstrapping (first available track → PLAYING)
+
+**Queue Initialization:**
+- On fresh start, `/api/station/state` automatically selects first available track as PLAYING
+- Remaining tracks become READY in the queue
+- Station state persists across development restarts
+
+**ESM Import Notes:**
+- In development with `tsx`, use bare imports: `from '../_shared/supabase'`
+- For production/Vercel, imports need `.js` extension: `from '../_shared/supabase.js'`
 
 ### Database Schema
 Key tables: `users`, `tracks`, `reactions`, `station_state`
@@ -420,28 +449,28 @@ Admin endpoints provide manual control over station operations for emergency sit
 
 #### Generate Track
 ```bash
-curl -X POST http://localhost:3000/api/admin/generate \
+curl -X POST http://localhost:3001/api/admin/generate \
   -H "Authorization: Bearer your-admin-token"
 ```
 Triggers worker to process one PAID track. Returns `processed: false` if no tracks available.
 
 #### Advance Station
 ```bash
-curl -X POST http://localhost:3000/api/admin/advance \
+curl -X POST http://localhost:3001/api/admin/advance \
   -H "Authorization: Bearer your-admin-token"
 ```
 Forces station to advance to next track. Marks current track as DONE and starts next READY track.
 
 #### Get Station State
 ```bash
-curl http://localhost:3000/api/admin/state \
+curl http://localhost:3001/api/admin/state \
   -H "Authorization: Bearer your-admin-token"
 ```
 Returns current station state, queue, and recent tracks for monitoring.
 
 #### Skip Track
 ```bash
-curl -X POST http://localhost:3000/api/admin/track/TRACK_ID \
+curl -X POST http://localhost:3001/api/admin/track/TRACK_ID \
   -H "Authorization: Bearer your-admin-token" \
   -H "Content-Type: application/json" \
   -d '{"action": "skip"}'
@@ -450,7 +479,7 @@ Marks track as DONE immediately. If currently playing, clears from station.
 
 #### Requeue Track
 ```bash
-curl -X POST http://localhost:3000/api/admin/track/TRACK_ID \
+curl -X POST http://localhost:3001/api/admin/track/TRACK_ID \
   -H "Authorization: Bearer your-admin-token" \
   -H "Content-Type: application/json" \
   -d '{"action": "requeue"}'
@@ -459,7 +488,7 @@ Changes DONE/FAILED track back to READY status for replay.
 
 #### Delete Track
 ```bash
-curl -X DELETE http://localhost:3000/api/admin/track/TRACK_ID \
+curl -X DELETE http://localhost:3001/api/admin/track/TRACK_ID \
   -H "Authorization: Bearer your-admin-token"
 ```
 Permanently removes track from database.
@@ -580,14 +609,50 @@ Agent DJ Radio features a beautiful, modern interface inspired by the classic Tu
 - **Real-time updates** showing live playback progress and queue changes
 - **Modal submit form** triggered from the top navigation "Queue a Track" button
 
+## 🔧 Troubleshooting
+
+### Development Setup Issues
+
+**Port 5173 shows mock/fake data:**
+- Check that Vite is proxying to the correct port in `vite.config.ts` 
+- Ensure the local functions server is running on port 3001
+- Verify you're not running the old mock server (`dev-api-server-tsx.js`) simultaneously
+
+**"SUPABASE_URL not found" errors:**
+- Ensure `.env.local` exists with your Supabase credentials
+- Check that `tsx` is loading environment variables with `-r dotenv/config`
+- Verify environment variable names match exactly (no typos)
+
+**Empty queue/no tracks showing:**
+- Check your Supabase database has tracks with `audio_url` set
+- Ensure tracks have valid statuses (READY, PAID, GENERATING, etc.)
+- Use `/api/admin/debug-tracks` to inspect current database state
+
+**Audio playback issues:**
+- Browser autoplay policy requires user gesture - keep your "▶ Start Radio" button
+- Check that `audio_url` points to accessible Supabase Storage URLs
+- Verify CORS settings allow audio requests from your frontend
+
+### Verification Commands
+```bash
+# Check if your real tracks are loading
+curl -s http://localhost:3001/api/station/state
+
+# Verify via the web proxy (should be identical)  
+curl -s http://localhost:5173/api/station/state
+
+# Debug track storage URLs
+curl -s http://localhost:3001/api/admin/debug-tracks
+```
+
 ## 🔧 Next Phase: Live Testing
 
-**Current Status**: Development Complete (7 sprints) - Ready for production deployment  
-**Next Steps**: Follow the [comprehensive TODO.md](TODO.md) to set up real API keys and begin live user testing.
+**Current Status**: Development Complete - Local setup working with real Supabase data  
+**Next Steps**: Production deployment and user testing
 
 Key next phase activities:
-1. **API Integration**: Set up ElevenLabs API key and blockchain payments
-2. **Production Deployment**: Configure Vercel environment variables and deploy
+1. **Production Deployment**: Configure Vercel environment variables and deploy
+2. **API Integration**: Set up ElevenLabs API key and blockchain payments  
 3. **System Validation**: Verify health checks and end-to-end functionality
 4. **User Testing**: Alpha and beta testing with real users
 5. **Production Launch**: Go live with monitoring and support ready

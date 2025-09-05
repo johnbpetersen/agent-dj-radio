@@ -5,11 +5,31 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## [Unreleased]
 ### Added
-- Next phase: Live testing with real API keys and user validation
+- Next phase: Production deployment and user testing
 ### Changed
-- N/A
+- Local development now uses real Supabase integration (no more mock data confusion)
+- Development workflow simplified with single `npm run dev` command
 ### Fixed
 - N/A
+
+## [2025-09-05] - Development Setup Improvements
+### Added
+- feat(dev): Custom local functions server (`dev-functions-server.ts`) for development
+- feat(dev): Automatic station bootstrapping - first available track becomes PLAYING on startup
+- feat(dev): Real Supabase database integration in development (no more mock/real data confusion)
+- feat(dev): Comprehensive troubleshooting guide in README.md
+
+### Changed
+- BREAKING: Local development no longer requires Vercel CLI - uses lightweight functions server
+- dev: Vite proxy now points to port 3001 (real functions) instead of mock server
+- dev: ESM imports work correctly in development (no `.js` extension needed)
+- dev: Environment variables loaded automatically via `tsx -r dotenv/config`
+- dev: Development workflow simplified to single `npm run dev` command
+
+### Fixed  
+- fix(dev): Eliminated mock/real data confusion in local development
+- fix(dev): Station queue now properly loads real database tracks on startup
+- fix(dev): Proxy configuration properly serves real API endpoints instead of mock responses
 
 ## [2025-09-02] - Sprint 7: Staging Beta Rehearsal
 ### Added

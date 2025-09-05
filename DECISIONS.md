@@ -5,6 +5,15 @@
 - 2025-09-02: Cron 1/min; idempotent handlers; UI polling + Realtime.
 - 2025-09-02: Use native fetch and crypto.randomUUID (no axios/uuid).
 
+## Local Development Setup (2025-09-05)
+- 2025-09-05: **Local Functions Server**: Custom `dev-functions-server.ts` instead of Vercel CLI for development
+  - **Rationale**: Faster startup, real Supabase connections, no Vercel auth required in dev
+  - **Benefits**: ESM imports work correctly, environment variables via dotenv, hot reloading
+- 2025-09-05: **Port Configuration**: Vite (5173) proxies /api to local functions server (3001)
+  - **Rationale**: Clear separation between mock server (dev-api-server-tsx.js) and real API functions
+- 2025-09-05: **Automatic Station Bootstrapping**: `/api/station/state` auto-selects first track as PLAYING on empty station
+  - **Rationale**: Eliminates empty queue on fresh development startup, matches production behavior
+
 ## Payment System  
 - 2025-09-02: x402 HTTP 402 payment challenges via Coinbase CDP; USDC on Base/Base-Sepolia (not Lightning).
 - 2025-09-02: Feature flags as strings requiring exact match: `process.env.FLAG === 'true'`.

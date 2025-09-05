@@ -1,80 +1,96 @@
-# Front-End Player & Experience TODO
+# Development Status & Next Steps
 
 ## Project Status
 - **Backend Status:** ✅ COMPLETE (AI music generation working!)
-- **Current Phase:** Front-End Player Experience
-- **Goal:** Get real AI tracks playing through fully functional UI
+- **Local Development:** ✅ COMPLETE (Real Supabase integration working!)
+- **Current Phase:** Production Deployment & User Testing
+- **Goal:** Deploy to production and begin live user testing
 
 ---
 
-## PHASE 1: Core Music Player (PRIORITY 1)
+## ✅ COMPLETED: Local Development Setup
 
-### 🎵 Audio Playback
-- [ ] **Investigate Layout/NowPlaying Components**
-  - [ ] Find current audio implementation in Layout component
-  - [ ] Identify how audio player is structured
-  - [ ] Test with sample URLs to verify functionality
+### 🎵 Development Server Integration
+- [x] **Fixed Local API Integration**
+  - [x] Created `dev-functions-server.ts` for local API serving
+  - [x] Fixed Vite proxy configuration to point to real functions (not mock server)
+  - [x] Real Supabase database connection in development
+  - [x] Automatic track queue bootstrapping on startup
 
-- [ ] **Connect to Real Audio URLs**
-  - [ ] Connect player to station state API
-  - [ ] Use real Supabase Storage URLs from generated tracks
-  - [ ] Test playback with your 2 generated AI tracks
-  - [ ] Fix progress bar and time display
-  - [ ] Ensure player controls (play/pause/skip) work
+- [x] **Station/Queue API Working**
+  - [x] Station state endpoint returns real database tracks  
+  - [x] Queue populated with actual Supabase data
+  - [x] Automatic current track selection (first available → PLAYING)
+  - [x] Proper track status handling (READY, GENERATING, PAID)
 
-### 🔗 Station API Integration
-- [ ] **Debug Station/Queue APIs**
-  - [ ] Fix station state endpoint (currently returning errors)
-  - [ ] Fix queue endpoint to return real database tracks
-  - [ ] Test API responses with real track data
-  - [ ] Ensure proper track status handling (READY, GENERATING, PAID)
-
----
-
-## PHASE 2: Queue & Real Data (PRIORITY 2)
-
-### 🧹 Mock Data Cleanup  
-- [ ] **Remove Mock/Placeholder Code**
-  - [ ] Replace mock user ID in SubmitForm component
-  - [ ] Clean up any "dummy", "mock", or "placeholder" references
-  - [ ] Connect QueueList to real database tracks
-
-### ⚡ Real-time Updates
-- [ ] **Supabase Realtime Integration**
-  - [ ] Test real-time queue updates
-  - [ ] Show live track generation progress
-  - [ ] Update UI when tracks change status
+### 🔧 Development Experience Improvements
+- [x] **No Vercel CLI Required**: `npm run dev` starts everything locally
+- [x] **Real Database Integration**: Development uses live Supabase data
+- [x] **ESM Import Compatibility**: TypeScript imports work correctly in dev
+- [x] **Environment Variable Loading**: Automatic `.env.local` loading via dotenv
 
 ---
 
-## PHASE 3: Rating System (PRIORITY 3)
+## PHASE 1: Production Deployment (PRIORITY 1)
 
-### 🌟 Track Rating
-- [ ] **Backend Rating API**
-  - [ ] Create `POST /api/tracks/[id]/rate` endpoint
-  - [ ] Add rating columns to tracks database table
-  - [ ] Handle rating persistence and retrieval
+### 🚀 Vercel Production Setup
+- [ ] **Environment Configuration**
+  - [ ] Set up production Vercel project  
+  - [ ] Configure production environment variables
+  - [ ] Set feature flags: `ENABLE_REAL_ELEVEN=true`, `ENABLE_X402=false` (initially)
+  - [ ] Configure ADMIN_TOKEN for production monitoring
 
-- [ ] **Frontend Rating UI**
-  - [ ] Connect Reactions component to rating API
-  - [ ] Add visual feedback for rating selection
-  - [ ] Show track ratings in queue display
+- [ ] **API Key Integration**
+  - [ ] Set up real ElevenLabs API key
+  - [ ] Configure Coinbase CDP for x402 payments (testnet first)
+  - [ ] Test API integrations in staging environment
 
----
-
-## PHASE 4: Polish & Testing (PRIORITY 4)
-
-### 🎮 User Experience
-- [ ] **Full Integration Testing**
+### 🧹 Frontend Polish
+- [ ] **User Experience**
   - [ ] Test complete flow: submit → generate → queue → play
-  - [ ] Verify smooth track transitions
-  - [ ] Test on mobile and desktop
-  - [ ] Polish UI responsiveness
+  - [ ] Verify smooth track transitions with real AI tracks
+  - [ ] Test on mobile and desktop devices
+  - [ ] Polish loading states during track generation
 
 - [ ] **Error Handling**
   - [ ] Handle audio loading failures gracefully
   - [ ] Show proper loading states during generation
-  - [ ] Display helpful error messages
+  - [ ] Display helpful error messages for payment failures
+
+---
+
+## PHASE 2: User Testing & Validation (PRIORITY 2)
+
+### 👥 Alpha Testing
+- [ ] **Internal Testing**
+  - [ ] Test with real ElevenLabs music generation
+  - [ ] Verify track quality and generation speed
+  - [ ] Test concurrent users (use `test-concurrent-submissions.js`)
+  - [ ] Validate health monitoring at `/api/health`
+
+- [ ] **Beta User Testing**
+  - [ ] Invite limited beta users for feedback
+  - [ ] Monitor system performance under real load
+  - [ ] Collect feedback on music quality and UI/UX
+  - [ ] Iterate based on user feedback
+
+---
+
+## PHASE 3: Production Launch (PRIORITY 3)
+
+### 🔥 Live Launch
+- [ ] **Final Production Setup**
+  - [ ] Enable full feature flags: `ENABLE_REAL_ELEVEN=true`, `ENABLE_X402=true`
+  - [ ] Switch from Base-Sepolia testnet to Base mainnet  
+  - [ ] Configure production monitoring and alerting
+  - [ ] Set up customer support processes
+
+### 📊 Post-Launch Monitoring
+- [ ] **Analytics & Monitoring**
+  - [ ] Monitor health dashboard and system metrics
+  - [ ] Track user engagement and music generation success rates
+  - [ ] Analyze payment conversion rates and user behavior
+  - [ ] Plan feature improvements based on usage data
 
 ---
 
@@ -96,6 +112,8 @@
 
 ---
 
-**Current Status:** Backend is pumping out real AI beats! Now let's get the front-end jamming along. 🎵🔥
+---
 
-**Next Step:** Start Phase 1 by investigating the current audio player implementation.
+**Current Status:** Local development is fully working with real Supabase integration! The queue auto-populates with your database tracks and the station bootstraps automatically. 🚀
+
+**Next Step:** Deploy to production and begin user testing with real AI music generation.
