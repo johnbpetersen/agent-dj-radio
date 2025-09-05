@@ -5,6 +5,9 @@
  * Serves API endpoints at http://localhost:3001/api/*
  */
 
+// Load environment variables from .env.local
+import 'dotenv/config'
+
 import { createServer } from 'http'
 import { parse } from 'url'
 import { readFile } from 'fs/promises'

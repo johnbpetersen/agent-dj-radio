@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev:web": "vite",
-    "dev:api": "node dev-api-server-tsx.js",
+    "dev:api": "tsx dev-api-server.js",
     "dev:web:wait": "wait-on tcp:3001 && vite",
     "dev": "concurrently -k -n API,WEB -c magenta,blue \"npm:dev:api\" \"npm:dev:web:wait\"",
     "build": "tsc -b && vite build",
@@ -36,6 +36,7 @@
     "@vitest/ui": "^3.2.4",
     "autoprefixer": "^10.4.21",
     "concurrently": "^9.2.1",
+    "dotenv": "^17.2.2",
     "eslint": "^9.33.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
