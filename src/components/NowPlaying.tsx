@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react'
+import { useRef, useEffect, useState, useMemo } from 'react'
 import type { Track } from '../types'
 
 interface NowPlayingProps {
@@ -8,220 +8,115 @@ interface NowPlayingProps {
   onAdvance: () => void
 }
 
-// Helper function to check how many seconds of audio are buffered ahead
-function getBufferedAhead(audio: HTMLAudioElement): number {
-  const currentTime = audio.currentTime
-  for (let i = 0; i < audio.buffered.length; i++) {
-    const start = audio.buffered.start(i)
-    const end = audio.buffered.end(i)
-    if (currentTime >= start && currentTime <= end) {
-      return end - currentTime
-    }
-  }
-  return 0
-}
-
-const MIN_BUFFER_AHEAD_SECONDS = 8 // Require 8 seconds buffered before starting playback
+const DEBUG = false // Flip true briefly if you need logs
 
 export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvance }: NowPlayingProps) {
-  const audioRef = useRef<HTMLAudioElement>(null)
-  const [currentPlayheadSeconds, setCurrentPlayheadSeconds] = useState(0)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const [displaySeconds, setDisplaySeconds] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [hasUserInteracted, setHasUserInteracted] = useState(false)
-  const [isAudioLoaded, setIsAudioLoaded] = useState(false)
-  const [isBuffering, setIsBuffering] = useState(false)
   const [useLocalTest, setUseLocalTest] = useState(false)
   const [useProxy, setUseProxy] = useState(false)
   const lastSecondRef = useRef<number>(-1)
 
-  // SMART BUFFERING: Set up audio element with proper buffer management
+  // Build the src only when it truly changes
+  const src = useMemo(() => {
+    if (!track?.audio_url) return ''
+    
+    if (useLocalTest) {
+      return '/sample-track.wav'
+    } else if (useProxy) {
+      return `/api/audio-proxy?url=${encodeURIComponent(track.audio_url)}`
+    } else {
+      return track.audio_url
+    }
+  }, [track?.audio_url, useLocalTest, useProxy])
+
+  // Attach stable event handlers exactly once per <audio> mount
   useEffect(() => {
     const audio = audioRef.current
-    if (!audio || !track?.audio_url) {
-      setIsPlaying(false)
-      setCurrentPlayheadSeconds(0)
-      setIsBuffering(false)
-      return
+    if (!audio || !src) return
+
+    // Initialize to server playhead if there's large drift (do this once on mount)
+    const drift = Math.abs(audio.currentTime - (playheadSeconds || 0))
+    if (playheadSeconds >= 0 && drift > 2) {
+      audio.currentTime = playheadSeconds
+      lastSecondRef.current = Math.floor(playheadSeconds)
+      setDisplaySeconds(Math.floor(playheadSeconds))
     }
 
-    // Choose audio source: local test, proxy, or direct remote URL
-    let audioUrl: string
-    if (useLocalTest) {
-      audioUrl = '/sample-track.wav'
-    } else if (useProxy && track.audio_url) {
-      audioUrl = `/api/audio-proxy?url=${encodeURIComponent(track.audio_url)}`
-    } else {
-      audioUrl = track.audio_url
-    }
-    console.log('🎵 Setting up audio with smart buffering:', { 
-      useLocalTest, 
-      audioUrl,
-      originalUrl: track.audio_url 
-    })
-
-    // CRITICAL: Set crossOrigin before src to avoid CORS issues
-    audio.crossOrigin = 'anonymous'
-    audio.preload = 'auto'
-    audio.autoplay = false
-    audio.src = audioUrl
-
-    // Reset state
-    setIsAudioLoaded(false)
-    setIsBuffering(false)
-    setCurrentPlayheadSeconds(0)
-    lastSecondRef.current = -1
-
-    const onLoadedData = () => {
-      console.log('🎵 Audio data loaded')
-      setIsAudioLoaded(true)
-    }
-
-    const onWaiting = () => {
-      console.log('🎵 Audio waiting/buffering...')
-      setIsBuffering(true)
-    }
-
-    const onPlaying = () => {
-      console.log('🎵 Audio playing, stopping buffer indicator')
-      setIsBuffering(false)
-    }
-
-    const onCanPlay = () => {
-      console.log('🎵 Audio can play (basic readiness)')
-    }
-
-    const onCanPlayThrough = () => {
-      console.log('🎵 Audio can play through (enough buffered)')
-    }
-
-    // CRITICAL: Use timeupdate for smooth, reliable timer updates
     const onTimeUpdate = () => {
-      const currentTime = audio.currentTime
-      const currentSecond = Math.floor(currentTime)
-      
-      // Only update state when the second actually changes (reduces re-renders)
-      if (currentSecond !== lastSecondRef.current) {
-        lastSecondRef.current = currentSecond
-        setCurrentPlayheadSeconds(currentTime)
+      const s = Math.floor(audio.currentTime)
+      if (s !== lastSecondRef.current) {
+        lastSecondRef.current = s
+        setDisplaySeconds(s)
         
         // Check if track finished
-        if (track && currentTime >= track.duration_seconds && currentTime > 0) {
-          console.log('🎵 Track finished, advancing...')
+        if (track && audio.currentTime >= track.duration_seconds && audio.currentTime > 0) {
           onAdvance()
         }
       }
     }
 
+    const onPlaying = () => {
+      setIsPlaying(true)
+      if (DEBUG) console.log('playing @', audio.currentTime.toFixed(2))
+    }
+
+    const onPause = () => {
+      setIsPlaying(false)
+      if (DEBUG) console.log('pause @', audio.currentTime.toFixed(2))
+    }
+
+    const onWaiting = () => {
+      if (DEBUG) console.log('waiting/buffering @', audio.currentTime.toFixed(2))
+    }
+
     const onEnded = () => {
-      console.log('🎵 Audio ended')
       setIsPlaying(false)
       onAdvance()
     }
 
-    const onError = (e: Event) => {
-      console.error('🎵 Audio error:', e, {
-        error: audio.error,
-        networkState: audio.networkState,
-        readyState: audio.readyState,
-        src: audio.src,
-      })
+    const onError = () => {
       setIsPlaying(false)
-      setIsBuffering(false)
+      if (DEBUG) console.log('audio error', {
+        err: audio.error, ready: audio.readyState, net: audio.networkState
+      })
     }
 
-    // Add all event listeners
-    audio.addEventListener('loadeddata', onLoadedData)
-    audio.addEventListener('canplay', onCanPlay)
-    audio.addEventListener('canplaythrough', onCanPlayThrough)
-    audio.addEventListener('waiting', onWaiting)
-    audio.addEventListener('playing', onPlaying)
     audio.addEventListener('timeupdate', onTimeUpdate)
+    audio.addEventListener('playing', onPlaying)
+    audio.addEventListener('pause', onPause)
+    audio.addEventListener('waiting', onWaiting)
     audio.addEventListener('ended', onEnded)
     audio.addEventListener('error', onError)
 
-    // Let browser handle loading naturally (don't force .load())
-
     return () => {
-      audio.pause()
-      audio.removeEventListener('loadeddata', onLoadedData)
-      audio.removeEventListener('canplay', onCanPlay)
-      audio.removeEventListener('canplaythrough', onCanPlayThrough)
-      audio.removeEventListener('waiting', onWaiting)
-      audio.removeEventListener('playing', onPlaying)
       audio.removeEventListener('timeupdate', onTimeUpdate)
+      audio.removeEventListener('playing', onPlaying)
+      audio.removeEventListener('pause', onPause)
+      audio.removeEventListener('waiting', onWaiting)
       audio.removeEventListener('ended', onEnded)
       audio.removeEventListener('error', onError)
     }
-  }, [track?.id, track?.audio_url, useLocalTest, useProxy, onAdvance])
+    // IMPORTANT: run only when the actual <audio> element remounts (keyed by track id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src, track?.id])
 
-  // Sync with server playhead when track changes or on big drift
-  useEffect(() => {
-    const audio = audioRef.current
-    if (!audio || !track || playheadSeconds < 0) return
-
-    const drift = Math.abs(audio.currentTime - playheadSeconds)
-    if (drift > 2) {
-      console.log(`🎵 Syncing to server time: ${playheadSeconds}s (drift: ${drift}s)`)
-      audio.currentTime = playheadSeconds
-      setCurrentPlayheadSeconds(playheadSeconds)
-      lastSecondRef.current = Math.floor(playheadSeconds)
-    }
-  }, [track?.id, playheadSeconds])
-
-  // SMART PLAY: Wait for adequate buffer before starting playback
   const handleUserInteraction = async () => {
-    console.log('🎵 User clicked play - checking buffer before starting...')
     setHasUserInteracted(true)
-    
     const audio = audioRef.current
-    if (!audio || !track?.audio_url) {
-      console.error('🎵 No audio element or URL available')
-      return
-    }
+    if (!audio) return
 
     try {
-      // Wait until we have adequate buffer OR canplaythrough OR timeout
-      const deadline = Date.now() + 7000 // 7 second safety timeout
-      let attempts = 0
-      
-      while (Date.now() < deadline) {
-        const bufferedAhead = getBufferedAhead(audio)
-        const readyState = audio.readyState
-        
-        console.log(`🎵 Buffer check attempt ${++attempts}: ${bufferedAhead.toFixed(1)}s buffered, readyState: ${readyState}`)
-        
-        // Good to go if we have enough buffer or browser says ready
-        if ((readyState >= 3 && bufferedAhead >= MIN_BUFFER_AHEAD_SECONDS) || readyState >= 4) {
-          console.log('🎵 ✅ Sufficient buffer available, starting playback')
-          break
-        }
-        
-        // Give browser time to buffer more data
-        await new Promise(resolve => setTimeout(resolve, 150))
-      }
-
-      // Sync playhead if needed
-      if (currentPlayheadSeconds > 0) {
-        audio.currentTime = currentPlayheadSeconds
-      }
-
-      // Start playback
       const playPromise = audio.play()
       if (playPromise) {
         await playPromise
       }
-      
       setIsPlaying(true)
-      console.log('🎵 ✅ Playback started successfully!', {
-        bufferedAhead: getBufferedAhead(audio).toFixed(1) + 's',
-        currentTime: audio.currentTime.toFixed(1) + 's',
-        readyState: audio.readyState
-      })
-      
     } catch (error) {
-      console.error('🎵 ❌ Playback failed:', error)
+      if (DEBUG) console.error('Play failed:', error)
       setIsPlaying(false)
-      setIsBuffering(false)
     }
   }
 
@@ -252,13 +147,8 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
     )
   }
 
-  const currentSeconds = Math.floor(currentPlayheadSeconds)
-  const progressPercent = (currentPlayheadSeconds / track.duration_seconds) * 100
-  const remainingSeconds = Math.max(0, track.duration_seconds - currentSeconds)
-  const currentMinutes = Math.floor(currentSeconds / 60)
-  const currentSecondsDisplay = currentSeconds % 60
-  const remainingMinutes = Math.floor(remainingSeconds / 60)
-  const remainingSecondsDisplay = remainingSeconds % 60
+  // Key by track id so a new element mounts on song change (no leftover listeners/state)
+  const audioKey = track?.id ?? 'none'
 
   return (
     <div className="bg-white rounded-lg shadow-md p-6">
@@ -280,26 +170,30 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
                 ▶ Play
               </button>
             )}
-            {isPlaying && !isBuffering && (
+            {isPlaying && (
               <span className="text-green-500 text-sm flex items-center">
                 <span className="animate-pulse mr-1">●</span> Playing
-              </span>
-            )}
-            {isBuffering && (
-              <span className="text-orange-500 text-sm flex items-center">
-                <span className="animate-spin mr-1">⟳</span> Buffering...
               </span>
             )}
           </div>
         </div>
       </div>
 
-      {/* DEBUG: Show audio controls for testing */}
+      {/* Clean audio element - key ensures clean mount on track change */}
+      <audio
+        key={audioKey}
+        ref={audioRef}
+        src={src || undefined}
+        crossOrigin="anonymous"
+        preload="auto"
+        controls
+        className="w-full mb-4"
+      />
+
+      {/* DEBUG: Show test controls */}
       <div className="mb-4 p-2 bg-gray-100 rounded">
         <div className="flex justify-between items-center mb-2">
-          <p className="text-xs text-gray-600">
-            DEBUG: Audio Element {!isAudioLoaded && '(Loading...)'}
-          </p>
+          <p className="text-xs text-gray-600">DEBUG Controls</p>
           <div className="flex space-x-1">
             <button
               onClick={() => setUseLocalTest(!useLocalTest)}
@@ -324,54 +218,44 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
             </button>
           </div>
         </div>
-        <audio 
-          ref={audioRef} 
-          controls 
-          preload="auto"
-          crossOrigin="anonymous"
-          className="w-full" 
-        />
         {track.audio_url && (
-          <p className="text-xs text-gray-500 mt-1 break-all">
-            Original URL: {track.audio_url}
+          <p className="text-xs text-gray-500 break-all">
+            Original: {track.audio_url}
           </p>
         )}
         {useLocalTest && (
-          <p className="text-xs text-blue-600 mt-1">
-            🧪 Testing with: /sample-track.wav
-          </p>
+          <p className="text-xs text-blue-600">🧪 Testing: /sample-track.wav</p>
         )}
         {useProxy && !useLocalTest && (
-          <p className="text-xs text-purple-600 mt-1">
-            🔄 Using proxy: /api/audio-proxy
-          </p>
+          <p className="text-xs text-purple-600">🔄 Using proxy</p>
         )}
-        <div className="text-xs text-gray-500 mt-1">
-          Status: {isPlaying ? 'Playing' : 'Paused'} | 
-          Loaded: {isAudioLoaded ? 'Yes' : 'No'} |
-          Buffering: {isBuffering ? 'Yes' : 'No'} |
-          Time: {currentPlayheadSeconds.toFixed(1)}s
-        </div>
       </div>
 
-      <div className="mb-4">
-        <div className="flex justify-between text-sm text-gray-600 mb-2">
-          <span>{currentMinutes}:{currentSecondsDisplay.toString().padStart(2, '0')}</span>
-          <span>-{remainingMinutes}:{remainingSecondsDisplay.toString().padStart(2, '0')}</span>
+      {/* Time UI driven only by displaySeconds */}
+      {track && (
+        <div className="mb-4">
+          <div className="flex justify-between text-sm text-gray-600 mb-2">
+            <span>{Math.floor(displaySeconds / 60)}:{String(displaySeconds % 60).padStart(2, '0')}</span>
+            <span>{Math.floor(track.duration_seconds / 60)}:{String(track.duration_seconds % 60).padStart(2, '0')}</span>
+            <span>
+              {(() => {
+                const remaining = Math.max(0, track.duration_seconds - displaySeconds)
+                return `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')} left`
+              })()}
+            </span>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-2">
+            <div
+              className="bg-blue-500 h-2 rounded-full transition-[width] duration-1000 ease-linear"
+              style={{ width: track ? `${Math.min(100, (displaySeconds / track.duration_seconds) * 100)}%` : '0%' }}
+            />
+          </div>
+          <div className="flex justify-between text-xs text-gray-500 mt-1">
+            <span>0:00</span>
+            <span>{Math.floor(track.duration_seconds / 60)}:{String(track.duration_seconds % 60).padStart(2, '0')}</span>
+          </div>
         </div>
-        <div className="w-full bg-gray-200 rounded-full h-2">
-          <div
-            className="bg-blue-500 h-2 rounded-full transition-all duration-1000 ease-linear"
-            style={{ 
-              width: `${Math.min(100, progressPercent)}%`
-            }}
-          />
-        </div>
-        <div className="flex justify-between text-xs text-gray-500 mt-1">
-          <span>0:00</span>
-          <span>{Math.floor(track.duration_seconds / 60)}:{(track.duration_seconds % 60).toString().padStart(2, '0')}</span>
-        </div>
-      </div>
+      )}
 
       <div className="flex justify-between items-center">
         <div className="text-sm text-gray-600">
