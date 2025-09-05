@@ -65,7 +65,7 @@ function createMockReq(req, body) {
 }
 
 function createMockRes(res) {
-  return {
+  const mockRes = {
     status: (code) => {
       res.statusCode = code
       return mockRes
@@ -81,6 +81,7 @@ function createMockRes(res) {
       res.setHeader(name, value)
     }
   }
+  return mockRes
 }
 
 const server = createServer(async (req, res) => {
