@@ -5,13 +5,28 @@
  * Serves API endpoints at http://localhost:3001/api/*
  */
 
-// Load environment variables from .env.local
-import 'dotenv/config'
-
 import { createServer } from 'http'
 import { parse } from 'url'
 import { readFile } from 'fs/promises'
 import { resolve, join } from 'path'
+
+// Load environment variables from .env.local manually
+async function loadEnvFile() {
+  try {
+    const envContent = await readFile('.env.local', 'utf8')
+    envContent.split('\n').forEach(line => {
+      const [key, value] = line.split('=')
+      if (key && value) {
+        process.env[key.trim()] = value.trim()
+      }
+    })
+  } catch (error) {
+    console.log('No .env.local file found or error reading it:', error.message)
+  }
+}
+
+// Load env vars before starting server
+await loadEnvFile()
 
 const PORT = 3001
 const API_DIR = resolve('./api')
