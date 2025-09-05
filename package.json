@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev:web": "vite",
-    "dev:api": "tsx dev-api-server.js",
+    "dev:api": "node dev-api-server-tsx.js",
     "dev:web:wait": "wait-on tcp:3001 && vite",
     "dev": "concurrently -k -n API,WEB -c magenta,blue \"npm:dev:api\" \"npm:dev:web:wait\"",
     "build": "tsc -b && vite build",
