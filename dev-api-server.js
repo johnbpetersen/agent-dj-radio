@@ -10,10 +10,10 @@ import { parse } from 'url'
 import { readFile } from 'fs/promises'
 import { resolve, join } from 'path'
 
-// Load environment variables from .env.local manually
+// Load environment variables from .env manually
 async function loadEnvFile() {
   try {
-    const envContent = await readFile('.env.local', 'utf8')
+    const envContent = await readFile('.env', 'utf8')
     envContent.split('\n').forEach(line => {
       const [key, value] = line.split('=')
       if (key && value) {
@@ -21,7 +21,7 @@ async function loadEnvFile() {
       }
     })
   } catch (error) {
-    console.log('No .env.local file found or error reading it:', error.message)
+    console.log('No .env file found or error reading it:', error.message)
   }
 }
 
