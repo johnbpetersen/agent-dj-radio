@@ -4,8 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "dev:full": "concurrently \"vite\" \"node dev-api-server-tsx.js\" --names \"vite,api\" --prefix name",
+    "dev:web": "vite",
+    "dev:api": "node dev-api-server-tsx.js",
+    "dev:web:wait": "wait-on tcp:3001 && vite",
+    "dev": "concurrently -k -n API,WEB -c magenta,blue \"npm:dev:api\" \"npm:dev:web:wait\"",
     "build": "tsc -b && vite build",
     "lint": "eslint . --ext .ts,.tsx --max-warnings=0",
     "preview": "vite preview",
@@ -46,6 +48,7 @@
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.39.1",
     "vite": "^7.1.2",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "wait-on": "^8.0.4"
   }
 }
