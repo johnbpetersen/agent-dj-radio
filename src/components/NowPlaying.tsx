@@ -8,263 +8,212 @@ interface NowPlayingProps {
   onAdvance: () => void
 }
 
+// Helper function to check how many seconds of audio are buffered ahead
+function getBufferedAhead(audio: HTMLAudioElement): number {
+  const currentTime = audio.currentTime
+  for (let i = 0; i < audio.buffered.length; i++) {
+    const start = audio.buffered.start(i)
+    const end = audio.buffered.end(i)
+    if (currentTime >= start && currentTime <= end) {
+      return end - currentTime
+    }
+  }
+  return 0
+}
+
+const MIN_BUFFER_AHEAD_SECONDS = 8 // Require 8 seconds buffered before starting playback
+
 export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvance }: NowPlayingProps) {
   const audioRef = useRef<HTMLAudioElement>(null)
   const [currentPlayheadSeconds, setCurrentPlayheadSeconds] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [hasUserInteracted, setHasUserInteracted] = useState(false)
   const [isAudioLoaded, setIsAudioLoaded] = useState(false)
-  const lastUpdateRef = useRef<number>(0)
+  const [isBuffering, setIsBuffering] = useState(false)
+  const [useLocalTest, setUseLocalTest] = useState(false)
+  const lastSecondRef = useRef<number>(-1)
 
-  // HYBRID TIMER: Smooth JavaScript timer synchronized with audio element
-  useEffect(() => {
-    const audio = audioRef.current
-    if (!audio || !track) return
-
-    let animationFrame: number
-    let isDestroyed = false
-
-    const updateTimer = () => {
-      if (isDestroyed || !audio) return
-      
-      const audioCurrentTime = audio.currentTime
-      const currentSecond = Math.floor(audioCurrentTime)
-      
-      // Always update current time for smooth display
-      setCurrentPlayheadSeconds(audioCurrentTime)
-      
-      // Check if track finished
-      if (audioCurrentTime >= track.duration_seconds && audioCurrentTime > 0) {
-        console.log('🎵 Track finished, advancing...')
-        onAdvance()
-        return
-      }
-      
-      // Continue animation loop
-      animationFrame = requestAnimationFrame(updateTimer)
-    }
-
-    // Start the timer loop when audio is playing
-    const startTimer = () => {
-      if (!isDestroyed) {
-        animationFrame = requestAnimationFrame(updateTimer)
-      }
-    }
-
-    const stopTimer = () => {
-      if (animationFrame) {
-        cancelAnimationFrame(animationFrame)
-      }
-    }
-
-    // Audio events for loading and playback state
-    audio.addEventListener('loadstart', () => console.log('🎵 Audio loading started...'))
-    audio.addEventListener('canplay', () => {
-      console.log('🎵 Audio can start playing')
-      setIsAudioLoaded(true)
-    })
-    audio.addEventListener('waiting', () => console.log('🎵 Audio waiting/buffering...'))
-    audio.addEventListener('playing', () => {
-      console.log('🎵 Audio playing event')
-      startTimer()
-    })
-    audio.addEventListener('pause', () => {
-      console.log('🎵 Audio paused event')
-      stopTimer()
-    })
-
-    // If already playing when effect runs, start timer
-    if (!audio.paused) {
-      startTimer()
-    }
-
-    return () => {
-      isDestroyed = true
-      stopTimer()
-      audio.removeEventListener('loadstart', () => {})
-      audio.removeEventListener('canplay', () => {})
-      audio.removeEventListener('waiting', () => {})
-      audio.removeEventListener('playing', () => {})
-      audio.removeEventListener('pause', () => {})
-    }
-  }, [track, onAdvance])
-
-  // Initialize audio element to server time when track changes
-  useEffect(() => {
-    const audio = audioRef.current
-    if (!audio || !track || playheadSeconds < 0) return
-
-    // Set audio to server playhead position (but only on track changes or big corrections)
-    const drift = Math.abs(audio.currentTime - playheadSeconds)
-    if (drift > 2) {
-      console.log(`🎵 Setting audio to server time: ${playheadSeconds}s (drift: ${drift}s)`)
-      audio.currentTime = playheadSeconds
-      setCurrentPlayheadSeconds(playheadSeconds)
-    }
-  }, [track?.id, playheadSeconds])
-
-  // Handle track changes - SIMPLIFIED FOR AUDIO DEBUG
+  // SMART BUFFERING: Set up audio element with proper buffer management
   useEffect(() => {
     const audio = audioRef.current
     if (!audio || !track?.audio_url) {
       setIsPlaying(false)
       setCurrentPlayheadSeconds(0)
+      setIsBuffering(false)
       return
     }
 
-    console.log('🎵 AUDIO URL DEBUG:', track.audio_url)
-    console.log('🎵 TRACK DEBUG:', {
-      id: track.id,
-      prompt: track.prompt,
-      audio_url: track.audio_url,
-      status: track.status,
-      source: track.source
+    // Choose audio source: local test file vs remote URL
+    const audioUrl = useLocalTest ? '/sample-track.wav' : track.audio_url
+    console.log('🎵 Setting up audio with smart buffering:', { 
+      useLocalTest, 
+      audioUrl,
+      originalUrl: track.audio_url 
     })
 
-    // Reset audio element completely
-    audio.pause()
-    audio.currentTime = 0
-    audio.volume = 1.0 // Ensure volume is at max
-    audio.preload = 'auto' // Preload audio for smooth playback
-    audio.src = track.audio_url
-    
-    setCurrentPlayheadSeconds(0)
+    // CRITICAL: Set crossOrigin before src to avoid CORS issues
+    audio.crossOrigin = 'anonymous'
+    audio.preload = 'auto'
+    audio.autoplay = false
+    audio.src = audioUrl
+
+    // Reset state
     setIsAudioLoaded(false)
+    setIsBuffering(false)
+    setCurrentPlayheadSeconds(0)
+    lastSecondRef.current = -1
 
-    // Add load event listener to debug
-    const handleLoad = () => {
-      console.log('🎵 DEBUG: Audio loaded successfully', {
-        duration: audio.duration,
-        readyState: audio.readyState
-      })
+    const onLoadedData = () => {
+      console.log('🎵 Audio data loaded')
+      setIsAudioLoaded(true)
     }
 
-    const handleLoadError = (e: Event) => {
-      console.error('🎵 DEBUG: Audio load error:', e)
-      console.error('🎵 DEBUG: Audio error details:', {
-        error: audio.error,
-        networkState: audio.networkState,
-        readyState: audio.readyState,
-        src: audio.src
-      })
+    const onWaiting = () => {
+      console.log('🎵 Audio waiting/buffering...')
+      setIsBuffering(true)
     }
 
-    audio.addEventListener('loadeddata', handleLoad)
-    audio.addEventListener('error', handleLoadError)
-
-    // Try to load the audio
-    audio.load()
-
-    return () => {
-      audio.removeEventListener('loadeddata', handleLoad)
-      audio.removeEventListener('error', handleLoadError)
-      audio.pause()
-      setIsPlaying(false)
-    }
-  }, [track?.id, track?.audio_url])
-
-  // Handle audio events
-  useEffect(() => {
-    const audio = audioRef.current
-    if (!audio) return
-
-    const handlePlay = () => {
-      setIsPlaying(true)
-      console.log('Audio play event')
+    const onPlaying = () => {
+      console.log('🎵 Audio playing, stopping buffer indicator')
+      setIsBuffering(false)
     }
 
-    const handlePause = () => {
-      setIsPlaying(false)
-      console.log('Audio pause event')
+    const onCanPlay = () => {
+      console.log('🎵 Audio can play (basic readiness)')
     }
 
-    const handleEnded = () => {
-      console.log('Audio ended event')
+    const onCanPlayThrough = () => {
+      console.log('🎵 Audio can play through (enough buffered)')
+    }
+
+    // CRITICAL: Use timeupdate for smooth, reliable timer updates
+    const onTimeUpdate = () => {
+      const currentTime = audio.currentTime
+      const currentSecond = Math.floor(currentTime)
+      
+      // Only update state when the second actually changes (reduces re-renders)
+      if (currentSecond !== lastSecondRef.current) {
+        lastSecondRef.current = currentSecond
+        setCurrentPlayheadSeconds(currentTime)
+        
+        // Check if track finished
+        if (track && currentTime >= track.duration_seconds && currentTime > 0) {
+          console.log('🎵 Track finished, advancing...')
+          onAdvance()
+        }
+      }
+    }
+
+    const onEnded = () => {
+      console.log('🎵 Audio ended')
       setIsPlaying(false)
       onAdvance()
     }
 
-    const handleError = (e: Event) => {
-      console.error('Audio error:', e)
+    const onError = (e: Event) => {
+      console.error('🎵 Audio error:', e, {
+        error: audio.error,
+        networkState: audio.networkState,
+        readyState: audio.readyState,
+        src: audio.src,
+      })
       setIsPlaying(false)
+      setIsBuffering(false)
     }
 
-    audio.addEventListener('play', handlePlay)
-    audio.addEventListener('pause', handlePause)
-    audio.addEventListener('ended', handleEnded)
-    audio.addEventListener('error', handleError)
+    // Add all event listeners
+    audio.addEventListener('loadeddata', onLoadedData)
+    audio.addEventListener('canplay', onCanPlay)
+    audio.addEventListener('canplaythrough', onCanPlayThrough)
+    audio.addEventListener('waiting', onWaiting)
+    audio.addEventListener('playing', onPlaying)
+    audio.addEventListener('timeupdate', onTimeUpdate)
+    audio.addEventListener('ended', onEnded)
+    audio.addEventListener('error', onError)
+
+    // Let browser handle loading naturally (don't force .load())
 
     return () => {
-      audio.removeEventListener('play', handlePlay)
-      audio.removeEventListener('pause', handlePause)
-      audio.removeEventListener('ended', handleEnded)
-      audio.removeEventListener('error', handleError)
+      audio.pause()
+      audio.removeEventListener('loadeddata', onLoadedData)
+      audio.removeEventListener('canplay', onCanPlay)
+      audio.removeEventListener('canplaythrough', onCanPlayThrough)
+      audio.removeEventListener('waiting', onWaiting)
+      audio.removeEventListener('playing', onPlaying)
+      audio.removeEventListener('timeupdate', onTimeUpdate)
+      audio.removeEventListener('ended', onEnded)
+      audio.removeEventListener('error', onError)
     }
-  }, [onAdvance])
+  }, [track?.id, track?.audio_url, useLocalTest, onAdvance])
 
-  // Handle user interaction to enable autoplay - SIMPLIFIED FOR AUDIO DEBUG
+  // Sync with server playhead when track changes or on big drift
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!audio || !track || playheadSeconds < 0) return
+
+    const drift = Math.abs(audio.currentTime - playheadSeconds)
+    if (drift > 2) {
+      console.log(`🎵 Syncing to server time: ${playheadSeconds}s (drift: ${drift}s)`)
+      audio.currentTime = playheadSeconds
+      setCurrentPlayheadSeconds(playheadSeconds)
+      lastSecondRef.current = Math.floor(playheadSeconds)
+    }
+  }, [track?.id, playheadSeconds])
+
+  // SMART PLAY: Wait for adequate buffer before starting playback
   const handleUserInteraction = async () => {
-    console.log('🎵 DEBUG: User clicked play button')
+    console.log('🎵 User clicked play - checking buffer before starting...')
     setHasUserInteracted(true)
     
     const audio = audioRef.current
-    if (!audio) {
-      console.error('🎵 DEBUG: No audio element found')
+    if (!audio || !track?.audio_url) {
+      console.error('🎵 No audio element or URL available')
       return
     }
-
-    if (!track?.audio_url) {
-      console.error('🎵 DEBUG: No audio URL available')
-      return
-    }
-
-    console.log('🎵 DEBUG: Attempting to play audio:', {
-      src: audio.src,
-      readyState: audio.readyState,
-      networkState: audio.networkState,
-      paused: audio.paused,
-      volume: audio.volume,
-      currentTime: audio.currentTime,
-      duration: audio.duration
-    })
 
     try {
-      // Ensure audio is loaded and ready
-      if (audio.readyState < 3) {
-        console.log('🎵 DEBUG: Audio not ready, waiting for load...')
-        await new Promise((resolve, reject) => {
-          const handleCanPlay = () => {
-            audio.removeEventListener('canplay', handleCanPlay)
-            audio.removeEventListener('error', handleError)
-            resolve(true)
-          }
-          const handleError = (e: Event) => {
-            audio.removeEventListener('canplay', handleCanPlay)
-            audio.removeEventListener('error', handleError)
-            reject(e)
-          }
-          audio.addEventListener('canplay', handleCanPlay)
-          audio.addEventListener('error', handleError)
-        })
+      // Wait until we have adequate buffer OR canplaythrough OR timeout
+      const deadline = Date.now() + 7000 // 7 second safety timeout
+      let attempts = 0
+      
+      while (Date.now() < deadline) {
+        const bufferedAhead = getBufferedAhead(audio)
+        const readyState = audio.readyState
+        
+        console.log(`🎵 Buffer check attempt ${++attempts}: ${bufferedAhead.toFixed(1)}s buffered, readyState: ${readyState}`)
+        
+        // Good to go if we have enough buffer or browser says ready
+        if ((readyState >= 3 && bufferedAhead >= MIN_BUFFER_AHEAD_SECONDS) || readyState >= 4) {
+          console.log('🎵 ✅ Sufficient buffer available, starting playback')
+          break
+        }
+        
+        // Give browser time to buffer more data
+        await new Promise(resolve => setTimeout(resolve, 150))
       }
 
-      console.log('🎵 DEBUG: Audio ready, attempting play...')
-      audio.currentTime = currentPlayheadSeconds
+      // Sync playhead if needed
+      if (currentPlayheadSeconds > 0) {
+        audio.currentTime = currentPlayheadSeconds
+      }
+
+      // Start playback
       const playPromise = audio.play()
-      
-      if (playPromise !== undefined) {
+      if (playPromise) {
         await playPromise
       }
       
       setIsPlaying(true)
-      console.log('🎵 DEBUG: ✅ Audio is now playing!', {
-        paused: audio.paused,
-        currentTime: audio.currentTime,
-        volume: audio.volume
+      console.log('🎵 ✅ Playback started successfully!', {
+        bufferedAhead: getBufferedAhead(audio).toFixed(1) + 's',
+        currentTime: audio.currentTime.toFixed(1) + 's',
+        readyState: audio.readyState
       })
+      
     } catch (error) {
-      console.error('🎵 DEBUG: ❌ Manual play failed:', error)
+      console.error('🎵 ❌ Playback failed:', error)
       setIsPlaying(false)
+      setIsBuffering(false)
     }
   }
 
@@ -323,9 +272,14 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
                 ▶ Play
               </button>
             )}
-            {isPlaying && (
+            {isPlaying && !isBuffering && (
               <span className="text-green-500 text-sm flex items-center">
                 <span className="animate-pulse mr-1">●</span> Playing
+              </span>
+            )}
+            {isBuffering && (
+              <span className="text-orange-500 text-sm flex items-center">
+                <span className="animate-spin mr-1">⟳</span> Buffering...
               </span>
             )}
           </div>
@@ -334,9 +288,21 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
 
       {/* DEBUG: Show audio controls for testing */}
       <div className="mb-4 p-2 bg-gray-100 rounded">
-        <p className="text-xs text-gray-600 mb-2">
-          DEBUG: Audio Element {!isAudioLoaded && '(Loading...)'}
-        </p>
+        <div className="flex justify-between items-center mb-2">
+          <p className="text-xs text-gray-600">
+            DEBUG: Audio Element {!isAudioLoaded && '(Loading...)'}
+          </p>
+          <button
+            onClick={() => setUseLocalTest(!useLocalTest)}
+            className={`px-2 py-1 text-xs rounded ${
+              useLocalTest 
+                ? 'bg-blue-500 text-white' 
+                : 'bg-gray-300 text-gray-700'
+            }`}
+          >
+            {useLocalTest ? 'Using Local Test' : 'Use Local Test'}
+          </button>
+        </div>
         <audio 
           ref={audioRef} 
           controls 
@@ -345,11 +311,19 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
           className="w-full" 
         />
         {track.audio_url && (
-          <p className="text-xs text-gray-500 mt-1 break-all">URL: {track.audio_url}</p>
+          <p className="text-xs text-gray-500 mt-1 break-all">
+            Original URL: {track.audio_url}
+          </p>
+        )}
+        {useLocalTest && (
+          <p className="text-xs text-blue-600 mt-1">
+            🧪 Testing with: /sample-track.wav
+          </p>
         )}
         <div className="text-xs text-gray-500 mt-1">
           Status: {isPlaying ? 'Playing' : 'Paused'} | 
           Loaded: {isAudioLoaded ? 'Yes' : 'No'} |
+          Buffering: {isBuffering ? 'Yes' : 'No'} |
           Time: {currentPlayheadSeconds.toFixed(1)}s
         </div>
       </div>
@@ -361,7 +335,7 @@ export default function NowPlaying({ track, playheadSeconds, isLoading, onAdvanc
         </div>
         <div className="w-full bg-gray-200 rounded-full h-2">
           <div
-            className="bg-blue-500 h-2 rounded-full"
+            className="bg-blue-500 h-2 rounded-full transition-all duration-1000 ease-linear"
             style={{ 
               width: `${Math.min(100, progressPercent)}%`
             }}
