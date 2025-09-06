@@ -212,29 +212,48 @@ export async function confirmTrackPayment(
 }
 
 /**
- * Get or create user
+ * Get or create user by display name
  */
 export async function upsertUser(
   supabase: SupabaseClient,
   userData: {
-    id: string
     display_name: string
+    banned?: boolean
   }
 ): Promise<any> {
+  const name = userData.display_name.trim()
+  if (!name) return null
+
+  // Exact, case-insensitive match without wildcard risk
+  const { data: existing, error: findErr } = await supabase
+    .from('users')
+    .select('*')
+    .filter('display_name', 'ilike', name) // matches exactly if no %/_ in input
+    .limit(1)
+    .maybeSingle()
+
+  if (findErr) {
+    console.error('Find user error:', findErr)
+    return null
+  }
+  if (existing) return existing
+
+  // Create with generated id (works regardless of DB default)
+  const id = (globalThis as any).crypto?.randomUUID?.() ?? require('node:crypto').randomUUID()
   const { data, error } = await supabase
     .from('users')
-    .upsert({
-      id: userData.id,
-      display_name: userData.display_name
+    .insert({
+      id,
+      display_name: name,
+      banned: userData.banned ?? false
     })
     .select()
     .single()
 
   if (error) {
-    console.error('Error upserting user:', error)
+    console.error('Create user error:', error)
     return null
   }
-
   return data
 }
 

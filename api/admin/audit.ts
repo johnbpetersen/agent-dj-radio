@@ -19,14 +19,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(404).json({ error: 'Not found' })
   }
   if (authError) {
-    logger.apiResponse(req.method, req.url || '/api/admin/audit', 401, Date.now() - startTime, { 
+    logger.requestComplete(req.url || '/api/admin/audit', 
       correlationId, 
+      statusCode: 401,
       authError 
     })
     return res.status(401).json({ error: authError, correlationId })
   }
 
-  logger.apiRequest(req.method, req.url || '/api/admin/audit', { correlationId })
+  logger.request(req.url || '/api/admin/audit', { correlationId, method: req.method })
 
   try {
     const { track_id, stats, since } = req.query
@@ -34,8 +35,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (track_id) {
       // Get audit trail for specific track
       if (typeof track_id !== 'string') {
-        logger.apiResponse(req.method, req.url || '/api/admin/audit', 400, Date.now() - startTime, { 
+        logger.requestComplete(req.url || '/api/admin/audit', 
           correlationId, 
+          statusCode: 400,
           error: 'Invalid track_id parameter' 
         })
         return res.status(400).json({ error: 'track_id must be a string', correlationId })
@@ -48,7 +50,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const auditTrail = await getPaymentAuditTrail(supabaseAdmin, track_id)
 
-      logger.apiResponse(req.method, req.url || '/api/admin/audit', 200, Date.now() - startTime, { 
+      logger.requestComplete(req.url || '/api/admin/audit', statusCode: 200, 
         correlationId, 
         trackId: track_id,
         eventsCount: auditTrail.length
@@ -67,7 +69,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (since && typeof since === 'string') {
         startDate = new Date(since)
         if (isNaN(startDate.getTime())) {
-          logger.apiResponse(req.method, req.url || '/api/admin/audit', 400, Date.now() - startTime, { 
+          logger.requestComplete(req.url || '/api/admin/audit', statusCode: 400, 
             correlationId, 
             error: 'Invalid since parameter' 
           })
@@ -83,14 +85,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const statistics = await getPaymentStatistics(supabaseAdmin, startDate)
 
       if (!statistics) {
-        logger.apiResponse(req.method, req.url || '/api/admin/audit', 500, Date.now() - startTime, { 
+        logger.requestComplete(req.url || '/api/admin/audit', statusCode: 500, 
           correlationId, 
           error: 'Failed to get payment statistics' 
         })
         return res.status(500).json({ error: 'Failed to get payment statistics', correlationId })
       }
 
-      logger.apiResponse(req.method, req.url || '/api/admin/audit', 200, Date.now() - startTime, { 
+      logger.requestComplete(req.url || '/api/admin/audit', statusCode: 200, 
         correlationId, 
         successRate: statistics.successRate
       })
@@ -108,7 +110,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Default: get recent audit events
     const limit = req.query.limit ? parseInt(req.query.limit as string) : 50
     if (isNaN(limit) || limit < 1 || limit > 1000) {
-      logger.apiResponse(req.method, req.url || '/api/admin/audit', 400, Date.now() - startTime, { 
+      logger.requestComplete(req.url || '/api/admin/audit', statusCode: 400, 
         correlationId, 
         error: 'Invalid limit parameter' 
       })
@@ -135,7 +137,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error(`Failed to get recent audit events: ${error.message}`)
     }
 
-    logger.apiResponse(req.method, req.url || '/api/admin/audit', 200, Date.now() - startTime, { 
+    logger.requestComplete(req.url || '/api/admin/audit', statusCode: 200, 
       correlationId, 
       eventsCount: recentEvents?.length || 0,
       limit
@@ -150,7 +152,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (error) {
     const errorResponse = handleApiError(error, 'admin/audit', { correlationId })
     
-    logger.apiResponse(req.method, req.url || '/api/admin/audit', 500, Date.now() - startTime, { 
+    logger.requestComplete(req.url || '/api/admin/audit', statusCode: 500, 
       correlationId,
       error: error instanceof Error ? error.message : 'Unknown error'
     })

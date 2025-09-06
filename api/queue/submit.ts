@@ -184,6 +184,13 @@ async function submitHandler(req: VercelRequest, res: VercelResponse): Promise<v
     }
 
     // HTTP 402 with x402 headers so agents/browsers can react quickly
+    res.setHeader('Cache-Control', 'no-store')
+    res.setHeader('X-PAYMENT', JSON.stringify({
+      scheme: 'x402',
+      ...response.challenge,
+      track_id: response.track_id
+    }))
+    res.setHeader('Access-Control-Expose-Headers', 'X-PAYMENT')
     res.setHeader('X-Payment-Required', 'x402')
     res.setHeader('X-Payment-Provider', 'CDP')
     res.setHeader('X-Payment-Asset', challenge.asset)

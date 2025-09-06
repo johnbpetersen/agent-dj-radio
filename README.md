@@ -645,6 +645,56 @@ curl -s http://localhost:5173/api/station/state
 curl -s http://localhost:3001/api/admin/debug-tracks
 ```
 
+## 💰 x402 Payment Testing
+
+### Enable Payments
+To test the complete payment flow, set `ENABLE_X402=true` in your `.env` file:
+
+```env
+ENABLE_X402=true
+X402_RECEIVING_ADDRESS=0x1234567890abcdef1234567890abcdef12345678
+```
+
+### Testing Flow
+1. **Get Price Quote**: Submit form triggers quote calculation based on duration
+2. **Submit Track**: Creates PENDING_PAYMENT track, returns HTTP 402 with payment challenge 
+3. **Payment Challenge**: UI displays USDC amount, receiving address, and expiration time
+4. **Mock Payment**: Click "Generate Mock Payment" to create test payment proof
+5. **Confirm Payment**: Submit payment proof to verify and activate track generation
+
+### Payment Challenge Details
+- **Amount**: Automatically calculated USD amount converted to USDC (6 decimals)
+- **Asset**: USDC on Base-Sepolia testnet
+- **Chain**: base-sepolia 
+- **Expiration**: 15 minutes from generation
+- **Nonce**: Unique identifier for replay protection
+
+### Testing Commands
+```bash
+# Test price quote API
+curl -X POST http://localhost:3001/api/queue/price-quote \
+  -H "Content-Type: application/json" \
+  -d '{"duration_seconds": 120}'
+
+# Check health endpoint shows x402 enabled
+curl -s http://localhost:3001/api/health | grep X402
+```
+
+### Frontend Testing
+1. Open http://localhost:5173
+2. Click "Queue a Track" button
+3. Fill form and click "Get Price Quote" 
+4. Click "Submit for $X.XX" - should show payment challenge
+5. Click "Generate Mock Payment" to fill proof field
+6. Click "Confirm Payment" to complete flow
+
+### Production Integration
+For live payments, configure:
+- Real Coinbase CDP API credentials
+- Actual receiving address for your wallet
+- Base mainnet chain configuration
+- Real USDC payment verification
+
 ## 🔧 Next Phase: Live Testing
 
 **Current Status**: Development Complete - Local setup working with real Supabase data  
