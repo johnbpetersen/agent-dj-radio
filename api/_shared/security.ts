@@ -85,6 +85,7 @@ export function applyCorsAndSecurity(
   }
   
   res.setHeader('Access-Control-Max-Age', maxAge.toString())
+  res.setHeader('Access-Control-Expose-Headers', 'X-PAYMENT')
 
   // Handle preflight requests
   if (req.method === 'OPTIONS') {

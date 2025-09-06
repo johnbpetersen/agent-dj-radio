@@ -1,7 +1,17 @@
+// src/types/index.ts
+
 // Database types matching the Supabase schema
 
 export type TrackSource = 'GENERATED' | 'REPLAY'
-export type TrackStatus = 'PENDING_PAYMENT' | 'PAID' | 'GENERATING' | 'READY' | 'PLAYING' | 'DONE' | 'FAILED' | 'ARCHIVED'
+export type TrackStatus =
+  | 'PENDING_PAYMENT'
+  | 'PAID'
+  | 'GENERATING'
+  | 'READY'
+  | 'PLAYING'
+  | 'DONE'
+  | 'FAILED'
+  | 'ARCHIVED'
 export type ReactionKind = 'LOVE' | 'FIRE' | 'SKIP'
 
 export interface User {
@@ -29,6 +39,15 @@ export interface Track {
   created_at: string
   started_at: string | null
   finished_at: string | null
+
+  // x402 challenge columns (optional; added by migration)
+  x402_challenge_nonce?: string | null
+  x402_challenge_amount?: string | null
+  x402_challenge_asset?: string | null
+  x402_challenge_chain?: string | null
+  x402_challenge_pay_to?: string | null
+  x402_challenge_expires_at?: string | null
+
   // Joined user data
   user?: User
 }
@@ -93,6 +112,8 @@ export interface X402ConfirmRequest {
 export interface X402ConfirmResponse {
   track: Track
   payment_verified: boolean
+  // we often include this in responses; make it optional so TS doesn't yell
+  correlationId?: string
 }
 
 // ElevenLabs types
