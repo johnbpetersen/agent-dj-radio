@@ -1,53 +1,92 @@
-# 🎵 Agent DJ Radio - Production Ready 🚀
+# 🎵 Agent DJ Radio 🚀
 
-**Status: PRODUCTION READY (85/100 score)**  
-**Phase: Live Testing & Real API Integration**
+Real-time AI music generation platform with integrated crypto payments.
 
-A real-time AI-generated music station where users pay to queue short songs that play for everyone. Featuring real ElevenLabs AI music generation, HTTP 402 payment challenges via Coinbase CDP, comprehensive security, and production-grade monitoring.
+## Current Status: Sprint 7 Complete ✅
 
-## 🚀 Features
+**Payment Flow:** HTTP 402 challenges with X-PAYMENT headers  
+**Audio Generation:** ElevenLabs integration with mock fallbacks  
+**User System:** Persistent identity with localStorage + database  
+**Queue Management:** Real-time updates and station playback  
 
-### Core Features
-- **Single Station**: One shared radio station for all users
-- **Queue System**: Submit AI-generated song prompts (60/90/120 seconds)
-- **Live Playback**: Real-time audio streaming with progress tracking
-- **Reactions**: Love ❤️, Fire 🔥, or Skip ⏭️ tracks to build ratings
-- **Smart Replays**: Highly-rated tracks automatically replay when queue is empty
+## Quick Start
 
-### Sprint 2 Additions ⭐
-- **Real AI Music**: ElevenLabs Music API integration with 3-minute timeout
-- **x402 Payments**: HTTP 402 payment challenges via Coinbase CDP; USDC on Base/Base-Sepolia with 15-minute expiration
-- **Instant Updates**: Supabase Realtime for queue changes and station updates
-- **Rate Limiting**: 60-second cooldown per user submission
-- **Feature Flags**: Toggle between mock/real integrations for gradual rollout
-- **Concurrency Control**: Database locks prevent multiple workers processing same track
+```bash
+# 1. Clone and install
+git clone <repo>
+cd agent-dj-radio
+npm install
 
-### Sprint 3 Additions 🛠️
-- **Admin Controls**: Secure API endpoints for manual station management
-- **Emergency Operations**: Skip tracks, force generation, advance station manually
-- **Admin Monitoring**: Real-time visibility into queue state and recent activity
-- **Production Ready**: Token-based security with staging launch readiness
+# 2. Set up environment
+cp .env.example .env.local
+# Add real Supabase credentials to .env.local
 
-### Sprint 5 Additions 🚀
-- **x402 Sandbox Integration**: Real Base-Sepolia USDC test payments via Coinbase CDP
-- **Enhanced Payment Verification**: Retry logic, rate limiting, and comprehensive audit trail
-- **ElevenLabs Production Ready**: Rate limiting, exponential backoff, and automatic fallback to mock
-- **Comprehensive Monitoring**: Structured logging with correlation IDs and error tracking
-- **Real Integration Testing**: Staging environment with actual service integration capability
+# 3. Apply database migrations
+# Copy SQL from docs/MIGRATIONS.md to Supabase SQL editor
 
-### Sprint 6 Additions 🔐 (Security Hardening)
-- **Row Level Security (RLS)**: Comprehensive database access control with anonymous user support
-- **Security Middleware**: All API endpoints protected with rate limiting and CORS lockdown
-- **Data Sanitization**: Automatic removal of sensitive fields from all client responses
-- **Legal Compliance**: Privacy policy and terms of service endpoints with blockchain payment terms
-- **Comprehensive Security Audit**: Zero sensitive data leakage verified
+# 4. Start development
+npm run dev
+# Opens on http://localhost:5173
+```
 
-### Sprint 7 Additions 📊 (Production Readiness)
-- **Health Monitoring**: Real-time system status dashboard at `/api/health` with service-level checks
-- **Admin Recovery**: Emergency procedures for 6 common incident types with step-by-step recovery
-- **Incident Response**: Professional postmortem template and operational runbook
-- **Load Testing**: Concurrent submission testing framework for production validation
-- **Go/No-Go Assessment**: 85/100 production readiness score with comprehensive evaluation
+## Architecture
+
+```mermaid
+graph LR
+    A[User] --> B[Submit Track]
+    B --> C{Payment Required?}
+    C -->|Yes| D[402 + Challenge]
+    C -->|No| E[Generate Immediately]
+    D --> F[Payment Modal]
+    F --> G[Confirm Payment] 
+    G --> H[Queue Worker]
+    E --> H
+    H --> I[ElevenLabs/Mock]
+    I --> J[Audio Storage]
+    J --> K[Station Playback]
+```
+
+## Payment Flow
+
+When `ENABLE_X402=true`, track submission returns HTTP 402 with payment challenge:
+
+**Headers:**
+- `X-PAYMENT`: JSON challenge data
+- `X-Payment-Required`: x402
+- `Access-Control-Expose-Headers`: X-PAYMENT
+
+**Mock Development:**
+- Leave `X402_API_KEY` unset for mock payments
+- Use `/api/x402/mock-proof` endpoint for testing
+
+**Real Payments:**
+- Set `X402_API_KEY` for Coinbase CDP integration
+- Requires funded Base Sepolia wallet
+
+## Key Features
+
+### 🎵 Audio Generation
+- ElevenLabs integration with `eleven_music_v1` model
+- Instrumental-only enforcement for ToS compliance
+- Mock audio generation for development
+- Automatic storage upload with correct MIME types
+
+### 💳 Payment Processing  
+- HTTP 402 standard with X-PAYMENT headers
+- Challenge-response payment verification
+- Idempotent confirmation (safe to retry)
+- Comprehensive audit trail
+
+### 👤 User Management
+- Persistent identity via localStorage + database
+- Case-insensitive unique display names  
+- No authentication required (pseudo-accounts)
+- React hook for user state management
+
+### 🔄 Real-time Updates
+- Supabase Realtime for queue updates
+- Station advancement with cron scheduling
+- WebSocket connections for live UI sync
 
 ## 🛠 Tech Stack
 
