@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { requireAdminAuth } from '../_shared/admin-auth'
-import { supabaseAdmin } from '../_shared/supabase'
+import { supabaseAdmin } from '../_shared/supabase.js'
 import { claimNextPaidTrack, updateTrackStatus } from '../../src/server/db'
 import { createTrack, pollTrackWithTimeout, fetchToBuffer } from '../../src/server/eleven'
 import { uploadAudioBuffer, ensureTracksBucket } from '../../src/server/storage'

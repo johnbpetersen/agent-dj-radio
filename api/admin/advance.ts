@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { requireAdminAuth } from '../_shared/admin-auth'
-import { supabaseAdmin } from '../_shared/supabase'
+import { supabaseAdmin } from '../_shared/supabase.js'
 import { getStationState, updateStationState, getTracksByStatus, updateTrackStatus, createTrack } from '../../src/server/db'
 import { selectNextTrack, createReplayTrack } from '../../src/server/selectors'
 import { calculatePlayhead, isTrackFinished } from '../../src/server/station'

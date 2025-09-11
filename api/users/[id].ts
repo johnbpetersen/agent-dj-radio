@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from '../_shared/supabase'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler'
 import { sanitizeForClient } from '../_shared/security'
-import { logger, generateCorrelationId } from '../../src/lib/logger'
+import { logger, generateCorrelationId } from '../../src/lib/logger.js'
 import { handleApiError } from '../../src/lib/error-tracking'
 
 interface UpdateUserRequest {

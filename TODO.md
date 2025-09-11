@@ -31,7 +31,53 @@
 
 ---
 
-## PHASE 1: Production Deployment (PRIORITY 1)
+## ✅ COMPLETED: Ephemeral User Management (Alpha) - 2025-09-11
+
+### Database Migrations ✅
+- [x] Create ephemeral users migration (001_ephemeral_users.sql)
+- [x] Create presence table migration (002_presence.sql)  
+- [x] Create chat messages table migration (003_chat_messages.sql)
+- [x] Create cleanup procedures migration (004_cleanup_procedures.sql)
+
+### Shared Utilities ✅
+- [x] Create session ID helper (api/_shared/session.ts)
+- [x] Create fun name generator (src/lib/name-generator.ts)
+- [x] Create profanity filter (src/lib/profanity.ts)
+- [x] Extend rate limiting (src/server/rate-limit.ts)
+
+### API Endpoints ✅
+- [x] POST /api/session/hello - Create/retrieve ephemeral user + presence
+- [x] POST /api/presence/ping - Keep presence alive  
+- [x] GET /api/users/active - Get active users list
+- [x] POST /api/users/rename - Change display name
+- [x] POST /api/users/bio - Set user bio
+- [x] POST /api/chat/post - Post chat message (behind ENABLE_CHAT_ALPHA flag)
+- [x] GET /api/chat/recent - Get recent chat messages (behind ENABLE_CHAT_ALPHA flag)
+- [x] POST /api/worker/cleanup-ephemeral - Background cleanup job
+
+### Frontend Components ✅ 
+- [x] Create useEphemeralUser hook (src/hooks/useEphemeralUser.ts)
+- [x] Create ActiveListeners component (src/components/ActiveListeners.tsx)
+- [x] Create ProfileDrawer component (src/components/ProfileDrawer.tsx)
+- [x] Create ChatBox component (src/components/ChatBox.tsx) - behind ENABLE_CHAT_ALPHA flag
+- [x] Update SubmitForm.tsx to use useEphemeralUser hook
+
+### Integration & Testing ✅
+- [x] TypeScript compilation passes without errors
+- [x] Rate limiting implemented and tested
+- [x] Validation and error handling implemented
+- [x] Track submission integration completed
+- [x] Manual test script created (./test-ephemeral-users.sh)
+
+### Documentation ✅
+- [x] Updated CLAUDE.md with comprehensive ephemeral user documentation
+- [x] Added deployment notes for new environment variables
+
+**Sprint Summary:** Successfully implemented complete ephemeral user management system with session-based authentication, presence tracking, real-time active users, profile editing, optional chat, rate limiting, validation, and automatic cleanup. All code passes TypeScript compilation and follows security best practices.
+
+---
+
+## PHASE 1: Production Deployment (PRIORITY 2)
 
 ### 🚀 Vercel Production Setup
 - [ ] **Environment Configuration**

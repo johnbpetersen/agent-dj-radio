@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from '../_shared/supabase'
 import { generateMockPaymentProof } from '../../src/server/x402'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler'
-import { logger, generateCorrelationId } from '../../src/lib/logger'
+import { logger, generateCorrelationId } from '../../src/lib/logger.js'
 import { handleApiError } from '../../src/lib/error-tracking'
 
 async function mockProofHandler(req: VercelRequest, res: VercelResponse): Promise<void> {

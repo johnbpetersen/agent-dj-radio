@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { requireAdminAuth } from '../_shared/admin-auth'
-import { supabaseAdmin } from '../_shared/supabase'
+import { supabaseAdmin } from '../_shared/supabase.js'
 import { getPaymentAuditTrail, getPaymentStatistics } from '../../src/server/x402-audit'
-import { logger, generateCorrelationId } from '../../src/lib/logger'
+import { logger, generateCorrelationId } from '../../src/lib/logger.js'
 import { handleApiError } from '../../src/lib/error-tracking'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {

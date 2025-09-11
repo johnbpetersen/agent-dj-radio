@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { requireAdminAuth } from '../_shared/admin-auth'
-import { supabaseAdmin } from '../_shared/supabase'
+import { supabaseAdmin } from '../_shared/supabase.js'
 import { getStationState, getTracksByStatus } from '../../src/server/db'
 import { calculatePlayhead } from '../../src/server/station'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler'

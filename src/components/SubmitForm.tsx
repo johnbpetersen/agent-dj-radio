@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useUser } from '../hooks/useUser'
+import { useEphemeralUser } from '../hooks/useEphemeralUser'
 import type { PriceQuoteResponse, SubmitTrackResponse, X402Challenge, X402ChallengeResponse, X402ConfirmRequest, X402ConfirmResponse } from '../types'
 
 interface SubmitFormProps {
@@ -9,7 +9,7 @@ interface SubmitFormProps {
 const DURATION_OPTIONS = [60, 90, 120] as const
 
 export default function SubmitForm({ onSubmitSuccess }: SubmitFormProps) {
-  const { user, isLoading: userLoading, error: userError, setDisplayName } = useUser()
+  const { user, loading: userLoading, error: userError, rename } = useEphemeralUser()
   const [prompt, setPrompt] = useState('')
   const [duration, setDuration] = useState<60 | 90 | 120>(120)
   const [tempDisplayName, setTempDisplayName] = useState('')
@@ -34,7 +34,7 @@ export default function SubmitForm({ onSubmitSuccess }: SubmitFormProps) {
     setIsSettingName(true)
     setError(null)
 
-    const success = await setDisplayName(tempDisplayName.trim())
+    const success = await rename(tempDisplayName.trim())
     if (success) {
       setTempDisplayName('')
     }

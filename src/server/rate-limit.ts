@@ -104,3 +104,164 @@ export function cleanupExpiredLimits(): number {
   
   return cleaned
 }
+
+// Session-based rate limiting for ephemeral users
+// In-memory storage with TTL cleanup
+
+interface SessionRateLimitEntry {
+  sessionId: string
+  endpoint: string
+  lastActionAt: number
+  count: number
+  windowStart: number
+}
+
+const sessionRateLimits = new Map<string, SessionRateLimitEntry>()
+
+export interface SessionRateLimitOptions {
+  windowMs: number
+  maxRequests: number
+}
+
+export interface SessionRateLimitResult {
+  allowed: boolean
+  remaining: number
+  resetTime: number
+  throttled?: boolean
+}
+
+/**
+ * Check session-based rate limiting for ephemeral user endpoints
+ */
+export function checkSessionRateLimit(
+  sessionId: string, 
+  endpoint: string, 
+  options: SessionRateLimitOptions
+): SessionRateLimitResult {
+  if (!sessionId) {
+    throw new Error('Session ID is required')
+  }
+
+  const now = Date.now()
+  const key = `${sessionId}:${endpoint}`
+  
+  // Clean up expired entries first
+  cleanupExpiredSessionLimits(now)
+  
+  let entry = sessionRateLimits.get(key)
+  
+  // Create new entry if not exists or window expired
+  if (!entry || (now - entry.windowStart) >= options.windowMs) {
+    entry = {
+      sessionId,
+      endpoint,
+      lastActionAt: now,
+      count: 1,
+      windowStart: now
+    }
+    sessionRateLimits.set(key, entry)
+    
+    return {
+      allowed: true,
+      remaining: options.maxRequests - 1,
+      resetTime: now + options.windowMs
+    }
+  }
+  
+  // Update last action time and increment count
+  entry.lastActionAt = now
+  entry.count++
+  
+  const allowed = entry.count <= options.maxRequests
+  const remaining = Math.max(0, options.maxRequests - entry.count)
+  const resetTime = entry.windowStart + options.windowMs
+  
+  return {
+    allowed,
+    remaining,
+    resetTime
+  }
+}
+
+/**
+ * Special handling for presence ping throttling
+ * If last ping was < 10 seconds ago, return throttled without updating DB
+ */
+export function checkPresencePingThrottle(sessionId: string): SessionRateLimitResult {
+  if (!sessionId) {
+    throw new Error('Session ID is required')
+  }
+
+  const now = Date.now()
+  const key = `${sessionId}:presence:ping`
+  const THROTTLE_MS = 10 * 1000 // 10 seconds
+  
+  const entry = sessionRateLimits.get(key)
+  
+  if (entry && (now - entry.lastActionAt) < THROTTLE_MS) {
+    // Throttled - don't update database
+    return {
+      allowed: true,
+      remaining: 0,
+      resetTime: entry.lastActionAt + THROTTLE_MS,
+      throttled: true
+    }
+  }
+  
+  // Update or create entry
+  sessionRateLimits.set(key, {
+    sessionId,
+    endpoint: 'presence:ping',
+    lastActionAt: now,
+    count: 1,
+    windowStart: now
+  })
+  
+  return {
+    allowed: true,
+    remaining: 1,
+    resetTime: now + THROTTLE_MS,
+    throttled: false
+  }
+}
+
+/**
+ * Clean up expired session rate limit entries
+ */
+function cleanupExpiredSessionLimits(now: number): void {
+  const MAX_AGE_MS = 60 * 60 * 1000 // 1 hour
+  
+  for (const [key, entry] of sessionRateLimits.entries()) {
+    if ((now - entry.lastActionAt) > MAX_AGE_MS) {
+      sessionRateLimits.delete(key)
+    }
+  }
+}
+
+/**
+ * Clear all session rate limits for a session (for testing/cleanup)
+ */
+export function clearSessionRateLimits(sessionId: string): void {
+  for (const [key] of sessionRateLimits.entries()) {
+    if (key.startsWith(`${sessionId}:`)) {
+      sessionRateLimits.delete(key)
+    }
+  }
+}
+
+/**
+ * Get session rate limit stats (for debugging)
+ */
+export function getSessionRateLimitStats(): { totalSessions: number, totalEntries: number } {
+  const sessions = new Set<string>()
+  
+  for (const [key] of sessionRateLimits.entries()) {
+    const sessionId = key.split(':')[0]
+    sessions.add(sessionId)
+  }
+  
+  return {
+    totalSessions: sessions.size,
+    totalEntries: sessionRateLimits.size
+  }
+}

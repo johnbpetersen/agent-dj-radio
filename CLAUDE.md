@@ -28,6 +28,57 @@
 - Rate limiting enforced on all endpoints
 - CORS origins must be explicitly allowlisted
 
+## Ephemeral User Management (NEW 2025-09-11) 🧑‍💼
+**Status:** ✅ IMPLEMENTED - Session-based ephemeral users with presence tracking
+
+**Feature Flags:**
+- `ENABLE_EPHEMERAL_USERS=true` - Core ephemeral user functionality
+- `ENABLE_CHAT_ALPHA=true` - Optional chat feature (alpha)
+
+**Key Features:**
+- Auto-generated fun names (e.g., `purple_raccoon`, `dancing_penguin`)
+- Real-time presence tracking with Active Listeners list
+- Profile editing (display name, bio) with validation
+- Session-based identity (tab-scoped, no persistent auth)
+- Rate limiting and profanity filtering
+- Automatic cleanup of inactive users
+
+**Database Changes Required:**
+1. Run migrations in `supabase/migrations/` folder:
+   - `001_ephemeral_users.sql` - Extend users table
+   - `002_presence.sql` - Create presence tracking
+   - `003_chat_messages.sql` - Chat functionality (optional)
+   - `004_cleanup_procedures.sql` - Cleanup functions
+
+**API Endpoints Added:**
+- `POST /api/session/hello` - Initialize ephemeral user + presence
+- `POST /api/presence/ping` - Keep presence alive (30s interval)
+- `GET /api/users/active` - Get currently active users
+- `POST /api/users/rename` - Change display name (1/min rate limit)
+- `POST /api/users/bio` - Update user bio (1/min rate limit)
+- `POST /api/chat/post` - Post chat message (10/min, alpha feature)
+- `GET /api/chat/recent` - Get recent messages (alpha feature)
+- `POST /api/worker/cleanup-ephemeral` - Background cleanup job
+
+**Frontend Components:**
+- `useEphemeralUser()` hook - Session management and API calls
+- `<ActiveListeners />` - Shows active users (polls every 10s)
+- `<ProfileDrawer />` - Edit profile (name, bio)
+- `<ChatBox />` - Basic chat interface (alpha)
+- Updated `<SubmitForm />` - Uses ephemeral user IDs
+
+**Testing:**
+- Manual API test script: `./test-ephemeral-users.sh`
+- TypeScript compilation: All new code passes `npm run typecheck`
+- Rate limiting tested and working
+- Validation and error handling implemented
+
+**Cleanup & Maintenance:**
+- Presence expires after 5 minutes of inactivity
+- Ephemeral users without content deleted after 24 hours
+- Users with tracks/messages anonymized after 24 hours
+- Background cleanup job runs periodically
+
 ## Production Deployment
 - Environment variables REQUIRED for production:
   ```bash
@@ -35,6 +86,8 @@
   ENABLE_X402=true
   ENABLE_REQUEST_LOGGING=true
   ENABLE_ERROR_TRACKING=true
+  ENABLE_EPHEMERAL_USERS=true
+  ENABLE_CHAT_ALPHA=false  # Optional alpha feature
   ```
 - Health monitoring MUST show all green before deployment
 - Admin recovery drills MUST be tested in staging
