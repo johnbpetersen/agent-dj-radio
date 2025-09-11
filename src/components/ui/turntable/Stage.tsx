@@ -147,6 +147,11 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
     const audio = audioRef.current
     if (!audio || !track?.audio_url) return
 
+    // Make audio element globally accessible for autoplay unlock
+    if (audioRef.current) {
+      (window as any).__audioElement = audioRef.current
+    }
+
     audio.src = track.audio_url
     audio.currentTime = playheadSeconds
     audio.play().catch(console.error)

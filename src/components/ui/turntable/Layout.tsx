@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useStation } from '../../../hooks/useStation'
+import { useEphemeralUser } from '../../../hooks/useEphemeralUser'
+import ActiveListeners from '../../ActiveListeners'
+import AutoplayUnlock from '../../AutoplayUnlock'
 import TopNav from './TopNav'
 import Stage from './Stage'
 import ReactionBar from './ReactionBar'
@@ -8,26 +11,40 @@ import AudienceWall from './AudienceWall'
 import SubmitForm from '../../SubmitForm'
 
 export default function Layout() {
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [showSubmitForm, setShowSubmitForm] = useState(false)
   const { currentTrack, playheadSeconds, queue, isLoading, error, refetch, advanceStation } = useStation()
 
-  // Set up a session-based user ID for reactions
-  // In a production app this would come from authentication
+  // Ephemeral user integration (unconditional hook call)
+  const ephemeralUser = useEphemeralUser()
+
+  // Dev logging for ephemeral user
   useEffect(() => {
-    if (!currentUserId) {
-      // Use sessionStorage to maintain user ID across page refreshes
+    if (import.meta.env.DEV) {
+      console.log('[Layout] Ephemeral user hook mounted:', {
+        enabled: import.meta.env.VITE_ENABLE_EPHEMERAL_USERS === 'true',
+        user: ephemeralUser.user?.display_name,
+        loading: ephemeralUser.loading
+      })
+    }
+  }, [ephemeralUser.user, ephemeralUser.loading])
+
+  // User ID logic: ephemeral when enabled, legacy when disabled
+  const [legacyUserId, setLegacyUserId] = useState<string | null>(null)
+  
+  useEffect(() => {
+    if (import.meta.env.VITE_ENABLE_EPHEMERAL_USERS !== 'true' && !legacyUserId) {
       let sessionUserId = sessionStorage.getItem('agent-radio-user-id')
-      
       if (!sessionUserId) {
-        // Generate a session-based ID
         sessionUserId = `session-${Math.random().toString(36).substr(2, 9)}`
         sessionStorage.setItem('agent-radio-user-id', sessionUserId)
       }
-      
-      setCurrentUserId(sessionUserId)
+      setLegacyUserId(sessionUserId)
     }
-  }, [currentUserId])
+  }, [legacyUserId])
+
+  const currentUserId = import.meta.env.VITE_ENABLE_EPHEMERAL_USERS === 'true' 
+    ? ephemeralUser.user?.id 
+    : legacyUserId
 
   const handleSubmitSuccess = () => {
     setShowSubmitForm(false)
@@ -60,6 +77,27 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen">
+      {/* Autoplay Unlock */}
+      <AutoplayUnlock onUnlock={() => {
+        // Try global audio element first, then fallback to selector
+        const globalAudio = (window as any).__audioElement
+        if (globalAudio) {
+          globalAudio.play()?.catch(console.error)
+        } else {
+          document.querySelector('audio')?.play()?.catch(console.error)
+        }
+        if (import.meta.env.DEV) {
+          console.log('[AutoplayUnlock] Audio play attempted')
+        }
+      }} />
+
+      {/* Ephemeral User Banner */}
+      {import.meta.env.VITE_ENABLE_EPHEMERAL_USERS === 'true' && ephemeralUser.user && (
+        <div className="bg-blue-500/20 text-blue-200 px-4 py-2 text-center text-sm">
+          You are <strong>{ephemeralUser.user.display_name}</strong>
+        </div>
+      )}
+
       {/* Submit Form Modal */}
       {showSubmitForm && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -117,13 +155,18 @@ export default function Layout() {
               />
             </div>
             
-            {/* Right Sidebar - Queue Panel */}
-            <div className="col-span-3">
+            {/* Right Sidebar - Queue Panel + Active Listeners */}
+            <div className="col-span-3 space-y-4">
               <QueuePanel 
                 queue={queue}
                 isLoading={isLoading}
                 className="h-full"
               />
+              
+              {/* Active Listeners */}
+              {import.meta.env.VITE_ENABLE_EPHEMERAL_USERS === 'true' && (
+                <ActiveListeners />
+              )}
             </div>
           </div>
           

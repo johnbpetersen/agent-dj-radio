@@ -23,6 +23,8 @@ export default function SubmitForm({ onSubmitSuccess }: SubmitFormProps) {
   const [isSettingName, setIsSettingName] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // User readiness for form interactions
+  const isUserReady = !userLoading && !!user
   const needsDisplayName = !user && !userLoading
 
   const handleSetDisplayName = async () => {
@@ -43,7 +45,7 @@ export default function SubmitForm({ onSubmitSuccess }: SubmitFormProps) {
   }
 
   const getPriceQuote = async () => {
-    if (!prompt.trim()) {
+    if (!prompt.trim() || !isUserReady) {
       setError('Please enter a prompt first')
       return
     }
@@ -278,6 +280,14 @@ export default function SubmitForm({ onSubmitSuccess }: SubmitFormProps) {
           </select>
         </div>
 
+        {userLoading && (
+          <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
+            <p className="text-blue-800 text-sm">
+              Initializing user session...
+            </p>
+          </div>
+        )}
+
         {(error || userError) && (
           <div className="bg-red-50 border border-red-200 rounded-md p-3">
             <p className="text-red-800 text-sm">{error || userError}</p>
@@ -287,7 +297,7 @@ export default function SubmitForm({ onSubmitSuccess }: SubmitFormProps) {
         <div className="flex gap-3">
           <button
             onClick={getPriceQuote}
-            disabled={isGettingQuote || !prompt.trim() || !user}
+            disabled={isGettingQuote || !prompt.trim() || !isUserReady}
             className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {isGettingQuote ? 'Getting Quote...' : 'Get Price Quote'}
@@ -296,7 +306,7 @@ export default function SubmitForm({ onSubmitSuccess }: SubmitFormProps) {
           {priceQuote && user && (
             <button
               onClick={submitTrack}
-              disabled={isSubmitting || !prompt.trim() || !user}
+              disabled={isSubmitting || !prompt.trim() || !isUserReady}
               className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {isSubmitting ? 'Submitting...' : `Submit for $${priceQuote.price_usd.toFixed(2)}`}
