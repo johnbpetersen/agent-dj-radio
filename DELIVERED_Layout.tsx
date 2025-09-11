@@ -80,7 +80,6 @@ export default function Layout() {
       {/* Autoplay Unlock */}
       <AutoplayUnlock onUnlock={() => {
         (window as any).__adrUnlockAudio?.();
-        setTimeout(() => (window as any).__adrUnlockAudio?.(), 150);
         if (import.meta.env.DEV) console.log('[AutoplayUnlock] resume requested');
       }} />
 

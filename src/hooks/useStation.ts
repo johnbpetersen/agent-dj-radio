@@ -22,9 +22,20 @@ export function useStation() {
       
       const data: StationStateResponse = await response.json()
       
+      const track = data.station_state.current_track || null
+      
+      // Dev logging for current track changes
+      if (import.meta.env.DEV) {
+        console.log('[Station] currentTrack', {
+          id: track?.id,
+          audio_url: track?.audio_url,
+          audioUrl: (track as any)?.audioUrl
+        })
+      }
+      
       setStationData(prev => ({
         ...prev,
-        currentTrack: data.station_state.current_track || null,
+        currentTrack: track,
         playheadSeconds: data.playhead_seconds || 0,
         queue: data.queue,
         isLoading: false,

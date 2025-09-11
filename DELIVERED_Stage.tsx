@@ -154,21 +154,8 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
     (window as any).__adrUnlockAudio = async () => {
       const a = audioRef.current;
       if (!a) return;
-      
-      // Bail early if no src
-      if (!a.src) {
-        if (import.meta.env.DEV) console.log('[Stage] resume: no src');
-        return;
-      }
-      
       try {
         a.muted = false;
-        
-        // If not ready, try loading first
-        if (a.readyState < 2) {
-          a.load();
-        }
-        
         await a.play();
         if (import.meta.env.DEV) console.log('[Stage] resume ok');
       } catch (e) {
@@ -182,21 +169,15 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
   useEffect(() => {
     const a = audioRef.current;
     if (!a) return;
-    
-    const url =
-      (track?.audio_url && track.audio_url.trim()) ||
-      ((track as any)?.audioUrl && (track as any).audioUrl.trim()) ||
-      '';
-    
+    const url = track?.audio_url?.trim();
     if (!url) return;
-    
     if (a.src !== url) {
       a.crossOrigin = 'anonymous';
       a.src = url;
       a.load();
       if (import.meta.env.DEV) console.log('[Stage] set src', url);
     }
-  }, [track?.audio_url, (track as any)?.audioUrl]);
+  }, [track?.audio_url]);
 
   // Sync playhead with audio element
   useEffect(() => {
