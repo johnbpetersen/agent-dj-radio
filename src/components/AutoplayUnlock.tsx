@@ -25,34 +25,34 @@ export default function AutoplayUnlock({
     }
   }, [onUnlock])
 
-  const handleUnlock = () => {
+  const handleUnlock = async () => {
+    // Hide immediately if already playing
     const a = (window as any).__audioElement as HTMLAudioElement | null;
-    if (!a) {
-      // Fire unlocks anyway; overlay will be retried on next click if needed.
-      (window as any).__adrUnlockAudio?.();
-      onUnlock();
+    if (a && !a.paused) {
+      setLocked(false);
       return;
     }
 
     let done = false;
-    const hide = () => {
+    const finish = () => {
       if (done) return;
       done = true;
       setLocked(false);
-      a.removeEventListener('playing', hide);
+      window.removeEventListener('adr:audio-playing', finish, { capture: false } as any);
     };
 
-    // Listen for real playback before calling unlock
-    a.addEventListener('playing', hide, { once: true });
+    // Listen for Stage to announce real playback
+    window.addEventListener('adr:audio-playing', finish, { once: true });
 
-    // Trigger playback
-    (window as any).__adrUnlockAudio?.();
-    onUnlock();
+    // Trigger unlocks
+    try { await (window as any).__adrUnlockAudio?.(); } catch {}
+    try { onUnlock?.(); } catch {}
 
-    // Safety fallback in case 'playing' fired before listener attach or browser quirks
+    // Safety fallback after 1s
     setTimeout(() => {
-      if (!done && !a.paused) hide();
-    }, 700);
+      const el = (window as any).__audioElement as HTMLAudioElement | null;
+      if (!done && el && !el.paused) finish();
+    }, 1000);
   }
 
   if (!locked) return null

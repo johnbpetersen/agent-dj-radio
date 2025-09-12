@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useCallback } from 'react'
 import type { Track } from '../../../types'
 import Avatar from './Avatar'
 import NowPlayingMeta from './NowPlayingMeta'
@@ -137,6 +137,31 @@ function ProgressRing({
 
 export default function Stage({ track, playheadSeconds, isLoading, className = '', onAdvance }: StageProps) {
   const audioRef = useRef<HTMLAudioElement>(null)
+  const setAudioRef = useCallback((node: HTMLAudioElement | null) => {
+    audioRef.current = node;
+    (window as any).__audioElement = node || undefined;
+    
+    // Add debug function for dev builds
+    if (import.meta.env.DEV && node) {
+      (window as any).__audioState = () => {
+        const ctx = (window as any).__adrAudioCtx;
+        if (!node) return { error: 'no audio element' };
+        return {
+          src: node.currentSrc,
+          paused: node.paused,
+          muted: node.muted,
+          volume: node.volume,
+          currentTime: node.currentTime,
+          readyState: node.readyState, // 4 == HAVE_ENOUGH_DATA
+          allowWebCtx,
+          hasContext: !!ctx,
+          ctxState: ctx?.state,
+          hasSrcNode: !!((window as any).__adrSrcNode),
+          unlocked: !!((window as any).__adrUnlocked)
+        };
+      };
+    }
+  }, []);
   
   // Simple, reliable gate: WebAudio is OFF by default everywhere.
   // Turn it on only when you explicitly opt-in via .env.
@@ -161,35 +186,20 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
     ? Math.min(100, (playheadSeconds / track.duration_seconds) * 100)
     : 0
 
-  // Make audio element globally accessible for autoplay unlock
+  // Attach 'playing' listener to broadcast when sound actually starts
   useEffect(() => {
-    if (audioRef.current) {
-      (window as any).__audioElement = audioRef.current
-      
-      // Add test functions for debugging
-      if (import.meta.env.DEV) {
-        // Single gated helper for DEV builds only
-        (window as any).__audioState = () => {
-          const a = audioRef.current;
-          const ctx = (window as any).__adrAudioCtx;
-          if (!a) return { error: 'no audio element' };
-          return {
-            src: a.currentSrc,
-            paused: a.paused,
-            muted: a.muted,
-            volume: a.volume,
-            currentTime: a.currentTime,
-            readyState: a.readyState, // 4 == HAVE_ENOUGH_DATA
-            allowWebCtx,
-            hasContext: !!ctx,
-            ctxState: ctx?.state,
-            hasSrcNode: !!((window as any).__adrSrcNode),
-            unlocked: !!((window as any).__adrUnlocked)
-          };
-        };
-      }
-    }
-  }, [])
+    const a = audioRef.current;
+    if (!a) return;
+    
+    const onPlaying = () => {
+      try {
+        window.dispatchEvent(new CustomEvent('adr:audio-playing'));
+      } catch {}
+    };
+    
+    a.addEventListener('playing', onPlaying);
+    return () => a.removeEventListener('playing', onPlaying);
+  }, [track?.id]); // Re-run when track changes to ensure listener is attached
 
   // Unlock: play() first; only build WebAudio when explicitly allowed
   useEffect(() => {
@@ -333,7 +343,7 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
     <div className={`${className}`}>
       {/* Hidden audio element for playback */}
       <audio
-        ref={audioRef}
+        ref={setAudioRef}
         preload="auto"
         playsInline
         {...(allowWebCtx ? { crossOrigin: 'anonymous' as const } : {})}
