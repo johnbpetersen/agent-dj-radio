@@ -76,21 +76,40 @@ async function advanceHandler(req: VercelRequest, res: VercelResponse): Promise<
     // Get available tracks for selection
     const availableTracks = await getTracksByStatus(supabaseAdmin, ['READY', 'DONE'])
     
+    // Filter out tracks with invalid audio_url (guard against missing/bad storage)
+    const isPlayable = (t: any) => {
+      if (!t?.audio_url || typeof t.audio_url !== 'string') return false;
+      // must be .../tracks/{id}.mp3 exactly
+      try {
+        const last = t.audio_url.split('/').pop() || '';
+        return last.toLowerCase() === `${String(t.id).toLowerCase()}.mp3`;
+      } catch {
+        return false;
+      }
+    };
+
+    const readyTracks = availableTracks.filter(t => t.status === 'READY')
+    const doneTracks = availableTracks.filter(t => t.status === 'DONE')
+    const eligibleReadyTracks = readyTracks.filter(isPlayable)
+    const eligibleDoneTracks = doneTracks.filter(isPlayable)
+    
     logger.info('Available tracks for selection', {
       correlationId,
-      readyTracks: availableTracks.filter(t => t.status === 'READY').length,
-      doneTracks: availableTracks.filter(t => t.status === 'DONE').length
+      readyTracks: readyTracks.length,
+      eligibleReadyTracks: eligibleReadyTracks.length,
+      doneTracks: doneTracks.length,
+      eligibleDoneTracks: eligibleDoneTracks.length
     })
     
-    // Select next track
-    let nextTrack = selectNextTrack(availableTracks)
+    // Select next track from eligible tracks only
+    const eligibleAvailableTracks = [...eligibleReadyTracks, ...eligibleDoneTracks]
+    let nextTrack = selectNextTrack(eligibleAvailableTracks)
     let replayCreated = null
 
-    // If no READY track, create a replay from best DONE track
+    // If no eligible READY track, create a replay from best eligible DONE track
     if (!nextTrack) {
-      const doneTracks = availableTracks.filter(t => t.status === 'DONE')
-      if (doneTracks.length > 0) {
-        const bestReplay = selectNextTrack(doneTracks) // This will pick the best replay candidate
+      if (eligibleDoneTracks.length > 0) {
+        const bestReplay = selectNextTrack(eligibleDoneTracks) // This will pick the best replay candidate
         if (bestReplay) {
           const replayData = createReplayTrack(bestReplay)
           replayCreated = await createTrack(supabaseAdmin, replayData)
@@ -107,6 +126,12 @@ async function advanceHandler(req: VercelRequest, res: VercelResponse): Promise<
     }
 
     if (!nextTrack) {
+      logger.info('No eligible READY tracks with valid audio_url; falling back to replay/previous', { 
+        correlationId,
+        totalTracks: availableTracks.length,
+        eligibleTracks: eligibleAvailableTracks.length
+      })
+      
       // No tracks available, clear station state (idempotent operation)
       const clearedState = await updateStationState(supabaseAdmin, {
         current_track_id: null,

@@ -162,7 +162,14 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
       }
       
       try {
+        // Resume audio context first if it exists and not running
+        if ((window as any).__adrAudioCtx && (window as any).__adrAudioCtx.state !== 'running') {
+          await (window as any).__adrAudioCtx.resume();
+        }
+        
+        // Set audio properties for audible playback
         a.muted = false;
+        a.volume = 1;
         
         // If not ready, try loading first
         if (a.readyState < 2) {
@@ -170,7 +177,18 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
         }
         
         await a.play();
-        if (import.meta.env.DEV) console.log('[Stage] resume ok');
+        
+        // DEV log after unlock showing audio state
+        if (import.meta.env.DEV) {
+          const ctxState = (window as any).__adrAudioCtx ? (window as any).__adrAudioCtx.state : 'none';
+          console.log('[Stage] unlock ok', {
+            paused: a.paused,
+            muted: a.muted,
+            volume: a.volume,
+            readyState: a.readyState,
+            ctxState
+          });
+        }
       } catch (e) {
         console.warn('[Stage] resume failed', e);
       }

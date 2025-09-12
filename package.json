@@ -3,7 +3,6 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-
   "scripts": {
     "dev:api": "tsx -r dotenv/config dev-functions-server.ts",
     "dev:web": "vite",
@@ -19,11 +18,12 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier -w ."
   },
-
   "dependencies": {
     "@supabase/supabase-js": "^2.56.1",
     "@tailwindcss/forms": "^0.5.10",
+    "@types/pg": "^8.15.5",
     "@vercel/node": "^5.3.20",
+    "pg": "^8.16.3",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },

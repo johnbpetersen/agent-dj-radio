@@ -38,6 +38,18 @@ function buildInstrumentalPrompt(input: string): string {
 }
 
 /**
+ * Helper to check if a URL is reachable via HEAD request
+ */
+async function headOk(url: string): Promise<boolean> {
+  try {
+    const resp = await fetch(url, { method: 'HEAD' });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Targeted claim helper:
  * Try to fetch a specific track that is currently PAID.
  * (Read-only; the state transition happens via updateTrackStatus)
@@ -166,6 +178,18 @@ async function generateHandler(req: VercelRequest, res: VercelResponse): Promise
         audioUrl = publicUrl.replace(/\s+/g, '').trim()
         elevenRequestId = `mock_${trackToGenerate.id}_${Date.now()}`
 
+        const reachable = await headOk(audioUrl);
+        if (!reachable) {
+          logger.error('Storage HEAD check failed for uploaded audio', {
+            correlationId,
+            trackId: trackToGenerate.id,
+            audioUrl
+          });
+          // Throw to enter the existing fallback block (local URL)
+          throw new Error('storage_head_failed');
+        }
+        logger.info('Storage HEAD check passed', { correlationId, trackId: trackToGenerate.id, audioUrl });
+
         logger.info('Mock audio uploaded to Supabase storage', {
           correlationId,
           trackId: trackToGenerate.id,
@@ -182,6 +206,18 @@ async function generateHandler(req: VercelRequest, res: VercelResponse): Promise
         const siteUrl = process.env.VITE_SITE_URL || 'http://localhost:5173'
         audioUrl = `${siteUrl}/sample-track.wav`
         elevenRequestId = `mock_${trackToGenerate.id}_${Date.now()}`
+
+        const fallbackReachable = await headOk(audioUrl);
+        if (!fallbackReachable) {
+          logger.error('Fallback storage HEAD check failed; aborting READY state', {
+            correlationId,
+            trackId: trackToGenerate.id,
+            audioUrl
+          });
+          // Surface a controlled error; the outer catch will handle and return a 500.
+          throw new Error('fallback_storage_head_failed');
+        }
+        logger.info('Fallback storage HEAD check passed', { correlationId, trackId: trackToGenerate.id, audioUrl });
       }
     } else {
       // Real ElevenLabs generation
@@ -240,6 +276,18 @@ async function generateHandler(req: VercelRequest, res: VercelResponse): Promise
 
         audioUrl = publicUrl.replace(/\s+/g, '').trim()
 
+        const reachable = await headOk(audioUrl);
+        if (!reachable) {
+          logger.error('Storage HEAD check failed for uploaded audio', {
+            correlationId,
+            trackId: trackToGenerate.id,
+            audioUrl
+          });
+          // Throw to enter the existing fallback block (mock upload / local URL). Do NOT mark READY here.
+          throw new Error('storage_head_failed');
+        }
+        logger.info('Storage HEAD check passed', { correlationId, trackId: trackToGenerate.id, audioUrl });
+
         logger.info('Audio uploaded to storage', {
           correlationId,
           trackId: trackToGenerate.id,
@@ -270,6 +318,18 @@ async function generateHandler(req: VercelRequest, res: VercelResponse): Promise
           elevenRequestId = `fallback_${trackToGenerate.id}_${Date.now()}`
           usedFallback = true
 
+          const fallbackReachable = await headOk(audioUrl);
+          if (!fallbackReachable) {
+            logger.error('Fallback storage HEAD check failed; aborting READY state', {
+              correlationId,
+              trackId: trackToGenerate.id,
+              audioUrl
+            });
+            // Surface a controlled error; the outer catch will handle and return a 500.
+            throw new Error('fallback_storage_head_failed');
+          }
+          logger.info('Fallback storage HEAD check passed', { correlationId, trackId: trackToGenerate.id, audioUrl });
+
           logger.info('Fallback mock audio uploaded to Supabase storage', {
             correlationId,
             trackId: trackToGenerate.id,
@@ -294,6 +354,18 @@ async function generateHandler(req: VercelRequest, res: VercelResponse): Promise
           audioUrl = `${siteUrl}/sample-track.wav`
           elevenRequestId = `fallback_${trackToGenerate.id}_${Date.now()}`
           usedFallback = true
+
+          const fallbackReachable = await headOk(audioUrl);
+          if (!fallbackReachable) {
+            logger.error('Fallback storage HEAD check failed; aborting READY state', {
+              correlationId,
+              trackId: trackToGenerate.id,
+              audioUrl
+            });
+            // Surface a controlled error; the outer catch will handle and return a 500.
+            throw new Error('fallback_storage_head_failed');
+          }
+          logger.info('Fallback storage HEAD check passed', { correlationId, trackId: trackToGenerate.id, audioUrl });
 
           logger.info('Local URL fallback used due to storage failure', {
             correlationId,
