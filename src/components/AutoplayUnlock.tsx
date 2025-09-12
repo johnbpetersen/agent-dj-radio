@@ -17,49 +17,23 @@ export default function AutoplayUnlock({
   const triedRef = useRef(false)
 
   useEffect(() => {
-    // Detect if we need an unlock
-    // Try to resume an AudioContext silently; if it's already running, we're good
-    const tryDetect = async () => {
-      if (triedRef.current) return
+    // No AudioContext work on mount. Gesture-only in Stage's unlock handler.
+    // Always show unlock overlay until user clicks
+    if (!triedRef.current) {
       triedRef.current = true
-
-      try {
-        const Ctx = (window.AudioContext || (window as any).webkitAudioContext)
-        if (!Ctx) {
-          // No Web Audio — we'll still rely on user gesture for <audio>.play()
-          setLocked(true)
-          return
-        }
-        const ctx = new Ctx()
-        if (ctx.state === 'suspended') {
-          // Needs user gesture
-          setLocked(true)
-        } else {
-          // Already running (returning visitor, prior gesture, etc.)
-          onUnlock()
-        }
-      } catch {
-        setLocked(true)
-      }
+      setLocked(true)
     }
-    // give the page a tick to mount things before probing
-    const id = window.setTimeout(tryDetect, 0)
-    return () => clearTimeout(id)
   }, [onUnlock])
 
-  const handleUnlock = async () => {
-    try {
-      const Ctx = (window.AudioContext || (window as any).webkitAudioContext)
-      if (Ctx) {
-        const ctx = new Ctx()
-        if (ctx.state === 'suspended') {
-          await ctx.resume().catch(() => {})
-        }
-      }
-      onUnlock()
-    } finally {
-      setLocked(false)
+  const handleUnlock = () => {
+    const callUnlock = () => (window as any).__adrUnlockAudio?.();
+    
+    if (!callUnlock()) {
+      setTimeout(() => { callUnlock(); }, 150);
     }
+    
+    onUnlock();
+    setLocked(false);
   }
 
   if (!locked) return null

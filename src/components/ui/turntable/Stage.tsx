@@ -138,13 +138,9 @@ function ProgressRing({
 export default function Stage({ track, playheadSeconds, isLoading, className = '', onAdvance }: StageProps) {
   const audioRef = useRef<HTMLAudioElement>(null)
   
-  // Browser detection and WebAudio feature gating
-  const isChromium = /Chrome|Chromium|Brave/i.test(navigator.userAgent) && !/Firefox|Safari/i.test(navigator.userAgent);
-  const forceWebCtx = import.meta.env.VITE_FORCE_WEBCTX === 'true';
-  const allowWebCtx = forceWebCtx || !isChromium;
-  
-  // Expose for debug if not already
-  ;(window as any).__adrFlags = { ...(window as any).__adrFlags, isChromium, forceWebCtx, allowWebCtx };
+  // Simple, reliable gate: WebAudio is OFF by default everywhere.
+  // Turn it on only when you explicitly opt-in via .env.
+  const allowWebCtx = import.meta.env.VITE_ENABLE_WEBCTX === 'true';
   
   // Debug logging for component props
   if (import.meta.env.DEV) {
@@ -157,7 +153,6 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
       } : null, 
       playheadSeconds, 
       isLoading,
-      isChromium,
       allowWebCtx
     });
   }
@@ -246,102 +241,46 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
     }
   }, [])
 
-  // Robust unlock with ref-availability guard & tiny retry loop
+  // Unlock: play() first; only build WebAudio when explicitly allowed
   useEffect(() => {
-    let attempts = 0;
-    const MAX_ATTEMPTS = 10;
-    const DELAY_MS = 50;
-
-    const doUnlock = async (): Promise<void> => {
+    (window as any).__adrUnlockAudio = async () => {
       const a = audioRef.current;
       if (!a) {
-        if (attempts < MAX_ATTEMPTS) {
-          attempts++;
-          if (import.meta.env.DEV) console.log('[Stage] unlock: audioRef missing, retry', attempts);
-          setTimeout(doUnlock, DELAY_MS);
-        } else {
-          console.warn('[Stage] unlock: audioRef never became available');
-        }
+        console.warn('[Stage] unlock: audioRef missing');
         return;
       }
       
       try {
-        // Always unmute & set volume
         a.muted = false;
         a.volume = 1;
-
-        // Plain audio first so Chromium works immediately
         await a.play().catch(() => {});
-
-        if (allowWebCtx && !(window as any).__adrWebAudioDisabled) {
-          // Build/resume WebAudio chain only when allowed
+        
+        if (allowWebCtx) {
           const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
           if (Ctx) {
             let ctx = (window as any).__adrAudioCtx as AudioContext | undefined;
-            if (!ctx) {
-              ctx = new Ctx();
+            if (!ctx) { 
+              ctx = new Ctx(); 
               (window as any).__adrAudioCtx = ctx;
             }
             if (ctx.state !== 'running') await ctx.resume().catch(() => {});
-
+            
             let srcNode = (window as any).__adrSrcNode as MediaElementAudioSourceNode | undefined;
             if (!srcNode) {
-              try {
-                srcNode = ctx.createMediaElementSource(a);
-                (window as any).__adrSrcNode = srcNode;
-                srcNode.connect(ctx.destination);
-                
-                if (import.meta.env.DEV) {
-                  console.log('[Audio] WebAudio chain: MediaElementSource → destination');
-                }
-              } catch (e) {
-                if (import.meta.env.DEV) {
-                  console.log('[Audio] MediaElementSource creation failed:', e);
-                }
-              }
-            }
-
-            // Start watchdog for Chromium CORS fallback
-            if (isChromium && srcNode) {
-              setTimeout(() => {
-                const currentTime = a.currentTime;
-                if (!a.paused && currentTime === 0) {
-                  // Likely stuck due to CORS, fallback to plain audio
-                  if ((window as any).__adrSrcNode) {
-                    try {
-                      (window as any).__adrSrcNode.disconnect();
-                      delete (window as any).__adrSrcNode;
-                    } catch {}
-                  }
-                  (window as any).__adrWebAudioDisabled = true;
-                  a.play().catch(() => {});
-                  if (import.meta.env.DEV) {
-                    console.log('[Audio] Chromium fallback to plain <audio> (no WebAudio)');
-                  }
-                }
-              }, 1000);
+              srcNode = (window as any).__adrSrcNode = ctx.createMediaElementSource(a);
+              srcNode.connect(ctx.destination);
+              console.log('[Audio] WebAudio chain: MediaElementSource → destination');
             }
           }
         }
-
-        // Defensive load if metadata not ready yet
-        if (a.readyState < 2) a.load();
-        
-        if (import.meta.env.DEV) {
-          console.log('[Stage] unlock ok', (window as any).__dumpAudio?.());
-        }
+        console.log('[Stage] unlock ok');
       } catch (err) {
         console.warn('[Stage] unlock failed', err);
       }
     };
-
-    (window as any).__adrUnlockAudio = () => { 
-      attempts = 0; 
-      void doUnlock(); 
-    };
     
     return () => { delete (window as any).__adrUnlockAudio; };
-  }, [allowWebCtx, isChromium]);
+  }, [allowWebCtx]);
 
   // Set src when track changes, don't play yet
   useEffect(() => {
