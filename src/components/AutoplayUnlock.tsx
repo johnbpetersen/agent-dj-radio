@@ -26,22 +26,33 @@ export default function AutoplayUnlock({
   }, [onUnlock])
 
   const handleUnlock = () => {
-    const tryUnlock = () => (window as any).__adrUnlockAudio?.() === true;
-    
-    const ok = tryUnlock();
-    if (!ok) {
-      setTimeout(() => tryUnlock(), 150);
+    const a = (window as any).__audioElement as HTMLAudioElement | null;
+    if (!a) {
+      // Fire unlocks anyway; overlay will be retried on next click if needed.
+      (window as any).__adrUnlockAudio?.();
+      onUnlock();
+      return;
     }
-    
+
+    let done = false;
+    const hide = () => {
+      if (done) return;
+      done = true;
+      setLocked(false);
+      a.removeEventListener('playing', hide);
+    };
+
+    // Listen for real playback before calling unlock
+    a.addEventListener('playing', hide, { once: true });
+
+    // Trigger playback
+    (window as any).__adrUnlockAudio?.();
     onUnlock();
-    
-    // Only hide after we successfully started playback
+
+    // Safety fallback in case 'playing' fired before listener attach or browser quirks
     setTimeout(() => {
-      const a = document.querySelector('audio') as HTMLAudioElement | null;
-      if (a && !a.paused) {
-        setLocked(false);
-      }
-    }, 50);
+      if (!done && !a.paused) hide();
+    }, 700);
   }
 
   if (!locked) return null
