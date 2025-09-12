@@ -196,7 +196,26 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
           }
         };
         
-        console.log('[Stage] Debug functions available: window.__testAudio(), window.__playAudio()');
+        // Comprehensive audio debugging helper
+        (window as any).__dumpAudio = () => {
+          const a = audioRef.current;
+          const ctx = (window as any).__adrAudioCtx;
+          if (!a) return 'no audio element';
+          return {
+            src: a.currentSrc,
+            paused: a.paused,
+            muted: a.muted,
+            volume: a.volume,
+            currentTime: a.currentTime,
+            duration: a.duration,
+            readyState: a.readyState, // 4 == HAVE_ENOUGH_DATA
+            ctxState: ctx?.state,
+            hasSrcNode: !!((window as any).__adrSrcNode),
+            hasContext: !!ctx
+          };
+        };
+        
+        console.log('[Stage] Debug functions available: __testAudio(), __playAudio(), __dumpAudio()');
       }
     }
   }, [])
@@ -205,44 +224,67 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
   useEffect(() => {
     (window as any).__adrUnlockAudio = async () => {
       const a = audioRef.current;
-      if (!a) return;
-      
-      // Bail early if no src
-      if (!a.src) {
-        if (import.meta.env.DEV) console.log('[Stage] resume: no src');
-        return;
-      }
-      
+      if (!a) return false;
+
       try {
-        // Resume audio context first if it exists and not running
-        if ((window as any).__adrAudioCtx && (window as any).__adrAudioCtx.state !== 'running') {
-          await (window as any).__adrAudioCtx.resume();
-        }
-        
-        // Set audio properties for audible playback
+        // 1) Make sure the media element itself can output sound
         a.muted = false;
         a.volume = 1;
+
+        // 2) Create/resume AudioContext and ensure it reaches speakers
+        const Ctx = (window.AudioContext || (window as any).webkitAudioContext);
+        let ctx: AudioContext | undefined = (window as any).__adrAudioCtx;
         
-        // If not ready, try loading first
-        if (a.readyState < 2) {
-          a.load();
+        if (Ctx && !ctx) {
+          // Create global context if it doesn't exist
+          ctx = new Ctx();
+          (window as any).__adrAudioCtx = ctx;
         }
         
-        await a.play();
+        if (ctx && ctx.state !== 'running') {
+          await ctx.resume();
+        }
         
-        // DEV log after unlock showing audio state
+        // 3) Set up WebAudio chain if we have a context
+        if (ctx && !((window as any).__adrSrcNode)) {
+          try {
+            const srcNode = ctx.createMediaElementSource(a);
+            (window as any).__adrSrcNode = srcNode;
+            
+            // Connect directly to destination for now (can add effects later)
+            srcNode.connect(ctx.destination);
+            
+            if (import.meta.env.DEV) {
+              console.log('[Stage] Created MediaElementSource and connected to destination');
+            }
+          } catch (e) {
+            // MediaElementSource already created, that's ok
+            if (import.meta.env.DEV) {
+              console.log('[Stage] MediaElementSource already exists or failed to create:', e);
+            }
+          }
+        }
+
+        // 4) Defensive load if metadata not ready yet
+        if (a.readyState < 2) a.load();
+
+        // 5) Play
+        await a.play();
+
         if (import.meta.env.DEV) {
-          const ctxState = (window as any).__adrAudioCtx ? (window as any).__adrAudioCtx.state : 'none';
           console.log('[Stage] unlock ok', {
             paused: a.paused,
             muted: a.muted,
             volume: a.volume,
             readyState: a.readyState,
-            ctxState
+            ctxState: ctx?.state,
+            hasSrcNode: !!((window as any).__adrSrcNode)
           });
         }
-      } catch (e) {
-        console.warn('[Stage] resume failed', e);
+        return true;
+      } catch (err) {
+        console.warn('[Stage] unlock failed', err);
+        return false;
       }
     };
     return () => { delete (window as any).__adrUnlockAudio; };

@@ -44,31 +44,39 @@ export function useStation() {
     } catch (error) {
       console.error('Failed to fetch station state:', error)
       
-      // TEMPORARY: Add mock track for testing audio functionality when API fails
-      const mockTrack = {
-        id: 'mock-track-1',
-        prompt: 'Test track for audio debugging',
-        status: 'PLAYING' as const,
-        source: 'GENERATED' as const,
-        duration_seconds: 30,
-        audio_url: 'http://localhost:5173/sample-track.wav',
-        created_at: new Date().toISOString(),
-        user: {
-          id: 'mock-user',
-          display_name: 'Test DJ'
+      // Only use mock track if explicitly enabled for audio debugging
+      if (import.meta.env.DEV && import.meta.env.VITE_AUDIO_MOCK === 'true') {
+        const mockTrack = {
+          id: 'mock-track-1',
+          prompt: 'Test track for audio debugging',
+          status: 'PLAYING' as const,
+          source: 'GENERATED' as const,
+          duration_seconds: 30,
+          audio_url: '/sample-track.wav',
+          created_at: new Date().toISOString(),
+          user: {
+            id: 'mock-user',
+            display_name: 'Test DJ'
+          }
         }
+        
+        console.log('[Station] Using mock track (VITE_AUDIO_MOCK=true):', mockTrack)
+        
+        setStationData(prev => ({
+          ...prev,
+          currentTrack: mockTrack,
+          playheadSeconds: 0,
+          queue: [],
+          isLoading: false,
+          error: null
+        }))
+      } else {
+        setStationData(prev => ({
+          ...prev,
+          isLoading: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }))
       }
-      
-      console.log('[Station] Using mock track for testing:', mockTrack)
-      
-      setStationData(prev => ({
-        ...prev,
-        currentTrack: mockTrack,
-        playheadSeconds: 0,
-        queue: [],
-        isLoading: false,
-        error: null // Clear error so we can test audio
-      }))
     }
   }, [])
 
