@@ -138,6 +138,14 @@ function ProgressRing({
 export default function Stage({ track, playheadSeconds, isLoading, className = '', onAdvance }: StageProps) {
   const audioRef = useRef<HTMLAudioElement>(null)
   
+  // Browser detection and WebAudio feature gating
+  const isChromium = /Chrome|Chromium|Brave/i.test(navigator.userAgent) && !/Firefox|Safari/i.test(navigator.userAgent);
+  const forceWebCtx = import.meta.env.VITE_FORCE_WEBCTX === 'true';
+  const allowWebCtx = forceWebCtx || !isChromium;
+  
+  // Expose for debug if not already
+  ;(window as any).__adrFlags = { ...(window as any).__adrFlags, isChromium, forceWebCtx, allowWebCtx };
+  
   // Debug logging for component props
   if (import.meta.env.DEV) {
     console.log('[Stage] render', { 
@@ -148,7 +156,9 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
         prompt: track.prompt 
       } : null, 
       playheadSeconds, 
-      isLoading 
+      isLoading,
+      isChromium,
+      allowWebCtx
     });
   }
   
@@ -207,88 +217,131 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
             muted: a.muted,
             volume: a.volume,
             currentTime: a.currentTime,
-            duration: a.duration,
             readyState: a.readyState, // 4 == HAVE_ENOUGH_DATA
-            ctxState: ctx?.state,
-            hasSrcNode: !!((window as any).__adrSrcNode),
-            hasContext: !!ctx
+            webctxAllowed: allowWebCtx,
+            webctxActive: !!((window as any).__adrSrcNode),
+            webctxDisabled: !!((window as any).__adrWebAudioDisabled),
+            ctxState: ctx?.state
           };
         };
+
+        // Force disable WebAudio and fallback to plain audio
+        (window as any).__disableWebAudio = () => {
+          const a = audioRef.current;
+          if ((window as any).__adrSrcNode) {
+            try {
+              (window as any).__adrSrcNode.disconnect();
+              delete (window as any).__adrSrcNode;
+            } catch {}
+          }
+          (window as any).__adrWebAudioDisabled = true;
+          if (a) {
+            a.play().catch(() => {});
+          }
+          console.log('[Audio] WebAudio manually disabled, using plain <audio>');
+        };
         
-        console.log('[Stage] Debug functions available: __testAudio(), __playAudio(), __dumpAudio()');
+        console.log('[Audio] Debug functions: __dumpAudio(), __disableWebAudio(), __testAudio(), __playAudio()');
       }
     }
   }, [])
 
-  // Expose global resume function for unlock button
+  // Robust unlock with ref-availability guard & tiny retry loop
   useEffect(() => {
-    (window as any).__adrUnlockAudio = async () => {
-      const a = audioRef.current;
-      if (!a) return false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 10;
+    const DELAY_MS = 50;
 
+    const doUnlock = async (): Promise<void> => {
+      const a = audioRef.current;
+      if (!a) {
+        if (attempts < MAX_ATTEMPTS) {
+          attempts++;
+          if (import.meta.env.DEV) console.log('[Stage] unlock: audioRef missing, retry', attempts);
+          setTimeout(doUnlock, DELAY_MS);
+        } else {
+          console.warn('[Stage] unlock: audioRef never became available');
+        }
+        return;
+      }
+      
       try {
-        // 1) Make sure the media element itself can output sound
+        // Always unmute & set volume
         a.muted = false;
         a.volume = 1;
 
-        // 2) Create/resume AudioContext and ensure it reaches speakers
-        const Ctx = (window.AudioContext || (window as any).webkitAudioContext);
-        let ctx: AudioContext | undefined = (window as any).__adrAudioCtx;
-        
-        if (Ctx && !ctx) {
-          // Create global context if it doesn't exist
-          ctx = new Ctx();
-          (window as any).__adrAudioCtx = ctx;
-        }
-        
-        if (ctx && ctx.state !== 'running') {
-          await ctx.resume();
-        }
-        
-        // 3) Set up WebAudio chain if we have a context
-        if (ctx && !((window as any).__adrSrcNode)) {
-          try {
-            const srcNode = ctx.createMediaElementSource(a);
-            (window as any).__adrSrcNode = srcNode;
-            
-            // Connect directly to destination for now (can add effects later)
-            srcNode.connect(ctx.destination);
-            
-            if (import.meta.env.DEV) {
-              console.log('[Stage] Created MediaElementSource and connected to destination');
+        // Plain audio first so Chromium works immediately
+        await a.play().catch(() => {});
+
+        if (allowWebCtx && !(window as any).__adrWebAudioDisabled) {
+          // Build/resume WebAudio chain only when allowed
+          const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+          if (Ctx) {
+            let ctx = (window as any).__adrAudioCtx as AudioContext | undefined;
+            if (!ctx) {
+              ctx = new Ctx();
+              (window as any).__adrAudioCtx = ctx;
             }
-          } catch (e) {
-            // MediaElementSource already created, that's ok
-            if (import.meta.env.DEV) {
-              console.log('[Stage] MediaElementSource already exists or failed to create:', e);
+            if (ctx.state !== 'running') await ctx.resume().catch(() => {});
+
+            let srcNode = (window as any).__adrSrcNode as MediaElementAudioSourceNode | undefined;
+            if (!srcNode) {
+              try {
+                srcNode = ctx.createMediaElementSource(a);
+                (window as any).__adrSrcNode = srcNode;
+                srcNode.connect(ctx.destination);
+                
+                if (import.meta.env.DEV) {
+                  console.log('[Audio] WebAudio chain: MediaElementSource → destination');
+                }
+              } catch (e) {
+                if (import.meta.env.DEV) {
+                  console.log('[Audio] MediaElementSource creation failed:', e);
+                }
+              }
+            }
+
+            // Start watchdog for Chromium CORS fallback
+            if (isChromium && srcNode) {
+              setTimeout(() => {
+                const currentTime = a.currentTime;
+                if (!a.paused && currentTime === 0) {
+                  // Likely stuck due to CORS, fallback to plain audio
+                  if ((window as any).__adrSrcNode) {
+                    try {
+                      (window as any).__adrSrcNode.disconnect();
+                      delete (window as any).__adrSrcNode;
+                    } catch {}
+                  }
+                  (window as any).__adrWebAudioDisabled = true;
+                  a.play().catch(() => {});
+                  if (import.meta.env.DEV) {
+                    console.log('[Audio] Chromium fallback to plain <audio> (no WebAudio)');
+                  }
+                }
+              }, 1000);
             }
           }
         }
 
-        // 4) Defensive load if metadata not ready yet
+        // Defensive load if metadata not ready yet
         if (a.readyState < 2) a.load();
-
-        // 5) Play
-        await a.play();
-
+        
         if (import.meta.env.DEV) {
-          console.log('[Stage] unlock ok', {
-            paused: a.paused,
-            muted: a.muted,
-            volume: a.volume,
-            readyState: a.readyState,
-            ctxState: ctx?.state,
-            hasSrcNode: !!((window as any).__adrSrcNode)
-          });
+          console.log('[Stage] unlock ok', (window as any).__dumpAudio?.());
         }
-        return true;
       } catch (err) {
         console.warn('[Stage] unlock failed', err);
-        return false;
       }
     };
+
+    (window as any).__adrUnlockAudio = () => { 
+      attempts = 0; 
+      void doUnlock(); 
+    };
+    
     return () => { delete (window as any).__adrUnlockAudio; };
-  }, []);
+  }, [allowWebCtx, isChromium]);
 
   // Set src when track changes, don't play yet
   useEffect(() => {
@@ -361,7 +414,12 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
   return (
     <div className={`${className}`}>
       {/* Hidden audio element for playback */}
-      <audio ref={audioRef} />
+      <audio
+        ref={audioRef}
+        preload="auto"
+        playsInline
+        {...(allowWebCtx ? { crossOrigin: 'anonymous' as const } : {})}
+      />
       
       <div className="glass-card p-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-center">

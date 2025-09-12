@@ -156,10 +156,10 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
       throw new Error('Failed to create user after multiple attempts')
     }
 
-    // Create presence record
+    // Create presence record (upsert to prevent duplicate key errors)
     const { error: presenceError } = await supabaseAdmin
       .from('presence')
-      .insert({
+      .upsert({
         session_id: sessionId,
         user_id: user.id,
         display_name: user.display_name,
@@ -167,6 +167,9 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
         user_agent: req.headers['user-agent'] || null,
         ip: req.headers['x-forwarded-for']?.toString()?.split(',')[0] || 
             req.headers['x-real-ip']?.toString() || null
+      }, { 
+        onConflict: 'session_id', 
+        ignoreDuplicates: false 
       })
 
     if (presenceError) {
