@@ -138,6 +138,20 @@ function ProgressRing({
 export default function Stage({ track, playheadSeconds, isLoading, className = '', onAdvance }: StageProps) {
   const audioRef = useRef<HTMLAudioElement>(null)
   
+  // Debug logging for component props
+  if (import.meta.env.DEV) {
+    console.log('[Stage] render', { 
+      track: track ? { 
+        id: track.id, 
+        status: track.status, 
+        audio_url: track.audio_url,
+        prompt: track.prompt 
+      } : null, 
+      playheadSeconds, 
+      isLoading 
+    });
+  }
+  
   const progressPercent = track?.duration_seconds 
     ? Math.min(100, (playheadSeconds / track.duration_seconds) * 100)
     : 0
@@ -146,6 +160,44 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
   useEffect(() => {
     if (audioRef.current) {
       (window as any).__audioElement = audioRef.current
+      
+      // Add test functions for debugging
+      if (import.meta.env.DEV) {
+        (window as any).__testAudio = () => {
+          const a = audioRef.current;
+          if (a) {
+            console.log('[Stage] Audio test:', {
+              src: a.src,
+              paused: a.paused,
+              muted: a.muted,
+              volume: a.volume,
+              readyState: a.readyState,
+              duration: a.duration,
+              currentTime: a.currentTime
+            });
+          } else {
+            console.log('[Stage] No audio element found');
+          }
+        };
+        
+        (window as any).__playAudio = async () => {
+          const a = audioRef.current;
+          if (a && a.src) {
+            try {
+              a.muted = false;
+              a.volume = 1;
+              await a.play();
+              console.log('[Stage] Manual play successful');
+            } catch (e) {
+              console.error('[Stage] Manual play failed:', e);
+            }
+          } else {
+            console.log('[Stage] No audio to play');
+          }
+        };
+        
+        console.log('[Stage] Debug functions available: window.__testAudio(), window.__playAudio()');
+      }
     }
   }, [])
 
@@ -199,20 +251,28 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
   // Set src when track changes, don't play yet
   useEffect(() => {
     const a = audioRef.current;
-    if (!a) return;
+    if (!a) {
+      if (import.meta.env.DEV) console.log('[Stage] audio ref not available');
+      return;
+    }
+    
+    if (import.meta.env.DEV) console.log('[Stage] track changed', { track, hasAudioUrl: !!track?.audio_url });
     
     const url =
       (track?.audio_url && track.audio_url.trim()) ||
       ((track as any)?.audioUrl && (track as any).audioUrl.trim()) ||
       '';
     
-    if (!url) return;
+    if (!url) {
+      if (import.meta.env.DEV) console.log('[Stage] no audio URL found', { track });
+      return;
+    }
     
     if (a.src !== url) {
       a.crossOrigin = 'anonymous';
       a.src = url;
       a.load();
-      if (import.meta.env.DEV) console.log('[Stage] set src', url);
+      if (import.meta.env.DEV) console.log('[Stage] set src', { url, readyState: a.readyState });
     }
   }, [track?.audio_url, (track as any)?.audioUrl]);
 
