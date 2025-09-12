@@ -68,7 +68,9 @@ async function reactionsHandler(req: VercelRequest, res: VercelResponse) {
 
     const response: ReactionResponse = {
       reaction,
-      track: sanitizeForClient(updatedTrack, ['eleven_request_id', 'x402_payment_tx'])
+      track: sanitizeForClient(updatedTrack, ['eleven_request_id', 'x402_payment_tx']),
+      ok: true,
+      already_applied: false
     }
 
     res.status(200).json(response)
@@ -80,8 +82,7 @@ async function reactionsHandler(req: VercelRequest, res: VercelResponse) {
       console.warn('[Reactions] Duplicate reaction ignored (23505):', { track_id, user_id, kind })
       return res.status(200).json({ 
         ok: true, 
-        already_applied: true,
-        message: 'Reaction already exists' 
+        already_applied: true
       })
     }
     

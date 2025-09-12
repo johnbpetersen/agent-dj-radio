@@ -145,8 +145,10 @@ export interface ReactionRequest {
 }
 
 export interface ReactionResponse {
-  reaction: Reaction
-  track: Track // Updated track with new rating
+  reaction?: Reaction
+  track?: Track // Updated track with new rating
+  ok: boolean
+  already_applied: boolean
 }
 
 // Client-side state types

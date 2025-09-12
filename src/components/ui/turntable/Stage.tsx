@@ -142,8 +142,8 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
   // Turn it on only when you explicitly opt-in via .env.
   const allowWebCtx = import.meta.env.VITE_ENABLE_WEBCTX === 'true';
   
-  // Debug logging for component props
-  if (import.meta.env.DEV) {
+  // Debug logging (gated behind VITE_DEBUG_AUDIO)
+  if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_AUDIO === 'true') {
     console.log('[Stage] render', { 
       track: track ? { 
         id: track.id, 
@@ -168,44 +168,11 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
       
       // Add test functions for debugging
       if (import.meta.env.DEV) {
-        (window as any).__testAudio = () => {
-          const a = audioRef.current;
-          if (a) {
-            console.log('[Stage] Audio test:', {
-              src: a.src,
-              paused: a.paused,
-              muted: a.muted,
-              volume: a.volume,
-              readyState: a.readyState,
-              duration: a.duration,
-              currentTime: a.currentTime
-            });
-          } else {
-            console.log('[Stage] No audio element found');
-          }
-        };
-        
-        (window as any).__playAudio = async () => {
-          const a = audioRef.current;
-          if (a && a.src) {
-            try {
-              a.muted = false;
-              a.volume = 1;
-              await a.play();
-              console.log('[Stage] Manual play successful');
-            } catch (e) {
-              console.error('[Stage] Manual play failed:', e);
-            }
-          } else {
-            console.log('[Stage] No audio to play');
-          }
-        };
-        
-        // Comprehensive audio debugging helper
-        (window as any).__dumpAudio = () => {
+        // Single gated helper for DEV builds only
+        (window as any).__audioState = () => {
           const a = audioRef.current;
           const ctx = (window as any).__adrAudioCtx;
-          if (!a) return 'no audio element';
+          if (!a) return { error: 'no audio element' };
           return {
             src: a.currentSrc,
             paused: a.paused,
@@ -213,30 +180,13 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
             volume: a.volume,
             currentTime: a.currentTime,
             readyState: a.readyState, // 4 == HAVE_ENOUGH_DATA
-            webctxAllowed: allowWebCtx,
-            webctxActive: !!((window as any).__adrSrcNode),
-            webctxDisabled: !!((window as any).__adrWebAudioDisabled),
-            ctxState: ctx?.state
+            allowWebCtx,
+            hasContext: !!ctx,
+            ctxState: ctx?.state,
+            hasSrcNode: !!((window as any).__adrSrcNode),
+            unlocked: !!((window as any).__adrUnlocked)
           };
         };
-
-        // Force disable WebAudio and fallback to plain audio
-        (window as any).__disableWebAudio = () => {
-          const a = audioRef.current;
-          if ((window as any).__adrSrcNode) {
-            try {
-              (window as any).__adrSrcNode.disconnect();
-              delete (window as any).__adrSrcNode;
-            } catch {}
-          }
-          (window as any).__adrWebAudioDisabled = true;
-          if (a) {
-            a.play().catch(() => {});
-          }
-          console.log('[Audio] WebAudio manually disabled, using plain <audio>');
-        };
-        
-        console.log('[Audio] Debug functions: __dumpAudio(), __disableWebAudio(), __testAudio(), __playAudio()');
       }
     }
   }, [])
@@ -246,8 +196,10 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
     (window as any).__adrUnlockAudio = async () => {
       const a = audioRef.current;
       if (!a) {
-        console.warn('[Stage] unlock: audioRef missing');
-        return;
+        if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_AUDIO === 'true') {
+          console.warn('[Stage] unlock: audioRef missing');
+        }
+        return false;
       }
       
       try {
@@ -269,13 +221,27 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
             if (!srcNode) {
               srcNode = (window as any).__adrSrcNode = ctx.createMediaElementSource(a);
               srcNode.connect(ctx.destination);
-              console.log('[Audio] WebAudio chain: MediaElementSource → destination');
+              if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_AUDIO === 'true') {
+                console.log('[Audio] WebAudio chain: MediaElementSource → destination');
+              }
             }
           }
         }
-        console.log('[Stage] unlock ok');
+        
+        // Track unlock state and return success boolean
+        (window as any).__adrUnlocked = true;
+        const success = !a.paused;
+        
+        if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_AUDIO === 'true') {
+          console.log('[Stage] unlock result:', success);
+        }
+        
+        return success;
       } catch (err) {
-        console.warn('[Stage] unlock failed', err);
+        if (import.meta.env.DEV) {
+          console.warn('[Stage] unlock failed', err);
+        }
+        return false;
       }
     };
     
@@ -285,30 +251,43 @@ export default function Stage({ track, playheadSeconds, isLoading, className = '
   // Set src when track changes, don't play yet
   useEffect(() => {
     const a = audioRef.current;
-    if (!a) {
-      if (import.meta.env.DEV) console.log('[Stage] audio ref not available');
-      return;
-    }
-    
-    if (import.meta.env.DEV) console.log('[Stage] track changed', { track, hasAudioUrl: !!track?.audio_url });
+    if (!a) return;
     
     const url =
       (track?.audio_url && track.audio_url.trim()) ||
       ((track as any)?.audioUrl && (track as any).audioUrl.trim()) ||
       '';
     
-    if (!url) {
-      if (import.meta.env.DEV) console.log('[Stage] no audio URL found', { track });
-      return;
+    if (!url) return;
+    
+    // Force restart on track change (including same id replay)
+    a.pause();
+    const wasUnlocked = (window as any).__adrUnlocked === true;
+    
+    // Set crossOrigin conditionally based on WebAudio usage
+    if (allowWebCtx) {
+      a.crossOrigin = 'anonymous';
     }
     
-    if (a.src !== url) {
-      a.crossOrigin = 'anonymous';
-      a.src = url;
-      a.load();
-      if (import.meta.env.DEV) console.log('[Stage] set src', { url, readyState: a.readyState });
+    // Even if same string, reassign to force reload
+    a.src = url;
+    a.load();
+    a.currentTime = 0;
+    
+    // Honor prior gesture if already unlocked
+    if (wasUnlocked) {
+      a.play().catch(() => {});
     }
-  }, [track?.audio_url, (track as any)?.audioUrl]);
+    
+    if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_AUDIO === 'true') {
+      console.log('[Stage] track restart', { 
+        url, 
+        trackId: track?.id,
+        wasUnlocked,
+        readyState: a.readyState 
+      });
+    }
+  }, [track?.id, track?.audio_url, allowWebCtx]);
 
   // Sync playhead with audio element
   useEffect(() => {

@@ -19,7 +19,7 @@ export default function Layout() {
 
   // Dev logging for ephemeral user
   useEffect(() => {
-    if (import.meta.env.DEV) {
+    if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_EPHEMERAL === 'true') {
       console.log('[Layout] Ephemeral user hook mounted:', {
         enabled: import.meta.env.VITE_ENABLE_EPHEMERAL_USERS === 'true',
         user: ephemeralUser.user?.display_name,

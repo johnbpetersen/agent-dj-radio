@@ -26,14 +26,22 @@ export default function AutoplayUnlock({
   }, [onUnlock])
 
   const handleUnlock = () => {
-    const callUnlock = () => (window as any).__adrUnlockAudio?.();
+    const tryUnlock = () => (window as any).__adrUnlockAudio?.() === true;
     
-    if (!callUnlock()) {
-      setTimeout(() => { callUnlock(); }, 150);
+    const ok = tryUnlock();
+    if (!ok) {
+      setTimeout(() => tryUnlock(), 150);
     }
     
     onUnlock();
-    setLocked(false);
+    
+    // Only hide after we successfully started playback
+    setTimeout(() => {
+      const a = document.querySelector('audio') as HTMLAudioElement | null;
+      if (a && !a.paused) {
+        setLocked(false);
+      }
+    }, 50);
   }
 
   if (!locked) return null

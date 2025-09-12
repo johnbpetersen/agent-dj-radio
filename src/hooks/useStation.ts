@@ -25,7 +25,7 @@ export function useStation() {
       const track = data.station_state.current_track || null
       
       // Dev logging for current track changes
-      if (import.meta.env.DEV) {
+      if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_STATION === 'true') {
         console.log('[Station] currentTrack', {
           id: track?.id,
           audio_url: track?.audio_url,
@@ -146,17 +146,23 @@ export function useStation() {
     const channel = supabase
       .channel('station')
       .on('broadcast', { event: 'station_update' }, (payload) => {
-        console.log('Received station update:', payload)
+        if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_REALTIME === 'true') {
+          console.log('[Station] realtime station_update:', payload)
+        }
         // Refetch state when station updates
         fetchStationState()
       })
       .on('broadcast', { event: 'track_advance' }, (payload) => {
-        console.log('Received track advance:', payload)
+        if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_REALTIME === 'true') {
+          console.log('[Station] realtime track_advance:', payload)
+        }
         // Immediately update with new track data
         fetchStationState()
       })
       .on('broadcast', { event: 'queue_update' }, (payload) => {
-        console.log('Received queue update:', payload)
+        if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_REALTIME === 'true') {
+          console.log('[Station] realtime queue_update:', payload)
+        }
         // Refetch to get updated queue
         fetchStationState()
       })
