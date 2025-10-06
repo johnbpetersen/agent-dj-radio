@@ -2,7 +2,18 @@
 // scripts/check-env.ts
 // Environment validation check script with PASS/WARN/FAIL reporting
 
+import fs from 'node:fs'
+import path from 'node:path'
+import dotenv from 'dotenv'
 import { z } from 'zod'
+
+// Load environment files with proper precedence: .env.local -> .env
+const envLocal = path.resolve(process.cwd(), '.env.local')
+if (fs.existsSync(envLocal)) {
+  dotenv.config({ path: envLocal })
+}
+// Fallback to .env (load only if not already set)
+dotenv.config() // default .env
 
 // Define colors for better readability (fallback to plain text in CI)
 const colors = {
