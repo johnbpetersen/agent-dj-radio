@@ -6,6 +6,7 @@ import { supabaseAdmin } from '../_shared/supabase.js'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
 import { sanitizeForClient } from '../_shared/security.js'
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
+import { httpError, type ErrorMeta } from '../_shared/errors.js'
 
 interface ActiveUsersResponse {
   users: Array<{
@@ -18,21 +19,18 @@ interface ActiveUsersResponse {
 
 async function activeUsersHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== 'GET') {
-    res.status(405).json({ error: 'Method not allowed' })
-    return
+    throw httpError.badRequest('Method not allowed', 'Only GET requests are supported')
   }
 
   // Check feature flag
   if (process.env.ENABLE_EPHEMERAL_USERS !== 'true') {
-    res.status(404).json({ error: 'Feature not available' })
-    return
+    throw httpError.notFound('Feature not available', 'Ephemeral users feature is disabled')
   }
 
   const correlationId = generateCorrelationId()
   const startTime = Date.now()
 
-  try {
-    // Parse window_secs parameter (default 120 seconds = 2 minutes)
+  // Parse window_secs parameter (default 120 seconds = 2 minutes)
     const windowSecsParam = req.query.window_secs as string
     let windowSecs = 120 // default
     
@@ -70,16 +68,22 @@ async function activeUsersHandler(req: VercelRequest, res: VercelResponse): Prom
       .limit(100)
 
     if (error) {
-      logger.error('Active users query failed', { correlationId }, error)
-      res.status(500).json({ 
-        error: 'Internal server error',
-        correlationId
+      const context: ErrorMeta['context'] = {
+        route: '/api/users/active',
+        method: 'GET',
+        path: req.url,
+        queryKeysOnly: req.query ? Object.keys(req.query) : [],
+        targetUrl: 'supabase://presence'
+      }
+      logger.error('Active users query failed', { correlationId, ...context }, error)
+      throw httpError.dbError('Failed to load active users', {
+        db: { type: 'QUERY', operation: 'select', table: 'presence' },
+        context
       })
-      return
     }
 
     // Process results: exclude banned users, deduplicate by user_id, sanitize
-    const userMap = new Map<string, any>()
+    const userMap = new Map<string, Record<string, unknown>>()
     
     for (const record of presenceRecords || []) {
       if (!record.user || record.user.banned) {
@@ -114,17 +118,6 @@ async function activeUsersHandler(req: VercelRequest, res: VercelResponse): Prom
     })
 
     res.status(200).json(response)
-
-  } catch (error) {
-    const err = error instanceof Error ? error : new Error(String(error))
-    
-    logger.error('Active users error', { correlationId }, err)
-
-    res.status(500).json({ 
-      error: 'Internal server error',
-      correlationId
-    })
-  }
 }
 
 export default secureHandler(activeUsersHandler, securityConfigs.public)

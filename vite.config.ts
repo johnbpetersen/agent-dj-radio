@@ -14,6 +14,15 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
         ws: true,
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            // Preserve x-request-id header
+            const requestId = req.headers['x-request-id']
+            if (requestId) {
+              proxyReq.setHeader('x-request-id', String(requestId))
+            }
+          })
+        },
       },
     },
   },

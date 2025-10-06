@@ -8,7 +8,9 @@
 import { createServer, IncomingMessage, ServerResponse } from 'http'
 import { parse as parseUrl } from 'url'
 import { join, resolve } from 'path'
+import { createErrorResponse } from './api/_shared/errors.js'
 import { pathToFileURL } from 'url'
+import crypto from 'crypto'
 
 const PORT = 3001
 const API_DIR = resolve('./api')
@@ -126,9 +128,16 @@ const server = createServer(async (req, res) => {
     try {
       const fn = await loadFunctionForPath(pathname)
       if (!fn) {
-        res.statusCode = 404
+        const requestId = (req.headers['x-request-id'] as string) || crypto.randomUUID()
+        const errorResponse = createErrorResponse(
+          new Error('API endpoint not found'),
+          requestId,
+          { route: pathname, method: req.method || 'UNKNOWN', path: pathname }
+        )
+        res.statusCode = errorResponse.status
         res.setHeader('Content-Type', 'application/json')
-        return res.end(JSON.stringify({ error: 'API endpoint not found' }))
+        res.setHeader('X-Request-Id', requestId)
+        return res.end(JSON.stringify(errorResponse.body))
       }
 
       const { vReq, vRes } = makeReqRes(req, res)
@@ -136,9 +145,16 @@ const server = createServer(async (req, res) => {
       await Promise.resolve(fn(vReq, vRes))
     } catch (err: any) {
       console.error('[api] handler error:', err)
-      res.statusCode = 500
+      const requestId = (req.headers['x-request-id'] as string) || crypto.randomUUID()
+      const errorResponse = createErrorResponse(
+        err,
+        requestId,
+        { route: pathname, method: req.method || 'UNKNOWN', path: pathname }
+      )
+      res.statusCode = errorResponse.status
       res.setHeader('Content-Type', 'application/json')
-      res.end(JSON.stringify({ error: 'Internal server error', message: err?.message }))
+      res.setHeader('X-Request-Id', requestId)
+      res.end(JSON.stringify(errorResponse.body))
     }
   })
 })

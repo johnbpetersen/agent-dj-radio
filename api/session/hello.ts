@@ -9,6 +9,7 @@ import { requireSessionId } from '../_shared/session.js'
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
 import { generateFunName, generateNameVariants } from '../../src/lib/name-generator.js'
 import { validateDisplayName } from '../../src/lib/profanity.js'
+import { httpError, type ErrorMeta } from '../_shared/errors.js'
 
 interface SessionHelloRequest {
   display_name?: string
@@ -26,14 +27,12 @@ interface SessionHelloResponse {
 
 async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method not allowed' })
-    return
+    throw httpError.badRequest('Method not allowed', 'Only POST requests are supported')
   }
 
   // Check feature flag
   if (process.env.ENABLE_EPHEMERAL_USERS !== 'true') {
-    res.status(404).json({ error: 'Feature not available' })
-    return
+    throw httpError.notFound('Feature not available', 'Ephemeral users feature is disabled')
   }
 
   const correlationId = generateCorrelationId()
@@ -94,11 +93,10 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
     const validationError = validateDisplayName(finalDisplayName)
     if (validationError) {
       logger.warn('Invalid display name', { correlationId, validationError })
-      res.status(400).json({ error: validationError })
-      return
+      throw httpError.badRequest(validationError, 'Please choose a different display name')
     }
 
-    let user: any = null
+    let user: Record<string, unknown> | null = null
     let attempts = 0
     const maxAttempts = 5
 
@@ -129,20 +127,34 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
           // Unique constraint violation - try variants
           if (attempts === 1) {
             // First retry: try numbered variants
-            const variants = generateNameVariants(finalDisplayName, 3)
-            const suggestions = [finalDisplayName, ...variants]
-            
-            res.status(409).json({
-              error: 'Display name already taken',
-              suggestions
+            generateNameVariants(finalDisplayName, 3)
+
+            throw httpError.badRequest('Display name already taken', undefined, {
+              context: {
+                route: '/api/session/hello',
+                method: 'POST',
+                path: req.url,
+                queryKeysOnly: req.query ? Object.keys(req.query) : [],
+                targetUrl: 'supabase://users'
+              }
             })
-            return
           } else {
             // Subsequent retries: generate new fun name
             finalDisplayName = generateFunName()
           }
         } else {
-          throw userError
+          const context: ErrorMeta['context'] = {
+            route: '/api/session/hello',
+            method: 'POST',
+            path: req.url,
+            queryKeysOnly: req.query ? Object.keys(req.query) : [],
+            targetUrl: 'supabase://users'
+          }
+          logger.error('User creation failed', { correlationId, ...context }, userError)
+          throw httpError.dbError('Failed to create user', {
+            db: { type: 'QUERY', operation: 'insert', table: 'users' },
+            context
+          })
         }
       } catch (error) {
         if (attempts >= maxAttempts) {
@@ -153,7 +165,7 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
     }
 
     if (!user) {
-      throw new Error('Failed to create user after multiple attempts')
+      throw httpError.internal('Failed to create user after multiple attempts')
     }
 
     // Create presence record (upsert to prevent duplicate key errors)
@@ -173,7 +185,14 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
       })
 
     if (presenceError) {
-      logger.error('Failed to create presence', { correlationId }, presenceError)
+      const context: ErrorMeta['context'] = {
+        route: '/api/session/hello',
+        method: 'POST',
+        path: req.url,
+        queryKeysOnly: req.query ? Object.keys(req.query) : [],
+        targetUrl: 'supabase://presence'
+      }
+      logger.error('Failed to create presence', { correlationId, ...context }, presenceError)
       // Continue anyway - user creation succeeded
     }
 
@@ -192,19 +211,14 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
     res.status(201).json(response)
 
   } catch (error) {
-    const err = error instanceof Error ? error : new Error(String(error))
-    
-    logger.error('Session hello error', { correlationId }, err)
-
-    if (err.message.includes('Missing X-Session-Id') || err.message.includes('Invalid X-Session-Id')) {
-      res.status(400).json({ error: err.message, correlationId })
-      return
+    // Check for session ID errors and convert to proper HTTP errors
+    if (error instanceof Error &&
+        (error.message.includes('Missing X-Session-Id') || error.message.includes('Invalid X-Session-Id'))) {
+      throw httpError.badRequest(error.message, 'Please provide a valid session ID in X-Session-Id header')
     }
 
-    res.status(500).json({ 
-      error: 'Internal server error',
-      correlationId
-    })
+    // All other errors will be handled by secureHandler
+    throw error
   }
 }
 
