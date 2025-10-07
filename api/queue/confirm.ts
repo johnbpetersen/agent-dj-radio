@@ -228,7 +228,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
     let verificationResult: { ok: true; amountPaidAtomic: number } | { ok: false; code: string; detail?: string }
 
     // Provider selection: CDP only when all keys are present
-    const hasCDPKeys = !!(serverEnv.X402_API_KEY && serverEnv.X402_PROVIDER_URL)
+    const hasCDPKeys = !!(serverEnv.CDP_API_KEY_ID && serverEnv.CDP_API_KEY_SECRET && serverEnv.X402_PROVIDER_URL)
 
     if (serverEnv.ENABLE_X402 && hasCDPKeys) {
       // Real CDP verification

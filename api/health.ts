@@ -114,12 +114,13 @@ async function healthHandler(req: VercelRequest, res: VercelResponse): Promise<v
   const ok = envCheck === 'ok'
 
   // Determine payment mode
-  const hasCDPKeys = !!(serverEnv.X402_API_KEY && serverEnv.X402_PROVIDER_URL)
+  const hasCDPKeys = !!(serverEnv.CDP_API_KEY_ID && serverEnv.CDP_API_KEY_SECRET && serverEnv.X402_PROVIDER_URL)
 
   // Debug logging to diagnose env var issues
   if (serverEnv.STAGE === 'dev') {
     console.log('[health] Debug CDP keys check:', {
-      X402_API_KEY: serverEnv.X402_API_KEY ? `${serverEnv.X402_API_KEY.substring(0, 10)}...` : 'MISSING',
+      CDP_API_KEY_ID: serverEnv.CDP_API_KEY_ID ? `${serverEnv.CDP_API_KEY_ID.substring(0, 10)}...` : 'MISSING',
+      CDP_API_KEY_SECRET: serverEnv.CDP_API_KEY_SECRET ? `${serverEnv.CDP_API_KEY_SECRET.substring(0, 10)}...` : 'MISSING',
       X402_PROVIDER_URL: serverEnv.X402_PROVIDER_URL || 'MISSING',
       hasCDPKeys,
       ENABLE_X402: serverEnv.ENABLE_X402,

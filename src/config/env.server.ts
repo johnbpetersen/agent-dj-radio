@@ -59,7 +59,8 @@ const serverSchema = z.object({
 
   // X402 configuration (required in alpha)
   X402_PROVIDER_URL: urlSchema.optional(),
-  X402_API_KEY: z.string().optional(),
+  CDP_API_KEY_ID: z.string().optional(),
+  CDP_API_KEY_SECRET: z.string().optional(),
   X402_CHAIN: z.string().default('base-sepolia'),
   X402_ACCEPTED_ASSET: z.string().default('USDC'),
   X402_RECEIVING_ADDRESS: hexAddressSchema.optional(),
@@ -81,7 +82,8 @@ const serverSchema = z.object({
   if (data.STAGE === 'alpha') {
     const required = {
       X402_PROVIDER_URL: data.X402_PROVIDER_URL,
-      X402_API_KEY: data.X402_API_KEY,
+      CDP_API_KEY_ID: data.CDP_API_KEY_ID,
+      CDP_API_KEY_SECRET: data.CDP_API_KEY_SECRET,
       X402_RECEIVING_ADDRESS: data.X402_RECEIVING_ADDRESS,
       ELEVEN_API_KEY: data.ELEVEN_API_KEY,
     }
@@ -147,7 +149,7 @@ export const isAlpha = serverEnv.STAGE === 'alpha'
 export const isProduction = isStaging || isAlpha
 
 // Startup log: payment configuration (non-secret)
-const hasCDPKeys = !!(serverEnv.X402_API_KEY && serverEnv.X402_PROVIDER_URL)
+const hasCDPKeys = !!(serverEnv.CDP_API_KEY_ID && serverEnv.CDP_API_KEY_SECRET && serverEnv.X402_PROVIDER_URL)
 console.log('[startup] Payment configuration:', {
   x402Enabled: serverEnv.ENABLE_X402,
   mockEnabled: serverEnv.ENABLE_MOCK_PAYMENTS,

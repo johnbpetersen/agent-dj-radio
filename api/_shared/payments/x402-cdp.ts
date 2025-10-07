@@ -150,9 +150,9 @@ export async function verifyPayment(input: VerifyPaymentInput): Promise<VerifyPa
     return { ok: false, code: 'PROVIDER_ERROR', message: 'Payment verification service not configured', detail: 'Payment provider URL not configured' }
   }
 
-  if (!serverEnv.X402_API_KEY) {
-    logger.error('X402_API_KEY not configured')
-    return { ok: false, code: 'PROVIDER_ERROR', message: 'Payment verification service not configured', detail: 'Payment provider authentication not configured' }
+  if (!serverEnv.CDP_API_KEY_ID || !serverEnv.CDP_API_KEY_SECRET) {
+    logger.error('CDP_API_KEY_ID or CDP_API_KEY_SECRET not configured')
+    return { ok: false, code: 'PROVIDER_ERROR', message: 'Payment verification service not configured', detail: 'CDP authentication credentials not configured' }
   }
 
   logger.info('CDP verification started', {
@@ -178,7 +178,8 @@ export async function verifyPayment(input: VerifyPaymentInput): Promise<VerifyPa
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Api-Key': serverEnv.X402_API_KEY,
+          'X-CDP-Key-ID': serverEnv.CDP_API_KEY_ID,
+          'X-CDP-Key-Secret': serverEnv.CDP_API_KEY_SECRET,
           'User-Agent': 'Agent-DJ-Radio/1.0'
         },
         body: JSON.stringify({
