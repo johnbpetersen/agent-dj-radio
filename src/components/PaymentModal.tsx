@@ -3,7 +3,6 @@
 
 import { useState, useEffect } from 'react'
 import {
-  parseXPaymentHeader,
   formatUSDCAmount,
   getExpiryCountdown,
   formatCountdown,
@@ -108,6 +107,19 @@ function toErrorStringSync(x: unknown): string {
 }
 
 export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: PaymentModalProps) {
+  // Safe guard: if no challenge provided, show error
+  if (!challenge) {
+    return (
+      <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+        <div className="modal-content">
+          <h2>Payment Error</h2>
+          <p className="error">No payment challenge provided. Please try submitting again.</p>
+          <button onClick={onClose}>Close</button>
+        </div>
+      </div>
+    )
+  }
+
   const [txHash, setTxHash] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -332,7 +344,7 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
           <div className="detail-row">
             <span className="label">Pay to:</span>
             <div className="address-container">
-              <code className="address">{parsed.payTo}</code>
+              <code className="address">{challenge.payTo}</code>
               <button
                 className="copy-button"
                 onClick={handleCopyAddress}
