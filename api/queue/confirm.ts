@@ -50,6 +50,14 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
 
   logger.info('queue/confirm request received', { requestId })
 
+  // Dev-only body echo for debugging
+  if (serverEnv.STAGE === 'dev') {
+    logger.debug('queue/confirm dev body echo', {
+      hasBody: !!req.body,
+      keys: req?.body ? Object.keys(req.body) : []
+    })
+  }
+
   try {
     // Validate request body with structured field errors
     let challengeId: string

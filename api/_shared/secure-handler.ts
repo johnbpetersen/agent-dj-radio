@@ -101,9 +101,14 @@ export function secureHandler(
         const route = req.url || ''
         const override = rateLimitOverrides.get(route)
 
-        const rateLimitConfig = override
+        let rateLimitConfig = override
           ? { windowMs: override.windowMs, maxRequests: override.max }
           : options.rateLimitOptions
+
+        // Dev-only: Increase /api/queue/confirm limit for debugging
+        if (serverEnv.STAGE === 'dev' && route === '/api/queue/confirm') {
+          rateLimitConfig = { windowMs: 60000, maxRequests: 30 }
+        }
 
         const rateLimit = checkRateLimit(req, rateLimitConfig)
         applyRateLimitHeaders(res, rateLimit)

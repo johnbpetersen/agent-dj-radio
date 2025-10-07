@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useEphemeralUser } from '../hooks/useEphemeralUser'
-import type { PriceQuoteResponse, SubmitTrackResponse, X402Challenge, X402ChallengeResponse, X402ConfirmRequest, X402ConfirmResponse } from '../types'
+import { parseXPaymentHeader, type ParsedXPayment } from '../lib/x402-utils'
+import { PaymentModal } from './PaymentModal'
+import type { PriceQuoteResponse, SubmitTrackResponse } from '../types'
 
 interface SubmitFormProps {
   onSubmitSuccess: () => void
@@ -14,12 +16,10 @@ export default function SubmitForm({ onSubmitSuccess }: SubmitFormProps) {
   const [duration, setDuration] = useState<60 | 90 | 120>(120)
   const [tempDisplayName, setTempDisplayName] = useState('')
   const [priceQuote, setPriceQuote] = useState<PriceQuoteResponse | null>(null)
-  const [paymentChallenge, setPaymentChallenge] = useState<X402Challenge | null>(null)
-  const [trackId, setTrackId] = useState<string | null>(null)
-  const [paymentProof, setPaymentProof] = useState('')
+  const [parsedChallenge, setParsedChallenge] = useState<ParsedXPayment | null>(null)
+  const [showPaymentModal, setShowPaymentModal] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isGettingQuote, setIsGettingQuote] = useState(false)
-  const [isConfirmingPayment, setIsConfirmingPayment] = useState(false)
   const [isSettingName, setIsSettingName] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -101,10 +101,24 @@ export default function SubmitForm({ onSubmitSuccess }: SubmitFormProps) {
       })
 
       if (response.status === 402) {
-        // Handle x402 payment challenge
-        const challengeData: X402ChallengeResponse = await response.json()
-        setPaymentChallenge(challengeData.challenge)
-        setTrackId(challengeData.track_id)
+        // Handle x402 payment challenge - parse X-PAYMENT header
+        const xPaymentHeader = response.headers.get('X-PAYMENT')
+        if (!xPaymentHeader) {
+          setError('Payment required but no payment details provided')
+          return
+        }
+
+        const challenge = parseXPaymentHeader(xPaymentHeader)
+        if (!challenge) {
+          setError('Invalid payment challenge format')
+          return
+        }
+
+        // Debug log for development
+        console.debug('[submit] parsed challenge', challenge)
+
+        setParsedChallenge(challenge)
+        setShowPaymentModal(true)
         setError(null)
         return
       }
@@ -130,82 +144,33 @@ export default function SubmitForm({ onSubmitSuccess }: SubmitFormProps) {
     }
   }
 
-  const confirmPayment = async () => {
-    if (!trackId || !paymentProof.trim()) {
-      setError('Please provide payment proof')
-      return
-    }
+  const handlePaymentSuccess = (trackId: string) => {
+    console.debug('[submit] payment confirmed, trackId:', trackId)
 
-    setIsConfirmingPayment(true)
+    // Reset form and close modal
+    setPrompt('')
+    setPriceQuote(null)
+    setParsedChallenge(null)
+    setShowPaymentModal(false)
     setError(null)
 
-    try {
-      const confirmRequest: X402ConfirmRequest = {
-        track_id: trackId,
-        payment_proof: paymentProof.trim()
-      }
-
-      const response = await fetch('/api/queue/confirm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(confirmRequest)
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || `HTTP ${response.status}`)
-      }
-
-      const result: X402ConfirmResponse = await response.json()
-
-      if (!result.payment_verified) {
-        throw new Error('Payment verification failed')
-      }
-
-      // Reset form completely (keep user)
-      setPrompt('')
-      setPriceQuote(null)
-      setPaymentChallenge(null)
-      setTrackId(null)
-      setPaymentProof('')
-      setError(null)
-
-      onSubmitSuccess()
-    } catch (error) {
-      console.error('Failed to confirm payment:', error)
-      setError(error instanceof Error ? error.message : 'Failed to confirm payment')
-    } finally {
-      setIsConfirmingPayment(false)
-    }
+    onSubmitSuccess()
   }
 
-  const generateMockPayment = async () => {
-    if (!paymentChallenge || !trackId) {
-      setError('No payment challenge available')
-      return
-    }
+  const handlePaymentRefresh = () => {
+    console.debug('[submit] payment challenge refresh requested')
 
-    try {
-      // Generate a mock payment proof for testing
-      const mockProof = {
-        transaction_hash: '0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join(''),
-        amount: paymentChallenge.amount,
-        asset: paymentChallenge.asset,
-        chain: paymentChallenge.chain,
-        payTo: paymentChallenge.payTo,
-        nonce: paymentChallenge.nonce,
-        block_number: Math.floor(Math.random() * 1000000) + 5000000,
-        timestamp: Date.now(),
-        proof_type: 'base_sepolia_mock'
-      }
+    // Re-submit to get new challenge
+    setParsedChallenge(null)
+    setShowPaymentModal(false)
+    submitTrack()
+  }
 
-      const mockPaymentProof = btoa(JSON.stringify(mockProof))
-      setPaymentProof(mockPaymentProof)
-      setError(null)
-    } catch (error) {
-      console.error('Failed to generate mock payment:', error)
-      setError('Failed to generate mock payment')
-    }
+  const handlePaymentClose = () => {
+    console.debug('[submit] payment modal closed')
+
+    // Keep challenge in case user wants to continue
+    setShowPaymentModal(false)
   }
 
   return (
@@ -314,7 +279,7 @@ export default function SubmitForm({ onSubmitSuccess }: SubmitFormProps) {
           )}
         </div>
 
-        {priceQuote && !paymentChallenge && (
+        {priceQuote && !parsedChallenge && (
           <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
             <p className="text-blue-800 text-sm">
               Price quote: <strong>${priceQuote.price_usd.toFixed(2)}</strong> for {priceQuote.duration_seconds} seconds
@@ -325,55 +290,30 @@ export default function SubmitForm({ onSubmitSuccess }: SubmitFormProps) {
           </div>
         )}
 
-        {paymentChallenge && (
-          <div className="bg-orange-50 border border-orange-200 rounded-md p-4">
-            <h3 className="font-semibold text-orange-800 mb-2">Payment Required</h3>
-            <div className="text-sm text-orange-700 space-y-2">
-              <p>
-                <strong>Amount:</strong> {(parseInt(paymentChallenge.amount) / 1000000).toFixed(2)} {paymentChallenge.asset}
-              </p>
-              <p>
-                <strong>Pay to:</strong> <code className="bg-orange-100 px-1 rounded text-xs">{paymentChallenge.payTo}</code>
-              </p>
-              <p>
-                <strong>Chain:</strong> {paymentChallenge.chain}
-              </p>
-              <p>
-                <strong>Expires:</strong> {new Date(paymentChallenge.expiresAt).toLocaleString()}
-              </p>
-            </div>
-            
-            <div className="mt-4">
-              <label htmlFor="paymentProof" className="block text-sm font-medium text-orange-700 mb-2">
-                Payment Proof
-              </label>
-              <textarea
-                id="paymentProof"
-                value={paymentProof}
-                onChange={(e) => setPaymentProof(e.target.value)}
-                placeholder="Enter your payment proof (base64 encoded transaction data)"
-                rows={3}
-                className="w-full px-3 py-2 border border-orange-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500 resize-none"
-              />
-              <div className="flex gap-2 mt-2">
-                <button
-                  onClick={generateMockPayment}
-                  className="px-3 py-1 bg-gray-500 text-white rounded-md hover:bg-gray-600 text-sm"
-                >
-                  Generate Mock Payment
-                </button>
-                <button
-                  onClick={confirmPayment}
-                  disabled={isConfirmingPayment || !paymentProof.trim()}
-                  className="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  {isConfirmingPayment ? 'Confirming...' : 'Confirm Payment'}
-                </button>
-              </div>
-            </div>
+        {parsedChallenge && (
+          <div className="bg-orange-50 border border-orange-200 rounded-md p-3">
+            <p className="text-orange-800 text-sm">
+              ⏳ Payment challenge ready. Click "Reopen Payment" to continue.
+            </p>
+            <button
+              onClick={() => setShowPaymentModal(true)}
+              className="mt-2 px-4 py-2 bg-orange-500 text-white rounded-md hover:bg-orange-600 text-sm"
+            >
+              Reopen Payment
+            </button>
           </div>
         )}
       </div>
+
+      {/* Payment Modal */}
+      {showPaymentModal && parsedChallenge && (
+        <PaymentModal
+          challenge={parsedChallenge}
+          onSuccess={handlePaymentSuccess}
+          onRefresh={handlePaymentRefresh}
+          onClose={handlePaymentClose}
+        />
+      )}
     </div>
   )
 }

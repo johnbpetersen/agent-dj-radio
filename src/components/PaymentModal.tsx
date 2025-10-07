@@ -14,7 +14,7 @@ import {
 } from '../lib/x402-utils'
 
 interface PaymentModalProps {
-  xPaymentHeader: string
+  challenge: ParsedXPayment
   onSuccess: (trackId: string) => void
   onRefresh: () => void
   onClose: () => void
@@ -107,8 +107,7 @@ function toErrorStringSync(x: unknown): string {
   return String(x) || 'An unexpected error occurred'
 }
 
-export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: PaymentModalProps) {
-  const [parsed, setParsed] = useState<ParsedXPayment | null>(null)
+export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: PaymentModalProps) {
   const [txHash, setTxHash] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -136,23 +135,12 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
       })
   }, [])
 
-  // Parse header on mount
+  // Initialize countdown from challenge prop
   useEffect(() => {
-    const parsedData = parseXPaymentHeader(xPaymentHeader)
-    if (!parsedData) {
-      setError('Invalid payment challenge format')
-      return
-    }
-    setParsed(parsedData)
-    setCountdown(getExpiryCountdown(parsedData.expiresAt))
-  }, [xPaymentHeader])
-
-  // Countdown timer for challenge expiry
-  useEffect(() => {
-    if (!parsed) return
+    setCountdown(getExpiryCountdown(challenge.expiresAt))
 
     const interval = setInterval(() => {
-      const remaining = getExpiryCountdown(parsed.expiresAt)
+      const remaining = getExpiryCountdown(challenge.expiresAt)
       setCountdown(remaining)
 
       if (remaining <= 0) {
@@ -161,7 +149,7 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
     }, 1000)
 
     return () => clearInterval(interval)
-  }, [parsed])
+  }, [challenge.expiresAt])
 
   // Countdown timer for rate limit retry
   useEffect(() => {
@@ -186,10 +174,8 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
   }, [retryAfter])
 
   const handleCopyAddress = async () => {
-    if (!parsed) return
-
     try {
-      await navigator.clipboard.writeText(parsed.payTo)
+      await navigator.clipboard.writeText(challenge.payTo)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch (err) {
@@ -198,8 +184,6 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
   }
 
   const handleVerifyPayment = async () => {
-    if (!parsed) return
-
     // Client-side validation
     if (!validateTxHash(txHash)) {
       setError('Invalid transaction hash format. Must be 0x followed by 64 hexadecimal characters.')
@@ -215,16 +199,20 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
     setIsSubmitting(true)
     setError(null)
 
+    // Debug log for development
+    const payload = {
+      challengeId: challenge.challengeId,
+      txHash: txHash.trim()
+    }
+    console.debug('[confirm] payload', payload)
+
     try {
       const response = await fetch('/api/queue/confirm', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          challengeId: parsed.challengeId,
-          txHash: txHash.trim()
-        })
+        body: JSON.stringify(payload)
       })
 
       // Handle 429 (rate limited) specially
@@ -270,10 +258,10 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
 
         switch (errorCode) {
           case 'WRONG_ASSET':
-            displayError = `${baseError} (Expected: ${parsed.asset})`
+            displayError = `${baseError} (Expected: ${challenge.asset})`
             break
           case 'WRONG_CHAIN':
-            displayError = `${baseError} (Expected: ${getChainDisplayName(parsed.chain)})`
+            displayError = `${baseError} (Expected: ${getChainDisplayName(challenge.chain)})`
             break
           case 'NO_MATCH':
             displayError = `${baseError} (Check transaction hash)`
@@ -315,22 +303,10 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
     onClose()
   }
 
-  if (!parsed) {
-    return (
-      <div className="modal-overlay">
-        <div className="modal-content">
-          <h2>Payment Required</h2>
-          <p className="error">{error || 'Loading payment details...'}</p>
-          <button onClick={onClose}>Close</button>
-        </div>
-      </div>
-    )
-  }
-
   const isExpired = countdown <= 0
-  const formattedAmount = formatUSDCAmount(parsed.amount)
-  const chainName = getChainDisplayName(parsed.chain)
-  const explorerUrl = txHash && validateTxHash(txHash) ? getBlockExplorerUrl(parsed.chain, txHash) : null
+  const formattedAmount = formatUSDCAmount(challenge.amount)
+  const chainName = getChainDisplayName(challenge.chain)
+  const explorerUrl = txHash && validateTxHash(txHash) ? getBlockExplorerUrl(challenge.chain, txHash) : null
 
   return (
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
