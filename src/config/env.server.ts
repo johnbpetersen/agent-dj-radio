@@ -1,16 +1,15 @@
 // src/config/env.server.ts
 // Server-only environment configuration (Node.js APIs allowed)
 
-// Load .env.local first (highest precedence), then .env (fallback)
-import fs from 'node:fs'
+// Load .env first, then .env.local with override (correct precedence)
 import path from 'node:path'
 import dotenv from 'dotenv'
 
-const envLocal = path.resolve(process.cwd(), '.env.local')
-if (fs.existsSync(envLocal)) {
-  dotenv.config({ path: envLocal })
-}
-dotenv.config() // Load .env as fallback
+// 1. Load .env first (base config)
+dotenv.config({ path: path.resolve(process.cwd(), '.env'), override: false })
+
+// 2. Load .env.local second (overrides .env values)
+dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: true })
 
 import { z } from 'zod'
 
@@ -30,6 +29,19 @@ const jwtTokenSchema = z.string().min(10).refine(
 )
 const hexAddressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Must be a valid hex address')
 
+// Custom boolean parser that handles string "false" correctly
+// z.coerce.boolean() converts ALL non-empty strings to true, even "false"!
+const booleanFromString = z
+  .union([z.boolean(), z.string()])
+  .transform((val) => {
+    if (typeof val === 'boolean') return val
+    const lower = val.toLowerCase().trim()
+    if (lower === 'true' || lower === '1') return true
+    if (lower === 'false' || lower === '0' || lower === '') return false
+    // Any other string treated as truthy
+    return Boolean(val)
+  })
+
 // Server environment schema (Node.js process.env)
 const serverSchema = z.object({
   // Core configuration
@@ -41,8 +53,8 @@ const serverSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: jwtTokenSchema.optional(),
 
   // Feature flags
-  ENABLE_MOCK_PAYMENTS: z.coerce.boolean().default(STAGE === 'dev'),
-  ENABLE_X402: z.coerce.boolean().default(STAGE === 'alpha'),
+  ENABLE_MOCK_PAYMENTS: booleanFromString.default(STAGE === 'dev'),
+  ENABLE_X402: booleanFromString.default(STAGE === 'alpha'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 
   // X402 configuration (required in alpha)
@@ -57,7 +69,7 @@ const serverSchema = z.object({
 
   // Optional features
   ADMIN_TOKEN: z.string().optional(),
-  ALLOW_ENV_WARNINGS: z.coerce.boolean().default(false),
+  ALLOW_ENV_WARNINGS: booleanFromString.default(false),
 }).refine((data) => {
   // Stage-specific validations
   if (data.STAGE === 'alpha') {
@@ -127,3 +139,12 @@ export const isDev = serverEnv.STAGE === 'dev'
 export const isStaging = serverEnv.STAGE === 'staging'
 export const isAlpha = serverEnv.STAGE === 'alpha'
 export const isProduction = isStaging || isAlpha
+
+// Debug logging for x402 feature flags (only when LOG_LEVEL=debug)
+if (serverEnv.LOG_LEVEL === 'debug') {
+  console.log('[env] x402 feature flags:', {
+    x402Enabled: serverEnv.ENABLE_X402,
+    mockEnabled: serverEnv.ENABLE_MOCK_PAYMENTS,
+    stage: serverEnv.STAGE
+  })
+}
