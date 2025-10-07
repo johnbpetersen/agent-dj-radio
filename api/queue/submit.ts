@@ -162,6 +162,18 @@ async function submitHandler(req: VercelRequest, res: VercelResponse): Promise<v
     // Convert amount string to bigint for storage
     const amountAtomic = BigInt(challenge.amount)
 
+    // HTTP 402 with X-PAYMENT header (semicolon-delimited format)
+    // Build header BEFORE storing to ensure it's exactly what we send
+    const xPaymentHeader = [
+      `payTo=${challenge.payTo}`,
+      `amount=${challenge.amount}`,
+      `asset=${challenge.asset}`,
+      `chain=${challenge.chain}`,
+      `expiresAt=${challenge.expiresAt}`,
+      `challengeId=${challengeId}`,
+      `nonce=${challenge.nonce}`
+    ].join('; ')
+
     // Persist challenge in payment_challenges table
     const { error: persistErr } = await supabaseAdmin
       .from('payment_challenges')
@@ -174,7 +186,8 @@ async function submitHandler(req: VercelRequest, res: VercelResponse): Promise<v
         chain: challenge.chain,
         amount_atomic: amountAtomic.toString(), // Store as string, DB casts to bigint
         nonce: challenge.nonce,
-        expires_at: challenge.expiresAt
+        expires_at: challenge.expiresAt,
+        x_payment_header: xPaymentHeader // Store raw header for facilitator
       })
 
     if (persistErr) {
@@ -204,17 +217,6 @@ async function submitHandler(req: VercelRequest, res: VercelResponse): Promise<v
       challenge,
       track_id: track.id
     }
-
-    // HTTP 402 with X-PAYMENT header (semicolon-delimited format)
-    const xPaymentHeader = [
-      `payTo=${challenge.payTo}`,
-      `amount=${challenge.amount}`,
-      `asset=${challenge.asset}`,
-      `chain=${challenge.chain}`,
-      `expiresAt=${challenge.expiresAt}`,
-      `challengeId=${challengeId}`,
-      `nonce=${challenge.nonce}`
-    ].join('; ')
 
     res.setHeader('Cache-Control', 'no-store')
     res.setHeader('X-PAYMENT', xPaymentHeader)

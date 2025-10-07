@@ -149,11 +149,23 @@ export const isAlpha = serverEnv.STAGE === 'alpha'
 export const isProduction = isStaging || isAlpha
 
 // Startup log: payment configuration (non-secret)
-const hasCDPKeys = !!(serverEnv.CDP_API_KEY_ID && serverEnv.CDP_API_KEY_SECRET && serverEnv.X402_PROVIDER_URL)
+const hasFacilitatorUrl = !!serverEnv.X402_PROVIDER_URL
+const hasCDPKeys = !!(serverEnv.CDP_API_KEY_ID && serverEnv.CDP_API_KEY_SECRET)
+
+let paymentMode: 'facilitator' | 'cdp' | 'mock' | 'none' = 'none'
+if (serverEnv.ENABLE_X402 && hasFacilitatorUrl) {
+  paymentMode = 'facilitator'
+} else if (serverEnv.ENABLE_X402 && hasCDPKeys) {
+  paymentMode = 'cdp'
+} else if (serverEnv.ENABLE_MOCK_PAYMENTS) {
+  paymentMode = 'mock'
+}
+
 console.log('[startup] Payment configuration:', {
+  mode: paymentMode,
   x402Enabled: serverEnv.ENABLE_X402,
   mockEnabled: serverEnv.ENABLE_MOCK_PAYMENTS,
+  facilitatorUrl: serverEnv.X402_PROVIDER_URL || 'none',
   hasCDPKeys,
-  providerURL: serverEnv.X402_PROVIDER_URL ? 'set' : 'missing',
   stage: serverEnv.STAGE
 })

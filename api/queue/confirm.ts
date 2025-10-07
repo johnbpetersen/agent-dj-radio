@@ -5,6 +5,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { z, ZodError } from 'zod'
 import { supabaseAdmin } from '../_shared/supabase.js'
 import { verifyPayment } from '../_shared/payments/x402-cdp.js'
+import { verifyWithFacilitator } from '../_shared/payments/x402-facilitator.js'
 import { serverEnv } from '../../src/config/env.server.js'
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
 import { errorTracker } from '../../src/lib/error-tracking.js'
@@ -224,14 +225,46 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       return
     }
 
-    // 4. Branch: CDP verification or mock
+    // 4. Branch: Facilitator, CDP, or mock verification
     let verificationResult: { ok: true; amountPaidAtomic: number } | { ok: false; code: string; detail?: string }
 
-    // Provider selection: CDP only when all keys are present
-    const hasCDPKeys = !!(serverEnv.CDP_API_KEY_ID && serverEnv.CDP_API_KEY_SECRET && serverEnv.X402_PROVIDER_URL)
+    // Provider selection (priority: facilitator > cdp > mock > none)
+    const hasFacilitatorUrl = !!serverEnv.X402_PROVIDER_URL
+    const hasCDPKeys = !!(serverEnv.CDP_API_KEY_ID && serverEnv.CDP_API_KEY_SECRET)
 
-    if (serverEnv.ENABLE_X402 && hasCDPKeys) {
-      // Real CDP verification
+    if (serverEnv.ENABLE_X402 && hasFacilitatorUrl) {
+      // Facilitator verification (x402.org or custom)
+      logger.info('queue/confirm using facilitator verification', {
+        requestId,
+        challengeId,
+        facilitatorUrl: serverEnv.X402_PROVIDER_URL
+      })
+
+      // Ensure we have the x_payment_header from challenge
+      if (!challenge.x_payment_header) {
+        logger.error('queue/confirm missing x_payment_header', { requestId, challengeId })
+        res.status(500).json({
+          error: {
+            code: 'INTERNAL',
+            message: 'Payment challenge missing required header data'
+          },
+          requestId
+        })
+        return
+      }
+
+      verificationResult = await verifyWithFacilitator({
+        facilitatorUrl: serverEnv.X402_PROVIDER_URL,
+        xPaymentHeader: challenge.x_payment_header,
+        txHash,
+        chain: challenge.chain,
+        asset: challenge.asset,
+        payTo: challenge.pay_to,
+        amountAtomic: Number(challenge.amount_atomic),
+        challengeId
+      })
+    } else if (serverEnv.ENABLE_X402 && hasCDPKeys) {
+      // Direct CDP verification
       logger.info('queue/confirm using CDP verification', { requestId, challengeId })
       verificationResult = await verifyPayment({
         txHash,
@@ -250,6 +283,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       logger.error('queue/confirm payments disabled', {
         requestId,
         x402Enabled: serverEnv.ENABLE_X402,
+        hasFacilitatorUrl,
         hasCDPKeys,
         mockEnabled: serverEnv.ENABLE_MOCK_PAYMENTS
       })
@@ -299,12 +333,22 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
     }
 
     // 6. Verification successful! Insert confirmation record
+    // Determine provider based on which mode was used
+    let provider: string
+    if (hasFacilitatorUrl) {
+      provider = 'facilitator'
+    } else if (hasCDPKeys) {
+      provider = 'cdp'
+    } else {
+      provider = 'mock'
+    }
+
     const { data: confirmation, error: confirmInsertErr } = await supabaseAdmin
       .from('payment_confirmations')
       .insert({
         challenge_id: challengeId,
         tx_hash: txHash,
-        provider: serverEnv.ENABLE_X402 ? 'cdp' : 'mock',
+        provider,
         amount_paid_atomic: verificationResult.amountPaidAtomic,
         provider_raw: {
           verified_at: new Date().toISOString(),
@@ -398,7 +442,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
           tx_hash: txHash,
           confirmed_at: new Date().toISOString(),
           amount_paid: verificationResult.amountPaidAtomic,
-          provider: serverEnv.ENABLE_X402 ? 'cdp' : 'mock'
+          provider
         }
       })
       .eq('id', challenge.track_id)
