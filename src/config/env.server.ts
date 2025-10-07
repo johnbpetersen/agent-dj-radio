@@ -49,6 +49,7 @@ const serverSchema = z.object({
   X402_PROVIDER_URL: urlSchema.optional(),
   X402_API_KEY: z.string().optional(),
   X402_CHAIN: z.string().default('base-sepolia'),
+  X402_ACCEPTED_ASSET: z.string().default('USDC'),
   X402_RECEIVING_ADDRESS: hexAddressSchema.optional(),
 
   // ElevenLabs configuration (required in alpha)

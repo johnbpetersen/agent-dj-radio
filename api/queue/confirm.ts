@@ -1,205 +1,362 @@
+// api/queue/confirm.ts
+// Verify x402 payment and transition track from PENDING_PAYMENT to PAID
+
 import type { VercelRequest, VercelResponse } from '@vercel/node'
+import { z } from 'zod'
 import { supabaseAdmin } from '../_shared/supabase.js'
-import { getTrackById, confirmTrackPayment } from '../../src/server/db.js'
-import { verifyPayment, buildChallenge } from '../../src/server/x402.js'
-import { broadcastQueueUpdate } from '../../src/server/realtime.js'
+import { verifyPayment } from '../_shared/payments/x402-cdp.js'
+import { serverEnv } from '../../src/config/env.server.js'
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
-import { errorTracker, handleApiError } from '../../src/lib/error-tracking.js'
-import { auditPaymentSubmitted, auditPaymentConfirmed } from '../../src/server/x402-audit.js'
+import { errorTracker } from '../../src/lib/error-tracking.js'
+import { broadcastQueueUpdate } from '../../src/server/realtime.js'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
 import { sanitizeForClient } from '../_shared/security.js'
-import type { X402Challenge, X402ConfirmRequest, X402ConfirmResponse } from '../../src/types'
 
-// Best-effort client IP extraction for Vercel/Node
-function getClientIp(req: VercelRequest): string | undefined {
-  const h = req.headers['x-forwarded-for']
-  const forwarded = (Array.isArray(h) ? h[0] : h) as string | undefined
-  const viaHeader = forwarded?.split(',')[0]?.trim()
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const viaSocket = (req as any).socket?.remoteAddress as string | undefined
-  return viaHeader || viaSocket || undefined
+// Request validation schema
+const confirmRequestSchema = z.object({
+  challengeId: z.string().uuid('Invalid challenge ID format'),
+  txHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/, 'Invalid transaction hash format')
+})
+
+// Clock skew tolerance (±60 seconds)
+const CLOCK_SKEW_MS = 60 * 1000
+
+/**
+ * Mock payment verification for development/staging
+ */
+async function verifyMockPayment(
+  txHash: string,
+  amountAtomic: number,
+  challengeId: string
+): Promise<{ ok: true; amountPaidAtomic: number } | { ok: false; code: string; detail?: string }> {
+  // Simple mock validation: tx hash must start with 0x and be 66 chars
+  if (!txHash.match(/^0x[0-9a-fA-F]{64}$/)) {
+    return { ok: false, code: 'NO_MATCH', detail: 'Invalid mock transaction hash format' }
+  }
+
+  // Mock always pays exact amount
+  logger.info('Mock payment verification (always succeeds)', { challengeId, txHash, amountAtomic })
+  return { ok: true, amountPaidAtomic: amountAtomic }
 }
 
 async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
-  const correlationId = generateCorrelationId()
+  const requestId = generateCorrelationId()
   const startTime = Date.now()
 
   if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method not allowed' })
+    res.status(405).json({ error: 'Method not allowed', requestId })
     return
   }
 
-  logger.info('queue/confirm request', { correlationId })
+  logger.info('queue/confirm request received', { requestId })
 
   try {
-    const { track_id, payment_proof }: X402ConfirmRequest = req.body || {}
-
-    // Basic validation
-    if (!track_id) {
-      logger.warn('queue/confirm missing track_id', { correlationId })
-      res.status(400).json({ error: 'Track ID is required' })
-      return
-    }
-    if (!payment_proof) {
-      logger.warn('queue/confirm missing payment_proof', { correlationId, trackId: track_id })
-      res.status(400).json({ error: 'Payment proof is required' })
-      return
-    }
-
-    // Audit: payment submitted
-    await auditPaymentSubmitted(
-      supabaseAdmin,
-      track_id,
-      payment_proof,
-      correlationId,
-      req.headers['user-agent'] as string | undefined,
-      getClientIp(req)
-    )
-
-    // Load track
-    const track = await getTrackById(supabaseAdmin, track_id)
-
-    if (!track) {
-      logger.warn('queue/confirm track not found', { correlationId, trackId: track_id })
-      res.status(404).json({ error: 'Track not found' })
-      return
-    }
-
-    // Idempotent success if already paid
-    if (track.status === 'PAID') {
-      logger.info('queue/confirm idempotent success (already PAID)', {
-        correlationId,
-        trackId: track.id
+    // Validate request body
+    const parseResult = confirmRequestSchema.safeParse(req.body)
+    if (!parseResult.success) {
+      const errors = parseResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')
+      logger.warn('queue/confirm validation failed', { requestId, errors })
+      res.status(400).json({
+        error: { code: 'VALIDATION_ERROR', message: `Invalid request: ${errors}` },
+        requestId
       })
-      const response: X402ConfirmResponse = {
-        track: sanitizeForClient(track, ['eleven_request_id', 'x402_payment_tx']),
-        payment_verified: true
-      }
-      res.status(200).json(response)
       return
     }
 
-    // Only allow confirm for PENDING_PAYMENT
-    if (track.status !== 'PENDING_PAYMENT') {
-      logger.warn('queue/confirm invalid status', {
-        correlationId,
-        trackId: track.id,
-        status: track.status
+    const { challengeId, txHash } = parseResult.data
+
+    logger.info('queue/confirm processing', { requestId, challengeId, txHash })
+
+    // 1. Check for existing confirmation (idempotency by challengeId OR tx_hash)
+    const { data: existingConfirmation, error: confirmCheckErr } = await supabaseAdmin
+      .from('payment_confirmations')
+      .select('*, payment_challenges!inner(track_id, user_id)')
+      .or(`challenge_id.eq.${challengeId},tx_hash.eq.${txHash}`)
+      .single()
+
+    if (confirmCheckErr && confirmCheckErr.code !== 'PGRST116') {
+      // PGRST116 = no rows, which is fine; anything else is an error
+      logger.error('queue/confirm error checking existing confirmation', { requestId, error: confirmCheckErr })
+      throw new Error(`Database error: ${confirmCheckErr.message}`)
+    }
+
+    if (existingConfirmation) {
+      // Idempotent response: return existing confirmation
+      const trackId = (existingConfirmation as any).payment_challenges.track_id
+      logger.info('queue/confirm idempotent (already confirmed)', {
+        requestId,
+        challengeId,
+        txHash,
+        trackId,
+        existingConfirmationId: existingConfirmation.id
       })
-      res.status(400).json({ error: `Cannot confirm payment for track with status: ${track.status}` })
+
+      // Load track to return current status
+      const { data: track } = await supabaseAdmin
+        .from('tracks')
+        .select('*')
+        .eq('id', trackId)
+        .single()
+
+      res.status(200).json({
+        ok: true,
+        trackId,
+        status: track?.status || 'PAID',
+        requestId
+      })
       return
     }
 
-    // Rehydrate the ORIGINAL challenge if it was persisted on the track.
-    // Fall back to rebuilding if missing (should be rare).
-    // We access via "any" to avoid widening your Track type.
-    const t: any = track
-    let challenge: X402Challenge | null = null
+    // 2. Load challenge by challengeId
+    const { data: challenge, error: challengeErr } = await supabaseAdmin
+      .from('payment_challenges')
+      .select('*')
+      .eq('challenge_id', challengeId)
+      .single()
 
-    if (
-      t.x402_challenge_nonce &&
-      t.x402_challenge_amount &&
-      t.x402_challenge_asset &&
-      t.x402_challenge_chain &&
-      t.x402_challenge_pay_to &&
-      t.x402_challenge_expires_at
-    ) {
-      challenge = {
-        amount: String(t.x402_challenge_amount),
-        asset: String(t.x402_challenge_asset),
-        chain: String(t.x402_challenge_chain),
-        payTo: String(t.x402_challenge_pay_to),
-        nonce: String(t.x402_challenge_nonce),
-        expiresAt: new Date(t.x402_challenge_expires_at).toISOString()
-      }
-      logger.info('queue/confirm using persisted challenge', { correlationId, trackId: track.id })
-    } else {
-      const rebuilt = await buildChallenge({ priceUsd: track.price_usd, trackId: track.id })
-      challenge = rebuilt.challenge
-      logger.warn('queue/confirm had to rebuild challenge (not persisted)', {
-        correlationId,
-        trackId: track.id
+    if (challengeErr || !challenge) {
+      logger.warn('queue/confirm challenge not found', { requestId, challengeId })
+      res.status(404).json({
+        error: { code: 'NO_MATCH', message: 'Payment challenge not found' },
+        requestId
       })
+      return
     }
 
-    // Verify payment
-    const verification = await verifyPayment({
-      challenge,
-      paymentProof: payment_proof,
-      trackId: track.id
-    })
-
-    if (!verification.verified) {
-      logger.warn('queue/confirm verification failed', {
-        correlationId,
-        trackId: track.id,
-        error: verification.error
+    // 3. Check expiry with ±60s clock skew tolerance
+    const now = Date.now()
+    const expiresAt = new Date(challenge.expires_at).getTime()
+    if (now > expiresAt + CLOCK_SKEW_MS) {
+      logger.warn('queue/confirm challenge expired', {
+        requestId,
+        challengeId,
+        expiresAt: challenge.expires_at,
+        now: new Date(now).toISOString(),
+        skewAllowance: `${CLOCK_SKEW_MS / 1000}s`
       })
       res.status(400).json({
-        error: 'Payment verification failed',
-        details: verification.error
+        error: {
+          code: 'EXPIRED',
+          message: 'Payment challenge has expired. Please refresh and try again.'
+        },
+        requestId
       })
       return
     }
 
-    // Update track -> PAID with proof
-    const paidTrack = await confirmTrackPayment(supabaseAdmin, track.id, verification.proofData)
+    // 4. Branch: CDP verification or mock
+    let verificationResult: { ok: true; amountPaidAtomic: number } | { ok: false; code: string; detail?: string }
 
-    if (!paidTrack) {
-      const err = new Error(`Failed to update track ${track.id} to PAID`)
-      errorTracker.trackError(err, { operation: 'confirm-payment', correlationId, trackId: track.id })
-      res.status(500).json({ error: 'Failed to confirm payment' })
+    if (serverEnv.ENABLE_X402 && serverEnv.X402_API_KEY) {
+      // Real CDP verification
+      logger.info('queue/confirm using CDP verification', { requestId, challengeId })
+      verificationResult = await verifyPayment({
+        txHash,
+        payTo: challenge.pay_to,
+        amountAtomic: Number(challenge.amount_atomic),
+        asset: challenge.asset,
+        chain: challenge.chain,
+        challengeId
+      })
+    } else if (serverEnv.ENABLE_MOCK_PAYMENTS) {
+      // Mock verification
+      logger.info('queue/confirm using mock verification', { requestId, challengeId })
+      verificationResult = await verifyMockPayment(txHash, Number(challenge.amount_atomic), challengeId)
+    } else {
+      // Neither enabled - configuration error
+      logger.error('queue/confirm no payment verification method enabled', { requestId })
+      res.status(500).json({
+        error: {
+          code: 'PROVIDER_ERROR',
+          message: 'Payment verification is not configured'
+        },
+        requestId
+      })
       return
+    }
+
+    // 5. Handle verification failure
+    if (!verificationResult.ok) {
+      logger.warn('queue/confirm verification failed', {
+        requestId,
+        challengeId,
+        txHash,
+        code: verificationResult.code,
+        detail: verificationResult.detail
+      })
+
+      // Audit log (structured)
+      logger.info('queue/confirm audit: verification failed', {
+        requestId,
+        challengeId,
+        txHash,
+        userId: challenge.user_id,
+        trackId: challenge.track_id,
+        amountAtomic: challenge.amount_atomic,
+        asset: challenge.asset,
+        chain: challenge.chain,
+        verdict: 'FAILED',
+        code: verificationResult.code
+      })
+
+      res.status(400).json({
+        error: {
+          code: verificationResult.code,
+          message: verificationResult.detail || 'Payment verification failed'
+        },
+        requestId
+      })
+      return
+    }
+
+    // 6. Verification successful! Insert confirmation record
+    const { data: confirmation, error: confirmInsertErr } = await supabaseAdmin
+      .from('payment_confirmations')
+      .insert({
+        challenge_id: challengeId,
+        tx_hash: txHash,
+        provider: serverEnv.ENABLE_X402 ? 'cdp' : 'mock',
+        amount_paid_atomic: verificationResult.amountPaidAtomic,
+        provider_raw: {
+          verified_at: new Date().toISOString(),
+          request_id: requestId
+        }
+      })
+      .select()
+      .single()
+
+    if (confirmInsertErr) {
+      // Check if this is a uniqueness violation (race condition)
+      if (confirmInsertErr.code === '23505') {
+        // Concurrent request won - re-query and return existing
+        logger.info('queue/confirm concurrent confirmation detected', { requestId, challengeId, txHash })
+        const { data: existing } = await supabaseAdmin
+          .from('payment_confirmations')
+          .select('*, payment_challenges!inner(track_id)')
+          .eq('challenge_id', challengeId)
+          .single()
+
+        if (existing) {
+          const trackId = (existing as any).payment_challenges.track_id
+          res.status(200).json({
+            ok: true,
+            trackId,
+            status: 'PAID',
+            requestId
+          })
+          return
+        }
+      }
+
+      // Other database error
+      logger.error('queue/confirm failed to insert confirmation', {
+        requestId,
+        challengeId,
+        error: confirmInsertErr
+      })
+      throw new Error(`Failed to record payment confirmation: ${confirmInsertErr.message}`)
+    }
+
+    // 7. Update challenge.confirmed_at
+    await supabaseAdmin
+      .from('payment_challenges')
+      .update({ confirmed_at: new Date().toISOString() })
+      .eq('challenge_id', challengeId)
+
+    // 8. Transition track to PAID status
+    const { data: paidTrack, error: trackUpdateErr } = await supabaseAdmin
+      .from('tracks')
+      .update({
+        status: 'PAID',
+        x402_payment_tx: {
+          tx_hash: txHash,
+          confirmed_at: new Date().toISOString(),
+          amount_paid: verificationResult.amountPaidAtomic,
+          provider: serverEnv.ENABLE_X402 ? 'cdp' : 'mock'
+        }
+      })
+      .eq('id', challenge.track_id)
+      .select()
+      .single()
+
+    if (trackUpdateErr || !paidTrack) {
+      logger.error('queue/confirm failed to update track', {
+        requestId,
+        trackId: challenge.track_id,
+        error: trackUpdateErr
+      })
+      throw new Error(`Failed to update track status: ${trackUpdateErr?.message}`)
     }
 
     logger.info('queue/confirm payment confirmed', {
-      correlationId,
-      trackId: track.id,
-      transactionHash: verification.proofData?.transaction_hash,
+      requestId,
+      challengeId,
+      txHash,
+      trackId: challenge.track_id,
+      amountPaidAtomic: verificationResult.amountPaidAtomic,
       durationMs: Date.now() - startTime
     })
 
-    // Audit: confirmed
-    await auditPaymentConfirmed(
-      supabaseAdmin,
-      track.id,
-      verification.proofData?.transaction_hash || 'unknown',
-      correlationId
-    )
+    // Audit log (structured, no secrets)
+    logger.info('queue/confirm audit: success', {
+      requestId,
+      challengeId,
+      txHash,
+      userId: challenge.user_id,
+      trackId: challenge.track_id,
+      amountAtomic: challenge.amount_atomic,
+      amountPaidAtomic: verificationResult.amountPaidAtomic,
+      asset: challenge.asset,
+      chain: challenge.chain,
+      verdict: 'SUCCESS'
+    })
 
-    // Broadcast to UI
+    // 9. Broadcast queue update
     await broadcastQueueUpdate({
       queue: [paidTrack],
       action: 'updated',
       trackId: paidTrack.id
     })
 
-    // 🔔 Trigger the generator to process PAID tracks (fire-and-forget).
-    // This mirrors the non-x402 path in /api/queue/submit.
+    // 10. Enqueue generation (fire-and-forget, non-blocking)
     try {
       const baseUrl = process.env.VITE_SITE_URL || 'http://localhost:5173'
       const workerUrl = `${baseUrl}/api/worker/generate?track_id=${encodeURIComponent(paidTrack.id)}`
       fetch(workerUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
-      }).catch(err => logger.warn('worker trigger failed (non-blocking)', { correlationId, error: err?.message }))
+      }).catch(err =>
+        logger.warn('queue/confirm worker trigger failed (non-blocking)', {
+          requestId,
+          error: err?.message
+        })
+      )
     } catch (err) {
-      logger.warn('worker trigger error (non-blocking)', { correlationId, error: (err as Error)?.message })
+      logger.warn('queue/confirm worker trigger error (non-blocking)', {
+        requestId,
+        error: (err as Error)?.message
+      })
     }
 
-    const response: X402ConfirmResponse = {
-      track: sanitizeForClient(paidTrack, ['eleven_request_id', 'x402_payment_tx']),
-      payment_verified: true
-    }
-    res.status(200).json(response)
+    // 11. Return success response
+    res.status(200).json({
+      ok: true,
+      trackId: paidTrack.id,
+      status: 'PAID',
+      requestId
+    })
   } catch (error) {
-    const errorResponse = handleApiError(error, 'queue/confirm', { correlationId })
-    logger.error(
-      'queue/confirm unhandled error',
-      { correlationId },
-      error instanceof Error ? error : new Error(String(error))
-    )
-    res.status(500).json(errorResponse)
+    const err = error instanceof Error ? error : new Error(String(error))
+    errorTracker.trackError(err, { operation: 'queue/confirm', requestId })
+    logger.error('queue/confirm unhandled error', { requestId }, err)
+
+    res.status(500).json({
+      error: {
+        code: 'PROVIDER_ERROR',
+        message: 'Internal server error during payment confirmation'
+      },
+      requestId
+    })
   }
 }
 

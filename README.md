@@ -46,22 +46,95 @@ graph LR
     J --> K[Station Playback]
 ```
 
-## Payment Flow
+## Payment Flow (Alpha) 💳
 
-When `ENABLE_X402=true`, track submission returns HTTP 402 with payment challenge:
+### Overview
 
-**Headers:**
-- `X-PAYMENT`: JSON challenge data
-- `X-Payment-Required`: x402
-- `Access-Control-Expose-Headers`: X-PAYMENT
+Agent DJ Radio supports real cryptocurrency payments via the x402 protocol for track submissions. Payments are verified on **Base Sepolia** testnet using **USDC** (6 decimals).
 
-**Mock Development:**
-- Leave `X402_API_KEY` unset for mock payments
-- Use `/api/x402/mock-proof` endpoint for testing
+### Quick Setup
 
-**Real Payments:**
-- Set `X402_API_KEY` for Coinbase CDP integration
-- Requires funded Base Sepolia wallet
+**Development/Staging (Mock Payments):**
+```bash
+ENABLE_MOCK_PAYMENTS=true
+ENABLE_X402=false
+```
+
+**Alpha/Production (Real Payments):**
+```bash
+ENABLE_X402=true
+ENABLE_MOCK_PAYMENTS=false
+X402_PROVIDER_URL=https://api.cdp.coinbase.com/x402
+X402_API_KEY=your-coinbase-cdp-api-key
+X402_CHAIN=base-sepolia
+X402_ACCEPTED_ASSET=USDC
+X402_RECEIVING_ADDRESS=0x... # Your Base Sepolia address
+```
+
+### How It Works
+
+1. **Submit Track** → Returns HTTP 402 with `X-PAYMENT` header
+2. **X-PAYMENT Header Format** (semicolon-delimited):
+   ```
+   payTo=0x...; amount=150000; asset=USDC; chain=base-sepolia;
+   expiresAt=2025-10-07T12:34:56Z; challengeId=uuid; nonce=abc123
+   ```
+3. **User Pays** → Send USDC to `payTo` address on Base Sepolia
+4. **Verify Payment** → POST `/api/queue/confirm` with `{ challengeId, txHash }`
+5. **Track Queued** → Returns 200, track moves to PAID → GENERATING → READY
+
+### Payment Modal
+
+The `PaymentModal` component handles the user flow:
+- Displays payment amount in USDC (e.g., "0.15 USDC")
+- Shows countdown to challenge expiry (10 minutes)
+- Copy-to-clipboard for payment address
+- Transaction hash input with validation
+- Error handling for all failure modes
+- "Refresh challenge" button if expired
+
+### Error Codes
+
+| Code | Meaning | User Action |
+|------|---------|-------------|
+| `WRONG_AMOUNT` | Insufficient payment | Send full amount |
+| `WRONG_ASSET` | Wrong token (not USDC) | Send USDC instead |
+| `WRONG_CHAIN` | Wrong network | Use Base Sepolia |
+| `NO_MATCH` | Transaction not found | Check tx hash |
+| `EXPIRED` | Challenge expired (>10min) | Refresh challenge |
+| `PROVIDER_ERROR` | CDP API issue | Retry later |
+
+### Demo Flow
+
+1. Get Base Sepolia testnet USDC from faucet
+2. Submit a track (e.g., 60s @ $0.05 = 0.05 USDC = 50000 atomic units)
+3. Copy payment address from modal
+4. Send USDC via MetaMask/Coinbase Wallet
+5. Copy transaction hash
+6. Paste into modal and click "Verify Payment"
+7. Track appears in queue once verified
+
+### Idempotency
+
+Payment confirmations are idempotent on both `challengeId` and `txHash`:
+- Duplicate submissions return 200 with same result
+- Database unique constraints prevent double-spending
+- Safe to retry on network errors
+
+### Testing
+
+Run client-side parsing tests:
+```bash
+npm test tests/client/x402-parse.test.ts
+```
+
+Mock a payment locally:
+```bash
+# Generate valid mock transaction hash (0x + 64 hex chars)
+curl -X POST http://localhost:3001/api/queue/confirm \
+  -H "Content-Type: application/json" \
+  -d '{"challengeId":"your-uuid","txHash":"0x1234..."}'
+```
 
 ## Key Features
 

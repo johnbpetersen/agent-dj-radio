@@ -156,12 +156,38 @@ async function submitHandler(req: VercelRequest, res: VercelResponse): Promise<v
       trackId: track.id
     })
 
-    // Persist challenge on the track (so confirm can rebuild/inspect)
+    // Generate challengeId for payment_challenges table
+    const challengeId = crypto.randomUUID()
+
+    // Convert amount string to bigint for storage
+    const amountAtomic = BigInt(challenge.amount)
+
+    // Persist challenge in payment_challenges table
     const { error: persistErr } = await supabaseAdmin
+      .from('payment_challenges')
+      .insert({
+        challenge_id: challengeId,
+        track_id: track.id,
+        user_id: user_id,
+        pay_to: challenge.payTo,
+        asset: challenge.asset,
+        chain: challenge.chain,
+        amount_atomic: amountAtomic.toString(), // Store as string, DB casts to bigint
+        nonce: challenge.nonce,
+        expires_at: challenge.expiresAt
+      })
+
+    if (persistErr) {
+      console.error('[submit] failed to persist payment challenge:', persistErr.message)
+      res.status(500).json({ error: 'Failed to create payment challenge' })
+      return
+    }
+
+    // Also persist on track for backward compatibility (optional)
+    await supabaseAdmin
       .from('tracks')
       .update({
         x402_challenge_nonce: challenge.nonce,
-        // store amount as text; PostgREST casts to bigint on the DB side
         x402_challenge_amount: challenge.amount,
         x402_challenge_asset: challenge.asset,
         x402_challenge_chain: challenge.chain,
@@ -169,10 +195,6 @@ async function submitHandler(req: VercelRequest, res: VercelResponse): Promise<v
         x402_challenge_expires_at: challenge.expiresAt
       })
       .eq('id', track.id)
-
-    if (persistErr) {
-      console.warn('[submit] failed to persist x402 challenge:', persistErr.message)
-    }
 
     // Record submit + update last_submit_at
     recordSubmit({ userId: user_id })
@@ -183,13 +205,19 @@ async function submitHandler(req: VercelRequest, res: VercelResponse): Promise<v
       track_id: track.id
     }
 
-    // HTTP 402 with x402 headers so agents/browsers can react quickly
+    // HTTP 402 with X-PAYMENT header (semicolon-delimited format)
+    const xPaymentHeader = [
+      `payTo=${challenge.payTo}`,
+      `amount=${challenge.amount}`,
+      `asset=${challenge.asset}`,
+      `chain=${challenge.chain}`,
+      `expiresAt=${challenge.expiresAt}`,
+      `challengeId=${challengeId}`,
+      `nonce=${challenge.nonce}`
+    ].join('; ')
+
     res.setHeader('Cache-Control', 'no-store')
-    res.setHeader('X-PAYMENT', JSON.stringify({
-      scheme: 'x402',
-      ...response.challenge,
-      track_id: response.track_id
-    }))
+    res.setHeader('X-PAYMENT', xPaymentHeader)
     res.setHeader('Access-Control-Expose-Headers', 'X-PAYMENT')
     res.setHeader('X-Payment-Required', 'x402')
     res.setHeader('X-Payment-Provider', 'CDP')
@@ -199,6 +227,7 @@ async function submitHandler(req: VercelRequest, res: VercelResponse): Promise<v
     res.setHeader('X-Payment-PayTo', challenge.payTo)
     res.setHeader('X-Payment-Nonce', challenge.nonce)
     res.setHeader('X-Payment-ExpiresAt', challenge.expiresAt)
+    res.setHeader('X-Payment-ChallengeId', challengeId)
 
     res.status(402).json(response)
     return
