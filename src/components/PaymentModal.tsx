@@ -440,7 +440,7 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
         </div>
       </div>
 
-      <style jsx>{`
+      <style>{`
         .modal-overlay {
           position: fixed;
           top: 0;

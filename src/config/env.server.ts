@@ -146,11 +146,12 @@ export const isStaging = serverEnv.STAGE === 'staging'
 export const isAlpha = serverEnv.STAGE === 'alpha'
 export const isProduction = isStaging || isAlpha
 
-// Debug logging for x402 feature flags (only when LOG_LEVEL=debug)
-if (serverEnv.LOG_LEVEL === 'debug') {
-  console.log('[env] x402 feature flags:', {
-    x402Enabled: serverEnv.ENABLE_X402,
-    mockEnabled: serverEnv.ENABLE_MOCK_PAYMENTS,
-    stage: serverEnv.STAGE
-  })
-}
+// Startup log: payment configuration (non-secret)
+const hasCDPKeys = !!(serverEnv.X402_API_KEY && serverEnv.X402_PROVIDER_URL)
+console.log('[startup] Payment configuration:', {
+  x402Enabled: serverEnv.ENABLE_X402,
+  mockEnabled: serverEnv.ENABLE_MOCK_PAYMENTS,
+  hasCDPKeys,
+  providerURL: serverEnv.X402_PROVIDER_URL ? 'set' : 'missing',
+  stage: serverEnv.STAGE
+})

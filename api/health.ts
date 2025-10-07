@@ -29,6 +29,8 @@ interface HealthResponse {
     x402: {
       enabled: boolean
       mockEnabled: boolean
+      mode: 'cdp' | 'mock' | 'none'
+      hasCDPKeys: boolean
     }
   }
   requestId: string
@@ -111,6 +113,15 @@ async function healthHandler(req: VercelRequest, res: VercelResponse): Promise<v
   // Overall health is OK if env is ok (supabase can be degraded)
   const ok = envCheck === 'ok'
 
+  // Determine payment mode
+  const hasCDPKeys = !!(serverEnv.X402_API_KEY && serverEnv.X402_PROVIDER_URL)
+  let paymentMode: 'cdp' | 'mock' | 'none' = 'none'
+  if (serverEnv.ENABLE_X402 && hasCDPKeys) {
+    paymentMode = 'cdp'
+  } else if (serverEnv.ENABLE_MOCK_PAYMENTS) {
+    paymentMode = 'mock'
+  }
+
   const response: HealthResponse = {
     ok,
     stage: serverEnv.STAGE,
@@ -122,7 +133,9 @@ async function healthHandler(req: VercelRequest, res: VercelResponse): Promise<v
     features: {
       x402: {
         enabled: serverEnv.ENABLE_X402,
-        mockEnabled: serverEnv.ENABLE_MOCK_PAYMENTS
+        mockEnabled: serverEnv.ENABLE_MOCK_PAYMENTS,
+        mode: paymentMode,
+        hasCDPKeys
       }
     },
     requestId

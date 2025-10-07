@@ -227,7 +227,10 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
     // 4. Branch: CDP verification or mock
     let verificationResult: { ok: true; amountPaidAtomic: number } | { ok: false; code: string; detail?: string }
 
-    if (serverEnv.ENABLE_X402 && serverEnv.X402_API_KEY) {
+    // Provider selection: CDP only when all keys are present
+    const hasCDPKeys = !!(serverEnv.X402_API_KEY && serverEnv.X402_PROVIDER_URL)
+
+    if (serverEnv.ENABLE_X402 && hasCDPKeys) {
       // Real CDP verification
       logger.info('queue/confirm using CDP verification', { requestId, challengeId })
       verificationResult = await verifyPayment({
@@ -243,12 +246,17 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       logger.info('queue/confirm using mock verification', { requestId, challengeId })
       verificationResult = await verifyMockPayment(txHash, Number(challenge.amount_atomic), challengeId)
     } else {
-      // Neither enabled - configuration error
-      logger.error('queue/confirm no payment verification method enabled', { requestId })
-      res.status(500).json({
+      // Neither enabled - payments disabled
+      logger.error('queue/confirm payments disabled', {
+        requestId,
+        x402Enabled: serverEnv.ENABLE_X402,
+        hasCDPKeys,
+        mockEnabled: serverEnv.ENABLE_MOCK_PAYMENTS
+      })
+      res.status(503).json({
         error: {
-          code: 'PROVIDER_ERROR',
-          message: 'Payment verification is not configured'
+          code: 'PAYMENTS_DISABLED',
+          message: 'Payment verification is not available at this time'
         },
         requestId
       })
