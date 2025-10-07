@@ -54,7 +54,9 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
     // Validate request body
     const parseResult = confirmRequestSchema.safeParse(req.body)
     if (!parseResult.success) {
-      const errors = parseResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')
+      // Defensive: Check errors array exists before .map
+      const errorList = parseResult.error?.errors ?? []
+      const errors = errorList.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')
       logger.warn('queue/confirm validation failed', { requestId, errors })
       res.status(400).json({
         error: { code: 'VALIDATION_ERROR', message: `Invalid request: ${errors}` },
@@ -103,12 +105,32 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
     if (confirmCheckErr && confirmCheckErr.code !== 'PGRST116') {
       // PGRST116 = no rows, which is fine; anything else is an error
       logger.error('queue/confirm error checking existing confirmation', { requestId, error: confirmCheckErr })
-      throw new Error(`Database error: ${confirmCheckErr.message}`)
+      res.status(500).json({
+        error: {
+          code: 'DB_ERROR',
+          message: 'Database error while checking payment status'
+        },
+        requestId
+      })
+      return
     }
 
     if (existingConfirmation) {
-      // Idempotent response: return existing confirmation
-      const trackId = (existingConfirmation as any).payment_challenges.track_id
+      // Defensive: Validate joined data structure exists
+      const joinedData = (existingConfirmation as any).payment_challenges
+      if (!joinedData || !joinedData.track_id) {
+        logger.error('queue/confirm malformed join data', { requestId, existingConfirmation })
+        res.status(500).json({
+          error: {
+            code: 'DB_ERROR',
+            message: 'Invalid database relationship'
+          },
+          requestId
+        })
+        return
+      }
+
+      const trackId = joinedData.track_id
       logger.info('queue/confirm idempotent (already confirmed)', {
         requestId,
         challengeId,
@@ -117,12 +139,16 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
         existingConfirmationId: existingConfirmation.id
       })
 
-      // Load track to return current status
-      const { data: track } = await supabaseAdmin
+      // Load track to return current status (defensive: handle missing track)
+      const { data: track, error: trackErr } = await supabaseAdmin
         .from('tracks')
         .select('*')
         .eq('id', trackId)
         .single()
+
+      if (trackErr) {
+        logger.warn('queue/confirm track not found for existing confirmation', { requestId, trackId })
+      }
 
       res.status(200).json({
         ok: true,
@@ -208,6 +234,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
         challengeId,
         txHash,
         code: verificationResult.code,
+        message: verificationResult.message,
         detail: verificationResult.detail
       })
 
@@ -228,7 +255,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       res.status(400).json({
         error: {
           code: verificationResult.code,
-          message: verificationResult.detail || 'Payment verification failed'
+          message: verificationResult.message
         },
         requestId
       })
@@ -256,14 +283,44 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       if (confirmInsertErr.code === '23505') {
         // Concurrent request won - re-query and return existing
         logger.info('queue/confirm concurrent confirmation detected', { requestId, challengeId, txHash })
-        const { data: existing } = await supabaseAdmin
+        const { data: existing, error: existingErr } = await supabaseAdmin
           .from('payment_confirmations')
           .select('*, payment_challenges!inner(track_id)')
           .eq('challenge_id', challengeId)
           .single()
 
+        if (existingErr) {
+          logger.error('queue/confirm failed to retrieve concurrent confirmation', {
+            requestId,
+            challengeId,
+            error: existingErr
+          })
+          res.status(500).json({
+            error: {
+              code: 'DB_ERROR',
+              message: 'Database concurrency error'
+            },
+            requestId
+          })
+          return
+        }
+
         if (existing) {
-          const trackId = (existing as any).payment_challenges.track_id
+          // Defensive: Validate joined data structure
+          const joinedData = (existing as any).payment_challenges
+          if (!joinedData || !joinedData.track_id) {
+            logger.error('queue/confirm malformed concurrent join data', { requestId, existing })
+            res.status(500).json({
+              error: {
+                code: 'DB_ERROR',
+                message: 'Invalid database relationship'
+              },
+              requestId
+            })
+            return
+          }
+
+          const trackId = joinedData.track_id
           res.status(200).json({
             ok: true,
             trackId,
@@ -280,7 +337,14 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
         challengeId,
         error: confirmInsertErr
       })
-      throw new Error(`Failed to record payment confirmation: ${confirmInsertErr.message}`)
+      res.status(500).json({
+        error: {
+          code: 'DB_ERROR',
+          message: 'Failed to record payment confirmation'
+        },
+        requestId
+      })
+      return
     }
 
     // 7. Update challenge.confirmed_at
@@ -311,7 +375,14 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
         trackId: challenge.track_id,
         error: trackUpdateErr
       })
-      throw new Error(`Failed to update track status: ${trackUpdateErr?.message}`)
+      res.status(500).json({
+        error: {
+          code: 'DB_ERROR',
+          message: 'Failed to update track payment status'
+        },
+        requestId
+      })
+      return
     }
 
     logger.info('queue/confirm payment confirmed', {
@@ -376,13 +447,16 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
     errorTracker.trackError(err, { operation: 'queue/confirm', requestId })
     logger.error('queue/confirm unhandled error', { requestId }, err)
 
-    res.status(500).json({
-      error: {
-        code: 'PROVIDER_ERROR',
-        message: 'Internal server error during payment confirmation'
-      },
-      requestId
-    })
+    // Defensive: Always return structured error, never let response hang
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: {
+          code: 'INTERNAL',
+          message: 'Internal server error during payment confirmation'
+        },
+        requestId
+      })
+    }
   }
 }
 

@@ -29,6 +29,44 @@ interface HealthResponse {
   }
 }
 
+/**
+ * Helper to safely extract readable error message from API response
+ * Never returns "[object Object]" - always a readable string
+ */
+function extractErrorMessage(data: any, defaultMessage: string): string {
+  // Try structured error object first
+  if (data?.error) {
+    const code = data.error.code || 'UNKNOWN'
+    const message = data.error.message || defaultMessage
+    return `${code}: ${message}`
+  }
+
+  // Try top-level message
+  if (typeof data?.message === 'string') {
+    return data.message
+  }
+
+  // Try stringifying if object (but avoid "[object Object]")
+  if (data && typeof data === 'object') {
+    try {
+      const str = JSON.stringify(data)
+      if (str.length < 200) {
+        return str
+      }
+      return defaultMessage
+    } catch {
+      return defaultMessage
+    }
+  }
+
+  // Fallback to string conversion
+  if (typeof data === 'string') {
+    return data
+  }
+
+  return defaultMessage
+}
+
 export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: PaymentModalProps) {
   const [parsed, setParsed] = useState<ParsedXPayment | null>(null)
   const [txHash, setTxHash] = useState('')
@@ -132,43 +170,34 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
       } catch (jsonError) {
         // Couldn't parse JSON, try getting text
         const text = await response.text().catch(() => 'Unable to read response')
-        setError(`Server error: ${text}`)
+        setError(`Server error (invalid JSON): ${text.substring(0, 200)}`)
         return
       }
 
       if (!response.ok) {
-        // Handle error codes with user-friendly messages
-        // Always prefer error.code + error.message format
-        const errorCode = data.error?.code || 'UNKNOWN'
-        const errorMessage = data.error?.message || 'Payment verification failed'
+        // Use helper to extract error message (never "[object Object]")
+        const baseError = extractErrorMessage(data, 'Payment verification failed')
 
-        // Build readable error message (never "[object Object]")
-        let displayError: string
+        // Enhance with context-specific hints based on error code
+        const errorCode = data.error?.code || 'UNKNOWN'
+        let displayError = baseError
 
         switch (errorCode) {
-          case 'WRONG_AMOUNT':
-            displayError = `WRONG_AMOUNT: ${errorMessage}`
-            break
           case 'WRONG_ASSET':
-            displayError = `WRONG_ASSET: ${errorMessage}. Please send ${parsed.asset}.`
+            displayError = `${baseError} (Expected: ${parsed.asset})`
             break
           case 'WRONG_CHAIN':
-            displayError = `WRONG_CHAIN: ${errorMessage}. Please use ${getChainDisplayName(parsed.chain)}.`
+            displayError = `${baseError} (Expected: ${getChainDisplayName(parsed.chain)})`
             break
           case 'NO_MATCH':
-            displayError = `NO_MATCH: ${errorMessage}. Please check the transaction hash.`
+            displayError = `${baseError} (Check transaction hash)`
             break
-          case 'EXPIRED':
-            displayError = `EXPIRED: ${errorMessage}`
+          case 'DB_ERROR':
+            displayError = `${baseError} (Database error - please try again)`
             break
-          case 'PROVIDER_ERROR':
-            displayError = `PROVIDER_ERROR: ${errorMessage}`
+          case 'INTERNAL':
+            displayError = `${baseError} (Server error - please contact support)`
             break
-          case 'VALIDATION_ERROR':
-            displayError = `VALIDATION_ERROR: ${errorMessage}`
-            break
-          default:
-            displayError = `${errorCode}: ${errorMessage}`
         }
 
         setError(displayError)

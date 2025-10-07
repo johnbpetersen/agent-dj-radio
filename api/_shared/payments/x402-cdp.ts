@@ -30,7 +30,8 @@ export interface VerifyPaymentSuccess {
 export interface VerifyPaymentFailure {
   ok: false
   code: VerificationErrorCode
-  detail?: string
+  message: string // User-friendly message (always present)
+  detail?: string // Technical details (optional, for logging)
 }
 
 export type VerifyPaymentResult = VerifyPaymentSuccess | VerifyPaymentFailure
@@ -76,52 +77,58 @@ function mapCDPError(cdpResponse: CDPVerifyResponse, input: VerifyPaymentInput):
   // Check for specific validation failures
   if (cdpResponse.amountPaid !== undefined && cdpResponse.amountPaid < input.amountAtomic) {
     const diff = input.amountAtomic - cdpResponse.amountPaid
+    const detail = `Insufficient payment: expected ${input.amountAtomic}, got ${cdpResponse.amountPaid} (short by ${diff})`
     return {
       ok: false,
       code: 'WRONG_AMOUNT',
-      detail: `Insufficient payment: expected ${input.amountAtomic}, got ${cdpResponse.amountPaid} (short by ${diff})`
+      message: 'Payment amount is insufficient',
+      detail
     }
   }
 
   if (cdpResponse.asset && cdpResponse.asset !== input.asset) {
+    const detail = `Expected ${input.asset}, got ${cdpResponse.asset}`
     return {
       ok: false,
       code: 'WRONG_ASSET',
-      detail: `Expected ${input.asset}, got ${cdpResponse.asset}`
+      message: 'Wrong cryptocurrency used for payment',
+      detail
     }
   }
 
   if (cdpResponse.chain && cdpResponse.chain !== input.chain) {
+    const detail = `Expected ${input.chain}, got ${cdpResponse.chain}`
     return {
       ok: false,
       code: 'WRONG_CHAIN',
-      detail: `Expected ${input.chain}, got ${cdpResponse.chain}`
+      message: 'Payment sent on wrong blockchain network',
+      detail
     }
   }
 
   // Map CDP error codes to our codes
   if (errorCode.includes('NOT_FOUND') || errorCode.includes('NO_TRANSACTION')) {
-    return { ok: false, code: 'NO_MATCH', detail: errorMsg }
+    return { ok: false, code: 'NO_MATCH', message: 'Transaction not found on blockchain', detail: errorMsg }
   }
 
   if (errorCode.includes('EXPIRED') || errorCode.includes('TIMEOUT')) {
-    return { ok: false, code: 'EXPIRED', detail: errorMsg }
+    return { ok: false, code: 'EXPIRED', message: 'Transaction expired or timed out', detail: errorMsg }
   }
 
   if (errorCode.includes('INSUFFICIENT') || errorCode.includes('AMOUNT')) {
-    return { ok: false, code: 'WRONG_AMOUNT', detail: errorMsg }
+    return { ok: false, code: 'WRONG_AMOUNT', message: 'Payment amount is insufficient', detail: errorMsg }
   }
 
   if (errorCode.includes('ASSET') || errorCode.includes('TOKEN')) {
-    return { ok: false, code: 'WRONG_ASSET', detail: errorMsg }
+    return { ok: false, code: 'WRONG_ASSET', message: 'Wrong cryptocurrency used for payment', detail: errorMsg }
   }
 
   if (errorCode.includes('CHAIN') || errorCode.includes('NETWORK')) {
-    return { ok: false, code: 'WRONG_CHAIN', detail: errorMsg }
+    return { ok: false, code: 'WRONG_CHAIN', message: 'Payment sent on wrong blockchain network', detail: errorMsg }
   }
 
   // Default to PROVIDER_ERROR for unknown issues
-  return { ok: false, code: 'PROVIDER_ERROR', detail: errorMsg }
+  return { ok: false, code: 'PROVIDER_ERROR', message: 'Payment verification service error', detail: errorMsg }
 }
 
 /**
@@ -140,12 +147,12 @@ export async function verifyPayment(input: VerifyPaymentInput): Promise<VerifyPa
   // Validate configuration
   if (!serverEnv.X402_PROVIDER_URL) {
     logger.error('X402_PROVIDER_URL not configured')
-    return { ok: false, code: 'PROVIDER_ERROR', detail: 'Payment provider not configured' }
+    return { ok: false, code: 'PROVIDER_ERROR', message: 'Payment verification service not configured', detail: 'Payment provider URL not configured' }
   }
 
   if (!serverEnv.X402_API_KEY) {
     logger.error('X402_API_KEY not configured')
-    return { ok: false, code: 'PROVIDER_ERROR', detail: 'Payment provider authentication not configured' }
+    return { ok: false, code: 'PROVIDER_ERROR', message: 'Payment verification service not configured', detail: 'Payment provider authentication not configured' }
   }
 
   logger.info('CDP verification started', {
@@ -207,6 +214,7 @@ export async function verifyPayment(input: VerifyPaymentInput): Promise<VerifyPa
         return {
           ok: false,
           code: 'PROVIDER_ERROR',
+          message: 'Payment verification service temporarily unavailable',
           detail: `Provider unavailable after ${RETRY_DELAYS.length} attempts: ${lastError.message}`
         }
       }
@@ -229,6 +237,7 @@ export async function verifyPayment(input: VerifyPaymentInput): Promise<VerifyPa
           return {
             ok: false,
             code: 'PROVIDER_ERROR',
+            message: 'Payment verification service error',
             detail: `Provider returned ${response.status}: ${errorText}`
           }
         }
@@ -249,6 +258,7 @@ export async function verifyPayment(input: VerifyPaymentInput): Promise<VerifyPa
           return {
             ok: false,
             code: 'PROVIDER_ERROR',
+            message: 'Payment verification service error',
             detail: 'Malformed provider response (not an object)'
           }
         }
@@ -265,6 +275,7 @@ export async function verifyPayment(input: VerifyPaymentInput): Promise<VerifyPa
           return {
             ok: false,
             code: 'PROVIDER_ERROR',
+            message: 'Payment verification service error',
             detail: 'Malformed provider response (missing verified field)'
           }
         }
@@ -277,6 +288,7 @@ export async function verifyPayment(input: VerifyPaymentInput): Promise<VerifyPa
         return {
           ok: false,
           code: 'PROVIDER_ERROR',
+          message: 'Payment verification service error',
           detail: 'Failed to parse provider response'
         }
       }
@@ -305,6 +317,7 @@ export async function verifyPayment(input: VerifyPaymentInput): Promise<VerifyPa
         return {
           ok: false,
           code: 'WRONG_AMOUNT',
+          message: 'Payment amount is insufficient',
           detail: `Insufficient payment: expected ${amountAtomic}, got ${amountPaid} (short by ${diff})`
         }
       }
@@ -321,6 +334,7 @@ export async function verifyPayment(input: VerifyPaymentInput): Promise<VerifyPa
         return {
           ok: false,
           code: 'WRONG_ASSET',
+          message: 'Wrong cryptocurrency used for payment',
           detail: `Expected ${asset}, got ${paidAsset}`
         }
       }
@@ -337,6 +351,7 @@ export async function verifyPayment(input: VerifyPaymentInput): Promise<VerifyPa
         return {
           ok: false,
           code: 'WRONG_CHAIN',
+          message: 'Payment sent on wrong blockchain network',
           detail: `Expected ${chain}, got ${paidChain}`
         }
       }
@@ -384,6 +399,7 @@ export async function verifyPayment(input: VerifyPaymentInput): Promise<VerifyPa
   return {
     ok: false,
     code: 'PROVIDER_ERROR',
+    message: 'Payment verification service error',
     detail: lastError?.message || 'Payment verification failed after multiple attempts'
   }
 }
