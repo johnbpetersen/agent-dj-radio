@@ -139,7 +139,9 @@ export function sanitizeForClient<T extends Record<string, any>>(
 }
 
 /**
- * Rate limiting by IP address (in-memory, simple)
+ * Rate limiting by session ID or IP + route (in-memory, simple)
+ * Key = X-Session-Id (if present) → else client IP → plus route
+ * Routes don't share buckets
  */
 const rateLimitStore = new Map<string, { count: number; resetTime: number }>()
 
@@ -152,33 +154,41 @@ export function checkRateLimit(
   req: VercelRequest,
   options: RateLimitOptions = { windowMs: 60000, maxRequests: 60 }
 ): { allowed: boolean; remaining: number; resetTime: number } {
-  const ip = req.headers['x-forwarded-for']?.toString()?.split(',')[0] || 
-            req.headers['x-real-ip']?.toString() || 
+  // Build rate limit key: sessionId or IP + route path
+  const sessionId = req.headers['x-session-id']?.toString()
+  const ip = req.headers['x-forwarded-for']?.toString()?.split(',')[0] ||
+            req.headers['x-real-ip']?.toString() ||
             'unknown'
-  
+  const route = req.url || 'unknown'
+
+  // Prefer session ID, fallback to IP, always include route for per-route limits
+  const identifier = sessionId || ip
+  const key = `${identifier}:${route}`
+
   const now = Date.now()
-  const windowStart = now - options.windowMs
-  
-  // Clean up expired entries
-  for (const [key, value] of rateLimitStore.entries()) {
-    if (value.resetTime < now) {
-      rateLimitStore.delete(key)
+
+  // Clean up expired entries (periodic cleanup)
+  if (Math.random() < 0.01) { // 1% chance per request
+    for (const [k, value] of rateLimitStore.entries()) {
+      if (value.resetTime < now) {
+        rateLimitStore.delete(k)
+      }
     }
   }
-  
-  // Get or create entry for this IP
-  let entry = rateLimitStore.get(ip)
+
+  // Get or create entry for this key
+  let entry = rateLimitStore.get(key)
   if (!entry || entry.resetTime < now) {
     entry = { count: 0, resetTime: now + options.windowMs }
-    rateLimitStore.set(ip, entry)
+    rateLimitStore.set(key, entry)
   }
-  
+
   // Increment counter
   entry.count++
-  
+
   const allowed = entry.count <= options.maxRequests
   const remaining = Math.max(0, options.maxRequests - entry.count)
-  
+
   return {
     allowed,
     remaining,

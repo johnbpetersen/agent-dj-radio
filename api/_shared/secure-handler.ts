@@ -6,6 +6,58 @@ import { applyCorsAndSecurity, checkRateLimit, applyRateLimitHeaders, SecurityOp
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
 import { errorTracker } from '../../src/lib/error-tracking.js'
 import { normalizeError, createErrorResponse, redactSecrets, type ErrorMeta } from './errors.js'
+import { serverEnv } from '../../src/config/env.server.js'
+
+/**
+ * Parse rate limit path overrides from env
+ * Format: "/api/path:max:windowMs,/api/other:max"
+ * Example: "/api/presence/ping:120:60000,/api/queue/confirm:10:60000"
+ */
+function parseRateLimitOverrides(overrides: string | undefined): Map<string, { max: number; windowMs: number }> {
+  const map = new Map()
+
+  if (!overrides) return map
+
+  const entries = overrides.split(',').map(s => s.trim()).filter(Boolean)
+
+  for (const entry of entries) {
+    try {
+      const [path, maxStr, windowMsStr] = entry.split(':')
+
+      if (!path || !maxStr) {
+        logger.warn(`Ignoring malformed rate limit override: "${entry}"`)
+        continue
+      }
+
+      const max = parseInt(maxStr, 10)
+      const windowMs = windowMsStr ? parseInt(windowMsStr, 10) : serverEnv.RATE_LIMIT_WINDOW_MS
+
+      if (isNaN(max) || isNaN(windowMs)) {
+        logger.warn(`Ignoring invalid rate limit override: "${entry}"`)
+        continue
+      }
+
+      map.set(path.trim(), { max, windowMs })
+    } catch (err) {
+      logger.warn(`Ignoring malformed rate limit override: "${entry}"`)
+    }
+  }
+
+  return map
+}
+
+// Parse overrides at boot time
+const rateLimitOverrides = parseRateLimitOverrides(serverEnv.RATE_LIMIT_PATH_OVERRIDES)
+
+if (rateLimitOverrides.size > 0 && serverEnv.LOG_LEVEL === 'debug') {
+  logger.debug('Rate limit path overrides loaded', {
+    overrides: Array.from(rateLimitOverrides.entries()).map(([path, config]) => ({
+      path,
+      max: config.max,
+      windowMs: config.windowMs
+    }))
+  })
+}
 
 export interface SecureHandlerOptions extends SecurityOptions {
   rateLimitOptions?: {
@@ -36,32 +88,45 @@ export function secureHandler(
       // Apply CORS and security headers
       const shouldContinue = applyCorsAndSecurity(req, res, options)
       if (!shouldContinue) {
-        // Preflight request was handled
+        // Preflight request was handled (OPTIONS - do not count against rate limit)
         return
       }
 
       // Apply rate limiting if configured
-      if (options.rateLimitOptions) {
-        const rateLimit = checkRateLimit(req, options.rateLimitOptions)
+      // Dev bypass: Only honor RATE_LIMIT_BYPASS in dev stage
+      const bypassRateLimit = serverEnv.RATE_LIMIT_BYPASS && serverEnv.STAGE === 'dev'
+
+      if (options.rateLimitOptions && !bypassRateLimit) {
+        // Check for path-specific override
+        const route = req.url || ''
+        const override = rateLimitOverrides.get(route)
+
+        const rateLimitConfig = override
+          ? { windowMs: override.windowMs, maxRequests: override.max }
+          : options.rateLimitOptions
+
+        const rateLimit = checkRateLimit(req, rateLimitConfig)
         applyRateLimitHeaders(res, rateLimit)
-        
+
         if (!rateLimit.allowed) {
+          // Calculate retry after in seconds
+          const retryAfterSeconds = Math.ceil((rateLimit.resetTime - Date.now()) / 1000)
+
           if (options.logRequests) {
             logger.warn('Rate limit exceeded', {
               correlationId,
               requestId,
               route: req.url,
               method: req.method,
-              path: req.url,
-              queryKeysOnly: req.query ? Object.keys(req.query) : [],
-              ip: req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || 'unknown'
+              retryAfterSeconds
             })
           }
 
           res.status(429).json({
             error: {
-              code: 'TOO_MANY_REQUESTS',
-              message: 'Rate limit exceeded. Please try again later.'
+              code: 'RATE_LIMITED',
+              message: 'Too many requests. Please wait before retrying.',
+              hint: `Retry in ${retryAfterSeconds}s`
             },
             requestId
           })

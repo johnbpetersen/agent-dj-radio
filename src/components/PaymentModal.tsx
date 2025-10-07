@@ -76,6 +76,7 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
   const [copied, setCopied] = useState(false)
   const [isLiveMode, setIsLiveMode] = useState(false)
   const [mocksEnabled, setMocksEnabled] = useState(true)
+  const [retryAfter, setRetryAfter] = useState<number | null>(null) // Rate limit countdown
 
   // Fetch feature flags on mount (cached by browser for 60s)
   useEffect(() => {
@@ -106,7 +107,7 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
     setCountdown(getExpiryCountdown(parsedData.expiresAt))
   }, [xPaymentHeader])
 
-  // Countdown timer
+  // Countdown timer for challenge expiry
   useEffect(() => {
     if (!parsed) return
 
@@ -121,6 +122,28 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
 
     return () => clearInterval(interval)
   }, [parsed])
+
+  // Countdown timer for rate limit retry
+  useEffect(() => {
+    if (retryAfter === null) return
+
+    const interval = setInterval(() => {
+      setRetryAfter(prev => {
+        if (prev === null || prev <= 1) {
+          clearInterval(interval)
+          // Re-enable button by setting isSubmitting to false
+          setIsSubmitting(false)
+          setError(null)
+          return null
+        }
+        // Update error message with new countdown
+        setError(`RATE_LIMITED: Please wait ${prev - 1}s`)
+        return prev - 1
+      })
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [retryAfter])
 
   const handleCopyAddress = async () => {
     if (!parsed) return
@@ -148,6 +171,7 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
       return
     }
 
+    // Disable button immediately to prevent double-submit
     setIsSubmitting(true)
     setError(null)
 
@@ -162,6 +186,28 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
           txHash: txHash.trim()
         })
       })
+
+      // Handle 429 (rate limited) specially
+      if (response.status === 429) {
+        // Read Retry-After header or compute from X-RateLimit-Reset
+        let retrySeconds = 30 // Default fallback
+
+        const retryAfterHeader = response.headers.get('Retry-After')
+        if (retryAfterHeader) {
+          retrySeconds = parseInt(retryAfterHeader, 10)
+        } else {
+          const resetHeader = response.headers.get('X-RateLimit-Reset')
+          if (resetHeader) {
+            const resetTime = parseInt(resetHeader, 10) * 1000 // Convert to ms
+            retrySeconds = Math.ceil((resetTime - Date.now()) / 1000)
+          }
+        }
+
+        // Start countdown
+        setRetryAfter(retrySeconds)
+        setError(`RATE_LIMITED: Please wait ${retrySeconds}s`)
+        return
+      }
 
       // Parse response (handle malformed JSON gracefully)
       let data: any
@@ -324,9 +370,13 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
               <button
                 className="verify-button"
                 onClick={handleVerifyPayment}
-                disabled={isSubmitting || !txHash.trim()}
+                disabled={isSubmitting || !txHash.trim() || retryAfter !== null}
               >
-                {isSubmitting ? 'Verifying...' : 'Verify Payment'}
+                {retryAfter !== null
+                  ? `Please wait ${retryAfter}s`
+                  : isSubmitting
+                  ? 'Verifying...'
+                  : 'Verify Payment'}
               </button>
 
               {error?.includes('expired') && (

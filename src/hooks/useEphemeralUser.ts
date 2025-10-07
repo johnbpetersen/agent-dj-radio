@@ -42,8 +42,10 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
   // Track if ephemeral users are enabled
   const [featureEnabled, setFeatureEnabled] = useState(false)
   
-  // Presence ping interval
+  // Presence ping interval with adaptive backoff
   const pingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const [pingInterval, setPingInterval] = useState(30000) // Start at 30s
+  const pingIntervalValueRef = useRef(30000) // Keep track of current interval
   
   // Check feature flag and initialize session
   useEffect(() => {
@@ -151,28 +153,54 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
     }
   }
   
+  const sendPresencePing = async (currentSessionId: string) => {
+    try {
+      const response = await fetch('/api/presence/ping', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-Id': currentSessionId
+        },
+        body: JSON.stringify({})
+      })
+
+      if (response.status === 429) {
+        // Rate limited - back off: double interval (max 120s)
+        const newInterval = Math.min(pingIntervalValueRef.current * 2, 120000)
+        pingIntervalValueRef.current = newInterval
+        setPingInterval(newInterval)
+        console.warn(`Presence ping rate limited, backing off to ${newInterval / 1000}s`)
+      } else if (response.ok) {
+        // Success - slowly reduce interval back to baseline (30s)
+        const newInterval = Math.max(pingIntervalValueRef.current * 0.9, 30000)
+        if (newInterval !== pingIntervalValueRef.current) {
+          pingIntervalValueRef.current = newInterval
+          setPingInterval(newInterval)
+        }
+      }
+    } catch (err) {
+      console.warn('Presence ping failed:', err)
+      // Continue trying - don't stop the interval
+    }
+  }
+
   const startPresencePing = (currentSessionId: string) => {
     // Clear any existing interval
     if (pingIntervalRef.current) {
       clearInterval(pingIntervalRef.current)
     }
-    
-    // Start pinging every 30 seconds
-    pingIntervalRef.current = setInterval(async () => {
-      try {
-        await fetch('/api/presence/ping', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Session-Id': currentSessionId
-          },
-          body: JSON.stringify({})
-        })
-      } catch (err) {
-        console.warn('Presence ping failed:', err)
-        // Continue trying - don't stop the interval
-      }
-    }, 30000) // 30 seconds
+
+    // Function to schedule next ping
+    const schedulePing = () => {
+      pingIntervalRef.current = setTimeout(async () => {
+        await sendPresencePing(currentSessionId)
+        // Schedule next ping with potentially updated interval
+        schedulePing()
+      }, pingIntervalValueRef.current)
+    }
+
+    // Start pinging
+    schedulePing()
   }
   
   const rename = useCallback(async (newName: string): Promise<boolean> => {

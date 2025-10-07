@@ -70,6 +70,12 @@ const serverSchema = z.object({
   // Optional features
   ADMIN_TOKEN: z.string().optional(),
   ALLOW_ENV_WARNINGS: booleanFromString.default(false),
+
+  // Rate limiting configuration
+  RATE_LIMIT_BYPASS: booleanFromString.default(false),
+  RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60000),
+  RATE_LIMIT_MAX: z.coerce.number().default(60),
+  RATE_LIMIT_PATH_OVERRIDES: z.string().optional(),
 }).refine((data) => {
   // Stage-specific validations
   if (data.STAGE === 'alpha') {
