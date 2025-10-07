@@ -1,6 +1,6 @@
 // api/_shared/supabase.ts
 import { createClient } from '@supabase/supabase-js'
-import { serverEnv } from '../../src/config/env.js'
+import { serverEnv } from '../../src/config/env.server.js'
 
 // Service-role client for API routes (bypasses RLS)
 const supabaseAdmin = createClient(
