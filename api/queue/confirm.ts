@@ -67,6 +67,32 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
 
     logger.info('queue/confirm processing', { requestId, challengeId, txHash })
 
+    // Early guard: Reject mock tx hashes in live mode
+    if (serverEnv.ENABLE_X402) {
+      // Check if txHash is a mock pattern
+      const isMockPattern = txHash.toLowerCase().startsWith('0xmock')
+      // Also check if it's not strict hex (our mock generator might create invalid hashes)
+      const isStrictHex = /^0x[0-9a-fA-F]{64}$/.test(txHash)
+
+      if (isMockPattern || !isStrictHex) {
+        logger.warn('queue/confirm mock proof rejected in live mode', {
+          requestId,
+          challengeId,
+          txHash: txHash.substring(0, 10) + '...',
+          isMockPattern,
+          isStrictHex
+        })
+        res.status(400).json({
+          error: {
+            code: 'PROVIDER_ERROR',
+            message: 'Mock proof not allowed in live mode. Please provide a valid transaction hash from Base Sepolia.'
+          },
+          requestId
+        })
+        return
+      }
+    }
+
     // 1. Check for existing confirmation (idempotency by challengeId OR tx_hash)
     const { data: existingConfirmation, error: confirmCheckErr } = await supabaseAdmin
       .from('payment_confirmations')

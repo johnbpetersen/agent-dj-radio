@@ -19,6 +19,12 @@ interface HealthResponse {
     }
     timeSkewMs: number
   }
+  features: {
+    x402: {
+      enabled: boolean
+      mockEnabled: boolean
+    }
+  }
   requestId: string
 }
 
@@ -107,10 +113,17 @@ async function healthHandler(req: VercelRequest, res: VercelResponse): Promise<v
       supabase: supabaseCheck,
       timeSkewMs
     },
+    features: {
+      x402: {
+        enabled: serverEnv.ENABLE_X402,
+        mockEnabled: serverEnv.ENABLE_MOCK_PAYMENTS
+      }
+    },
     requestId
   }
 
   res.setHeader('X-Request-Id', requestId)
+  res.setHeader('Cache-Control', 'public, max-age=60') // Cache for 1 minute
   res.status(200).json(response)
 }
 

@@ -20,6 +20,15 @@ interface PaymentModalProps {
   onClose: () => void
 }
 
+interface HealthResponse {
+  features?: {
+    x402?: {
+      enabled: boolean
+      mockEnabled: boolean
+    }
+  }
+}
+
 export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: PaymentModalProps) {
   const [parsed, setParsed] = useState<ParsedXPayment | null>(null)
   const [txHash, setTxHash] = useState('')
@@ -27,6 +36,26 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
   const [error, setError] = useState<string | null>(null)
   const [countdown, setCountdown] = useState(0)
   const [copied, setCopied] = useState(false)
+  const [isLiveMode, setIsLiveMode] = useState(false)
+  const [mocksEnabled, setMocksEnabled] = useState(true)
+
+  // Fetch feature flags on mount (cached by browser for 60s)
+  useEffect(() => {
+    fetch('/api/health')
+      .then(res => res.json())
+      .then((data: HealthResponse) => {
+        const x402Enabled = data.features?.x402?.enabled ?? false
+        const mockEnabled = data.features?.x402?.mockEnabled ?? true
+        setIsLiveMode(x402Enabled)
+        setMocksEnabled(mockEnabled)
+      })
+      .catch(err => {
+        console.warn('Failed to fetch health flags:', err)
+        // Default to safe mode (assume live, hide mocks)
+        setIsLiveMode(true)
+        setMocksEnabled(false)
+      })
+  }, [])
 
   // Parse header on mount
   useEffect(() => {
@@ -96,35 +125,53 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
         })
       })
 
-      const data = await response.json()
+      // Parse response (handle malformed JSON gracefully)
+      let data: any
+      try {
+        data = await response.json()
+      } catch (jsonError) {
+        // Couldn't parse JSON, try getting text
+        const text = await response.text().catch(() => 'Unable to read response')
+        setError(`Server error: ${text}`)
+        return
+      }
 
       if (!response.ok) {
         // Handle error codes with user-friendly messages
+        // Always prefer error.code + error.message format
         const errorCode = data.error?.code || 'UNKNOWN'
         const errorMessage = data.error?.message || 'Payment verification failed'
 
+        // Build readable error message (never "[object Object]")
+        let displayError: string
+
         switch (errorCode) {
           case 'WRONG_AMOUNT':
-            setError(`Insufficient payment: ${errorMessage}`)
+            displayError = `WRONG_AMOUNT: ${errorMessage}`
             break
           case 'WRONG_ASSET':
-            setError(`Wrong token used: ${errorMessage}. Please send ${parsed.asset}.`)
+            displayError = `WRONG_ASSET: ${errorMessage}. Please send ${parsed.asset}.`
             break
           case 'WRONG_CHAIN':
-            setError(`Wrong network: ${errorMessage}. Please use ${getChainDisplayName(parsed.chain)}.`)
+            displayError = `WRONG_CHAIN: ${errorMessage}. Please use ${getChainDisplayName(parsed.chain)}.`
             break
           case 'NO_MATCH':
-            setError(`Transaction not found: ${errorMessage}. Please check the transaction hash.`)
+            displayError = `NO_MATCH: ${errorMessage}. Please check the transaction hash.`
             break
           case 'EXPIRED':
-            setError('Payment challenge expired. Please refresh to get a new challenge.')
+            displayError = `EXPIRED: ${errorMessage}`
             break
           case 'PROVIDER_ERROR':
-            setError(`Payment provider error: ${errorMessage}. Please try again.`)
+            displayError = `PROVIDER_ERROR: ${errorMessage}`
+            break
+          case 'VALIDATION_ERROR':
+            displayError = `VALIDATION_ERROR: ${errorMessage}`
             break
           default:
-            setError(errorMessage)
+            displayError = `${errorCode}: ${errorMessage}`
         }
+
+        setError(displayError)
         return
       }
 
@@ -136,7 +183,9 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
       }
     } catch (err) {
       console.error('Payment verification error:', err)
-      setError('Network error. Please check your connection and try again.')
+      // Final fallback: stringify the error safely
+      const errorMsg = err instanceof Error ? err.message : String(err)
+      setError(`Network error: ${errorMsg}`)
     } finally {
       setIsSubmitting(false)
     }
@@ -271,6 +320,12 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
               <li>Paste it above and click "Verify Payment"</li>
             </ol>
           </details>
+
+          {isLiveMode && !mocksEnabled && (
+            <div className="mock-notice">
+              <small>ℹ️ Mock payments are disabled in live mode. Real blockchain transactions required.</small>
+            </div>
+          )}
         </div>
       </div>
 
@@ -532,6 +587,20 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
 
         .payment-instructions strong {
           color: #fff;
+        }
+
+        .mock-notice {
+          margin-top: 1rem;
+          padding: 0.75rem;
+          background: #2a2a2a;
+          border: 1px solid #3a3a3a;
+          border-radius: 4px;
+          text-align: center;
+        }
+
+        .mock-notice small {
+          color: #aaa;
+          font-size: 0.85rem;
         }
 
         .error {

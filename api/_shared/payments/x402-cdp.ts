@@ -234,8 +234,52 @@ export async function verifyPayment(input: VerifyPaymentInput): Promise<VerifyPa
         }
       }
 
-      // Success path: parse response
-      const cdpResponse = await response.json() as CDPVerifyResponse
+      // Success path: parse response (treat as untrusted, validate shape)
+      let cdpResponse: CDPVerifyResponse
+      try {
+        const rawResponse = await response.json()
+
+        // Validate response has expected shape (avoid .map on undefined, etc.)
+        if (typeof rawResponse !== 'object' || rawResponse === null) {
+          logger.error('CDP verification: malformed response (not an object)', {
+            challengeId,
+            txHash,
+            responseType: typeof rawResponse
+          })
+          return {
+            ok: false,
+            code: 'PROVIDER_ERROR',
+            detail: 'Malformed provider response (not an object)'
+          }
+        }
+
+        cdpResponse = rawResponse as CDPVerifyResponse
+
+        // Ensure verified field exists and is boolean
+        if (typeof cdpResponse.verified !== 'boolean') {
+          logger.error('CDP verification: malformed response (missing verified field)', {
+            challengeId,
+            txHash,
+            response: JSON.stringify(rawResponse)
+          })
+          return {
+            ok: false,
+            code: 'PROVIDER_ERROR',
+            detail: 'Malformed provider response (missing verified field)'
+          }
+        }
+      } catch (parseError) {
+        logger.error('CDP verification: failed to parse JSON response', {
+          challengeId,
+          txHash,
+          error: parseError instanceof Error ? parseError.message : String(parseError)
+        })
+        return {
+          ok: false,
+          code: 'PROVIDER_ERROR',
+          detail: 'Failed to parse provider response'
+        }
+      }
 
       if (!cdpResponse.verified) {
         logger.warn('CDP verification rejected', {
@@ -247,8 +291,9 @@ export async function verifyPayment(input: VerifyPaymentInput): Promise<VerifyPa
       }
 
       // Validation: Check amount paid meets minimum requirement
+      // Optional-chain to handle missing/undefined amountPaid
       const amountPaid = cdpResponse.amountPaid ?? 0
-      if (amountPaid < amountAtomic) {
+      if (typeof amountPaid !== 'number' || amountPaid < amountAtomic) {
         const diff = amountAtomic - amountPaid
         logger.warn('CDP verification: insufficient amount', {
           challengeId,
@@ -264,7 +309,7 @@ export async function verifyPayment(input: VerifyPaymentInput): Promise<VerifyPa
         }
       }
 
-      // Validation: Check asset matches
+      // Validation: Check asset matches (optional-chain)
       const paidAsset = cdpResponse.asset || asset
       if (paidAsset !== asset) {
         logger.warn('CDP verification: wrong asset', {
@@ -280,7 +325,7 @@ export async function verifyPayment(input: VerifyPaymentInput): Promise<VerifyPa
         }
       }
 
-      // Validation: Check chain matches
+      // Validation: Check chain matches (optional-chain)
       const paidChain = cdpResponse.chain || chain
       if (paidChain !== chain) {
         logger.warn('CDP verification: wrong chain', {
