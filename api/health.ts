@@ -1,9 +1,15 @@
 // api/health.ts
 // Minimal health check endpoint with env and Supabase connectivity checks
+/**
+ * IMPORTANT: features.x402 is sourced from serverEnv (src/config/env.server.ts).
+ * Do not read process.env directly - it bypasses our custom boolean parsing
+ * and .env.local override logic. Always use serverEnv.ENABLE_X402 and
+ * serverEnv.ENABLE_MOCK_PAYMENTS.
+ */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createClient } from '@supabase/supabase-js'
-import { serverEnv } from '../src/config/env.js'
+import { serverEnv } from '../src/config/env.server.js'
 import { secureHandler, securityConfigs } from './_shared/secure-handler.js'
 import crypto from 'crypto'
 
@@ -123,7 +129,14 @@ async function healthHandler(req: VercelRequest, res: VercelResponse): Promise<v
   }
 
   res.setHeader('X-Request-Id', requestId)
-  res.setHeader('Cache-Control', 'public, max-age=60') // Cache for 1 minute
+
+  // Cache control: disable caching in dev to avoid confusion during testing
+  if (serverEnv.STAGE === 'dev') {
+    res.setHeader('Cache-Control', 'no-store')
+  } else {
+    res.setHeader('Cache-Control', 'public, max-age=60') // Cache for 1 minute
+  }
+
   res.status(200).json(response)
 }
 
