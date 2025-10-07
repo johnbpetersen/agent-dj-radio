@@ -160,6 +160,86 @@ npm run test:ui
 npm run typecheck
 ```
 
+## 🏥 Health & Doctor
+
+### Health Checks
+
+Monitor your deployment with built-in health endpoints:
+
+**`GET /api/health`** - Comprehensive health check
+```bash
+curl http://localhost:5173/api/health
+```
+
+Returns:
+```json
+{
+  "ok": true,
+  "stage": "dev",
+  "checks": {
+    "env": "ok",
+    "supabase": {
+      "status": "ok",
+      "latencyMs": 45
+    },
+    "timeSkewMs": 12
+  },
+  "requestId": "uuid-here"
+}
+```
+
+**`GET /api/version`** - Version information
+```bash
+curl http://localhost:5173/api/version
+```
+
+Returns:
+```json
+{
+  "version": "dev",
+  "stage": "dev",
+  "buildTimeIso": "2025-01-15T12:00:00.000Z"
+}
+```
+
+### Dev Doctor CLI
+
+Run a comprehensive environment health check before starting development:
+
+```bash
+npm run doctor
+```
+
+**Sample output:**
+```
+Dev Environment Health Check
+============================
+Node.js version              → ✅ PASS (v20.10.0)
+Required env vars            → ✅ PASS (4/4 present)
+Supabase DNS resolution      → ✅ PASS (test-project.supabase.co)
+Supabase HTTP reachability   → ✅ PASS (200 OK)
+Port 3001 available          → ✅ PASS (available)
+Port 5173 available          → ✅ PASS (available)
+Clock skew                   → ⏭️  SKIP (offline)
+
+Summary:
+  PASS: 6
+  SKIP: 1
+
+✅ Environment is healthy
+```
+
+**Checks performed:**
+- Node.js version (warns if not 20.x-22.x)
+- Required environment variables for current stage
+- Supabase DNS resolution and HTTP connectivity
+- Local port availability (3001, 5173)
+- System clock skew (optional, skips if offline)
+
+**Exit codes:**
+- `0` = All checks passed (or warnings only)
+- `1` = One or more checks failed
+
 ## 📚 API Documentation
 
 ### Queue Endpoints

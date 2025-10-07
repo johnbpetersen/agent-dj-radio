@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev:api": "tsx -r dotenv/config dev-functions-server.ts",
+    "dev:api": "tsx dev-functions-server.ts",
     "dev:web": "vite",
     "dev:web:wait": "wait-on tcp:3001 && vite",
     "dev": "concurrently -k -n API,WEB -c magenta,blue \"npm:dev:api\" \"npm:dev:web:wait\"",
@@ -19,6 +19,7 @@
     "format": "prettier -w .",
     "check:env": "tsx scripts/check-env.ts",
     "check:env:strict": "ALLOW_ENV_WARNINGS=false tsx scripts/check-env.ts",
+    "doctor": "tsx scripts/doctor.ts",
     "prebuild": "npm run check:env:strict"
   },
   "dependencies": {

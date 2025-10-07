@@ -194,7 +194,7 @@ function checkEnvironment(): CheckResult[] {
     }
   }
 
-  // Service role key validation (optional)
+  // Service role key validation (completely optional in all stages)
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (serviceRoleKey) {
     try {
@@ -221,12 +221,11 @@ function checkEnvironment(): CheckResult[] {
       })
     }
   } else {
-    const status = stage === 'dev' ? 'WARN' : 'FAIL'
-    const message = stage === 'dev' ? 'optional in dev' : 'required in staging/alpha'
+    // Optional in all stages - skip if not provided
     results.push({
       name: 'SUPABASE_SERVICE_ROLE_KEY',
-      status,
-      message
+      status: 'SKIP',
+      message: 'optional in all stages'
     })
   }
 

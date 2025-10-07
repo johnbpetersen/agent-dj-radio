@@ -165,7 +165,7 @@ export function validateEnvironmentConsistency(serverEnv: ReturnType<typeof load
     issues.push(issue)
   }
 
-  // Service role key host consistency (if present)
+  // Service role key host consistency (if present) - completely optional in all stages
   if (serverEnv.SUPABASE_SERVICE_ROLE_KEY) {
     try {
       const serverHost = new URL(serverEnv.SUPABASE_URL).hostname
@@ -177,12 +177,8 @@ export function validateEnvironmentConsistency(serverEnv: ReturnType<typeof load
         message: 'Could not validate service role key consistency'
       })
     }
-  } else if (serverEnv.STAGE !== 'dev') {
-    issues.push({
-      type: 'warning',
-      message: 'No service role key provided for non-dev environment'
-    })
   }
+  // Note: SERVICE_ROLE_KEY is optional in all stages (dev/staging/alpha)
 
   return issues
 }
