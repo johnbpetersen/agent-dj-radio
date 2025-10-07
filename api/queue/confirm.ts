@@ -2,7 +2,7 @@
 // Verify x402 payment and transition track from PENDING_PAYMENT to PAID
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { z } from 'zod'
+import { z, ZodError } from 'zod'
 import { supabaseAdmin } from '../_shared/supabase.js'
 import { verifyPayment } from '../_shared/payments/x402-cdp.js'
 import { serverEnv } from '../../src/config/env.server.js'
@@ -51,21 +51,41 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
   logger.info('queue/confirm request received', { requestId })
 
   try {
-    // Validate request body
-    const parseResult = confirmRequestSchema.safeParse(req.body)
-    if (!parseResult.success) {
-      // Defensive: Check errors array exists before .map
-      const errorList = parseResult.error?.errors ?? []
-      const errors = errorList.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')
-      logger.warn('queue/confirm validation failed', { requestId, errors })
-      res.status(400).json({
-        error: { code: 'VALIDATION_ERROR', message: `Invalid request: ${errors}` },
-        requestId
-      })
-      return
-    }
+    // Validate request body with structured field errors
+    let challengeId: string
+    let txHash: string
 
-    const { challengeId, txHash } = parseResult.data
+    try {
+      const parsed = confirmRequestSchema.parse(req.body)
+      challengeId = parsed.challengeId
+      txHash = parsed.txHash
+    } catch (error) {
+      if (error instanceof ZodError) {
+        // Extract structured field errors
+        const fields = error.issues.map(issue => ({
+          path: issue.path.join('.') || 'body',
+          message: issue.message
+        }))
+
+        logger.warn('queue/confirm validation failed', {
+          requestId,
+          fields: fields.map(f => `${f.path}: ${f.message}`).join(', ')
+        })
+
+        res.status(400).json({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid request',
+            fields
+          },
+          requestId
+        })
+        return
+      }
+
+      // Re-throw unexpected errors to outer handler
+      throw error
+    }
 
     logger.info('queue/confirm processing', { requestId, challengeId, txHash })
 

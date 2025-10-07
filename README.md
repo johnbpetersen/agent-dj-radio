@@ -93,16 +93,65 @@ The `PaymentModal` component handles the user flow:
 - Error handling for all failure modes
 - "Refresh challenge" button if expired
 
-### Error Codes
+### Error Contract
 
-| Code | Meaning | User Action |
-|------|---------|-------------|
-| `WRONG_AMOUNT` | Insufficient payment | Send full amount |
-| `WRONG_ASSET` | Wrong token (not USDC) | Send USDC instead |
-| `WRONG_CHAIN` | Wrong network | Use Base Sepolia |
-| `NO_MATCH` | Transaction not found | Check tx hash |
-| `EXPIRED` | Challenge expired (>10min) | Refresh challenge |
-| `PROVIDER_ERROR` | CDP API issue | Retry later |
+All `/api/queue/confirm` error responses follow this structure:
+
+```json
+{
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Human-readable description",
+    "hint": "Optional suggestion (e.g., 'Retry in 30s')",
+    "fields": [
+      {"path": "txHash", "message": "Invalid transaction hash format"}
+    ]
+  },
+  "requestId": "uuid"
+}
+```
+
+**Common Error Codes:**
+
+| Code | HTTP | Meaning | User Action |
+|------|------|---------|-------------|
+| `VALIDATION_ERROR` | 400 | Invalid request format | Check fields array for details |
+| `WRONG_AMOUNT` | 400 | Insufficient payment | Send full amount |
+| `WRONG_ASSET` | 400 | Wrong token (not USDC) | Send USDC instead |
+| `WRONG_CHAIN` | 400 | Wrong network | Use Base Sepolia |
+| `NO_MATCH` | 404 | Transaction/challenge not found | Check tx hash or challenge ID |
+| `EXPIRED` | 400 | Challenge expired (>10min) | Refresh challenge |
+| `RATE_LIMITED` | 429 | Too many requests | Wait for countdown (see Retry-After header) |
+| `PROVIDER_ERROR` | 500 | CDP API issue | Retry later |
+| `DB_ERROR` | 500 | Database error | Retry later |
+| `INTERNAL` | 500 | Unexpected server error | Contact support |
+
+**Validation Errors:**
+
+When `code === "VALIDATION_ERROR"`, the `fields` array contains structured validation failures:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid request",
+    "fields": [
+      {"path": "txHash", "message": "Invalid transaction hash format"},
+      {"path": "challengeId", "message": "Invalid challenge ID format"}
+    ]
+  },
+  "requestId": "req-abc123"
+}
+```
+
+**Rate Limiting:**
+
+When `code === "RATE_LIMITED"`, response includes standard rate limit headers:
+- `Retry-After`: Seconds until retry allowed
+- `X-RateLimit-Remaining`: Requests remaining in window
+- `X-RateLimit-Reset`: Unix timestamp when window resets
+
+The UI displays a countdown and disables the verify button until the rate limit expires.
 
 ### Demo Flow
 

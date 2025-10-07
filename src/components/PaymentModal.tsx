@@ -30,41 +30,81 @@ interface HealthResponse {
 }
 
 /**
- * Helper to safely extract readable error message from API response
+ * Convert unknown error types to readable string
+ * Handles Response, Error, structured error objects, and unknown types
  * Never returns "[object Object]" - always a readable string
  */
-function extractErrorMessage(data: any, defaultMessage: string): string {
-  // Try structured error object first
-  if (data?.error) {
-    const code = data.error.code || 'UNKNOWN'
-    const message = data.error.message || defaultMessage
-    return `${code}: ${message}`
-  }
-
-  // Try top-level message
-  if (typeof data?.message === 'string') {
-    return data.message
-  }
-
-  // Try stringifying if object (but avoid "[object Object]")
-  if (data && typeof data === 'object') {
+async function toErrorString(x: unknown): Promise<string> {
+  // Handle Response objects
+  if (x instanceof Response) {
     try {
-      const str = JSON.stringify(data)
-      if (str.length < 200) {
-        return str
-      }
-      return defaultMessage
+      const data = await x.json()
+      return toErrorStringSync(data)
     } catch {
-      return defaultMessage
+      // JSON parse failed, try text
+      try {
+        const text = await x.text()
+        return text || `HTTP ${x.status}`
+      } catch {
+        return `HTTP ${x.status}`
+      }
     }
   }
 
-  // Fallback to string conversion
-  if (typeof data === 'string') {
-    return data
+  return toErrorStringSync(x)
+}
+
+/**
+ * Synchronous version for non-Response errors
+ */
+function toErrorStringSync(x: unknown): string {
+  // Handle structured error object
+  if (x && typeof x === 'object' && 'error' in x) {
+    const errObj = (x as any).error
+    const code = errObj?.code || 'UNKNOWN'
+    const message = errObj?.message || 'An error occurred'
+    const hint = errObj?.hint
+
+    // Format fields array if present (for VALIDATION_ERROR)
+    if (Array.isArray(errObj?.fields) && errObj.fields.length > 0) {
+      const fieldMessages = errObj.fields
+        .map((f: any) => `${f.path}: ${f.message}`)
+        .join(', ')
+      return hint
+        ? `${code}: ${message} (${fieldMessages}) - ${hint}`
+        : `${code}: ${message} (${fieldMessages})`
+    }
+
+    return hint ? `${code}: ${message} - ${hint}` : `${code}: ${message}`
   }
 
-  return defaultMessage
+  // Handle Error instances
+  if (x instanceof Error) {
+    return x.message
+  }
+
+  // Handle plain string
+  if (typeof x === 'string') {
+    return x
+  }
+
+  // Handle top-level message property
+  if (x && typeof x === 'object' && 'message' in x && typeof (x as any).message === 'string') {
+    return (x as any).message
+  }
+
+  // Last resort: try JSON.stringify but cap length
+  if (x && typeof x === 'object') {
+    try {
+      const str = JSON.stringify(x)
+      return str.length <= 200 ? str : str.substring(0, 197) + '...'
+    } catch {
+      return 'An unexpected error occurred'
+    }
+  }
+
+  // Absolute fallback
+  return String(x) || 'An unexpected error occurred'
 }
 
 export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: PaymentModalProps) {
@@ -214,15 +254,15 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
       try {
         data = await response.json()
       } catch (jsonError) {
-        // Couldn't parse JSON, try getting text
-        const text = await response.text().catch(() => 'Unable to read response')
-        setError(`Server error (invalid JSON): ${text.substring(0, 200)}`)
+        // Couldn't parse JSON, use toErrorString on the response
+        const errorText = await toErrorString(response)
+        setError(errorText)
         return
       }
 
       if (!response.ok) {
-        // Use helper to extract error message (never "[object Object]")
-        const baseError = extractErrorMessage(data, 'Payment verification failed')
+        // Use toErrorString helper to extract error message (never "[object Object]")
+        const baseError = toErrorStringSync(data)
 
         // Enhance with context-specific hints based on error code
         const errorCode = data.error?.code || 'UNKNOWN'
@@ -244,6 +284,10 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
           case 'INTERNAL':
             displayError = `${baseError} (Server error - please contact support)`
             break
+          case 'VALIDATION_ERROR':
+            // Already formatted with fields by toErrorStringSync
+            displayError = baseError
+            break
         }
 
         setError(displayError)
@@ -258,8 +302,8 @@ export function PaymentModal({ xPaymentHeader, onSuccess, onRefresh, onClose }: 
       }
     } catch (err) {
       console.error('Payment verification error:', err)
-      // Final fallback: stringify the error safely
-      const errorMsg = err instanceof Error ? err.message : String(err)
+      // Use toErrorString helper for all error types
+      const errorMsg = toErrorStringSync(err)
       setError(`Network error: ${errorMsg}`)
     } finally {
       setIsSubmitting(false)
