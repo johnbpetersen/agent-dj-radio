@@ -1,7 +1,23 @@
 // src/config/env.ts
 // Unified zod-validated environment configuration for server and client
 
+// Load .env.local first (highest precedence), then .env (fallback)
+import fs from 'node:fs'
+import path from 'node:path'
+import dotenv from 'dotenv'
+
+const envLocal = path.resolve(process.cwd(), '.env.local')
+if (fs.existsSync(envLocal)) {
+  dotenv.config({ path: envLocal })
+}
+dotenv.config() // Load .env as fallback
+
 import { z } from 'zod'
+
+// Type guard for ZodError
+function isZodError(err: unknown): err is z.ZodError {
+  return !!err && typeof err === 'object' && 'issues' in err
+}
 
 // Environment stage detection
 const STAGE = (process.env.STAGE || 'dev') as 'dev' | 'staging' | 'alpha'
@@ -75,14 +91,17 @@ function loadServerEnv() {
     return serverSchema.parse(process.env)
   } catch (error) {
     console.error('❌ Server environment validation failed:')
-    if (error instanceof z.ZodError) {
-      error.errors.forEach(err => {
-        console.error(`  ${err.path.join('.')}: ${err.message}`)
+    if (isZodError(error)) {
+      error.issues.forEach(issue => {
+        const fieldPath = issue.path.join('.') || '(root)'
+        console.error(`  ${fieldPath}: ${issue.message}`)
       })
+    } else if (error instanceof Error) {
+      console.error(`  ${error.name}: ${error.message}`)
     } else {
-      console.error(error)
+      console.error(`  ${String(error)}`)
     }
-    process.exit(1)
+    throw new Error('Server env validation failed; see above.')
   }
 }
 
@@ -100,14 +119,17 @@ function loadClientEnv() {
     return clientSchema.parse(import.meta.env)
   } catch (error) {
     console.error('❌ Client environment validation failed:')
-    if (error instanceof z.ZodError) {
-      error.errors.forEach(err => {
-        console.error(`  ${err.path.join('.')}: ${err.message}`)
+    if (isZodError(error)) {
+      error.issues.forEach(issue => {
+        const fieldPath = issue.path.join('.') || '(root)'
+        console.error(`  ${fieldPath}: ${issue.message}`)
       })
+    } else if (error instanceof Error) {
+      console.error(`  ${error.name}: ${error.message}`)
     } else {
-      console.error(error)
+      console.error(`  ${String(error)}`)
     }
-    throw new Error('Client environment validation failed')
+    throw new Error('Client env validation failed; see above.')
   }
 }
 
