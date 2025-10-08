@@ -169,6 +169,11 @@ X402_FACILITATOR_URL=https://x402.org/facilitator
 X402_RECEIVING_ADDRESS=0x5563f81AA5e6ae358D3752147A67198C8a528EA6
 X402_CHAIN=base-sepolia
 X402_ACCEPTED_ASSET=USDC
+
+# RPC fallback configuration (REQUIRED for robust verification)
+X402_TOKEN_ADDRESS=0x036CbD53842c5426634e7929541eC2318f3dCF7e  # USDC on Base Sepolia
+X402_CHAIN_ID=84532  # Base Sepolia
+BASE_SEPOLIA_RPC_URL=https://sepolia.base.org  # Optional, defaults to this
 ```
 
 **Health Check:**
@@ -205,10 +210,17 @@ curl -s http://localhost:5173/api/health | grep -A 5 '"x402"'
   ...
 }
 
+# Happy path: Facilitator succeeds
 [x402-facilitator] Verification started { txHash: '0x12345678...abcdef', ... }
 [x402-facilitator] Verification successful { txHash: '0x12345678...abcdef', amountPaid: 3000000, durationMs: 234, attempts: 1 }
 [metrics] x402_verify_total{mode="facilitator",code="success"} 1
 [metrics] x402_verify_latency_ms{mode="facilitator"} 234ms
+
+# OR: Facilitator 5xx → RPC fallback succeeds
+[x402-facilitator] Non-OK response { status: 500, body: '...' }
+[x402-rpc] RPC fallback verification started { txHash: '0x12345678...abcdef', chainId: 84532 }
+[x402-rpc] RPC verification successful { txHash: '0x12345678...abcdef', amountPaid: '3000000', durationMs: 145 }
+[metrics] x402_rpc_verify_total{chainId="84532",code="success"} 1
 
 queue/confirm payment confirmed { txHash: '0x12345678...abcdef', amountPaidAtomic: 3000000, ... }
 ```
@@ -216,10 +228,11 @@ queue/confirm payment confirmed { txHash: '0x12345678...abcdef', amountPaidAtomi
 **Success Indicators:**
 - ✅ Health endpoint shows `mode: "facilitator"`
 - ✅ Server logs show "using Facilitator verification"
-- ✅ Metrics emitted: `x402_verify_total`, `x402_verify_latency_ms`
+- ✅ Metrics emitted: `x402_verify_total`, `x402_verify_latency_ms`, `x402_rpc_verify_total`
 - ✅ Payment confirmed with masked txHash in logs
 - ✅ Track transitions: PENDING_PAYMENT → PAID → GENERATING → READY
 - ✅ No CDP API keys required (testnet only)
+- ✅ RPC fallback provides granular errors (WRONG_ASSET, WRONG_AMOUNT, NO_MATCH) even when facilitator is down
 
 ### Idempotency
 

@@ -6,6 +6,7 @@ import { z, ZodError } from 'zod'
 import { supabaseAdmin } from '../_shared/supabase.js'
 import { verifyPayment } from '../_shared/payments/x402-cdp.js'
 import { facilitatorVerify } from '../_shared/payments/x402-facilitator.js'
+import { verifyViaRPC } from '../_shared/payments/x402-rpc.js'
 import { serverEnv } from '../../src/config/env.server.js'
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
 import { errorTracker } from '../../src/lib/error-tracking.js'
@@ -245,29 +246,77 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
         asset: challenge.asset,
         amountAtomic: String(challenge.amount_atomic),
         payTo: challenge.pay_to,
-        txHash
+        txHash,
+        tokenAddress: serverEnv.X402_TOKEN_ADDRESS,
+        chainId: serverEnv.X402_CHAIN_ID
       })
 
       if (!vr.ok) {
-        // Map to granular 4xx status codes
-        const status = vr.code === 'NO_MATCH' ? 404 : 400
-        logger.warn('queue/confirm facilitator verification failed', {
-          requestId,
-          challengeId,
-          txHash: maskTxHash(txHash),
-          code: vr.code,
-          message: vr.message
-        })
-        res.status(status).json({
-          error: { code: vr.code, message: vr.message },
-          requestId
-        })
-        return
-      }
+        // On 5xx PROVIDER_ERROR, try RPC fallback
+        if (vr.code === 'PROVIDER_ERROR' && serverEnv.X402_TOKEN_ADDRESS && serverEnv.X402_CHAIN_ID) {
+          logger.warn('queue/confirm facilitator failed, trying RPC fallback', {
+            requestId,
+            challengeId,
+            txHash: maskTxHash(txHash),
+            facilitatorError: vr.message
+          })
 
-      verificationResult = {
-        ok: true,
-        amountPaidAtomic: Number(vr.amountPaidAtomic)
+          const rpcResult = await verifyViaRPC({
+            txHash,
+            tokenAddress: serverEnv.X402_TOKEN_ADDRESS,
+            payTo: challenge.pay_to,
+            amountAtomic: Number(challenge.amount_atomic),
+            chainId: serverEnv.X402_CHAIN_ID
+          })
+
+          if (rpcResult.ok) {
+            logger.info('queue/confirm RPC fallback succeeded', {
+              requestId,
+              challengeId,
+              txHash: maskTxHash(txHash)
+            })
+            verificationResult = {
+              ok: true,
+              amountPaidAtomic: Number(rpcResult.amountPaidAtomic)
+            }
+          } else {
+            // RPC fallback also failed with granular error
+            const status = rpcResult.code === 'NO_MATCH' ? 404 : 400
+            logger.warn('queue/confirm RPC fallback failed', {
+              requestId,
+              challengeId,
+              txHash: maskTxHash(txHash),
+              code: rpcResult.code,
+              message: rpcResult.message
+            })
+            res.status(status).json({
+              error: { code: rpcResult.code, message: rpcResult.message },
+              requestId
+            })
+            return
+          }
+        } else {
+          // 4xx error from facilitator or no RPC fallback available
+          const status = vr.code === 'NO_MATCH' ? 404 : 400
+          logger.warn('queue/confirm facilitator verification failed', {
+            requestId,
+            challengeId,
+            txHash: maskTxHash(txHash),
+            code: vr.code,
+            message: vr.message
+          })
+          res.status(status).json({
+            error: { code: vr.code, message: vr.message },
+            requestId
+          })
+          return
+        }
+      } else {
+        // Facilitator succeeded
+        verificationResult = {
+          ok: true,
+          amountPaidAtomic: Number(vr.amountPaidAtomic)
+        }
       }
     } else if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'cdp') {
       // Direct CDP verification (for mainnet SDK later)

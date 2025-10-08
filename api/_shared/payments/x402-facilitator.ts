@@ -128,23 +128,41 @@ function validateResponse(
  */
 async function attemptVerify(
   url: string,
-  params: { chain: string; asset: string; amountAtomic: string | number; payTo: string; txHash: string },
+  params: {
+    chain: string
+    asset: string
+    amountAtomic: string | number
+    payTo: string
+    txHash: string
+    tokenAddress?: string
+    chainId?: number
+  },
   attemptNum: number
 ): Promise<{ res?: Response; error?: any }> {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
   try {
+    const payload: any = {
+      chain: params.chain,
+      asset: params.asset,
+      amountAtomic: String(params.amountAtomic),
+      payTo: params.payTo,
+      txHash: params.txHash
+    }
+
+    // Include tokenAddress and chainId if available (for RPC-aware facilitators)
+    if (params.tokenAddress) {
+      payload.tokenAddress = params.tokenAddress
+    }
+    if (params.chainId) {
+      payload.chainId = params.chainId
+    }
+
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        chain: params.chain,
-        asset: params.asset,
-        amountAtomic: String(params.amountAtomic),
-        payTo: params.payTo,
-        txHash: params.txHash
-      }),
+      body: JSON.stringify(payload),
       signal: controller.signal
     })
 
@@ -168,6 +186,8 @@ export async function facilitatorVerify(params: {
   amountAtomic: string | number
   payTo: string
   txHash: string
+  tokenAddress?: string
+  chainId?: number
 }): Promise<VerifyResult> {
   const startTime = Date.now()
   const base = serverEnv.X402_FACILITATOR_URL
@@ -228,6 +248,9 @@ export async function facilitatorVerify(params: {
 
     // Parse response
     const text = await res!.text()
+    // Truncate response body to 500 chars for logging
+    const truncatedBody = text.length > 500 ? text.substring(0, 500) + '...[truncated]' : text
+
     let json: any = null
     try { json = text ? JSON.parse(text) : null } catch {}
 
@@ -238,7 +261,8 @@ export async function facilitatorVerify(params: {
       console.warn('[x402-facilitator] Non-OK response', {
         txHash: maskedTx,
         status: res!.status,
-        attempt: attempt + 1
+        attempt: attempt + 1,
+        body: truncatedBody
       })
 
       // Check if retryable (5xx)
@@ -254,7 +278,7 @@ export async function facilitatorVerify(params: {
       incrementCounter('x402_verify_total', { mode: 'facilitator', code })
       recordLatency('x402_verify_latency_ms', { mode: 'facilitator' }, durationMs)
 
-      return { ok: false, code, message: msg, detail: text }
+      return { ok: false, code, message: msg, detail: truncatedBody }
     }
 
     // Success response - validate
