@@ -30,8 +30,8 @@ interface HealthResponse {
       enabled: boolean
       mockEnabled: boolean
       mode: 'facilitator' | 'cdp' | 'mock' | 'none'
+      facilitatorUrl: string | null
       hasCDPKeys: boolean
-      hasFacilitatorUrl: boolean
     }
   }
   requestId: string
@@ -114,17 +114,16 @@ async function healthHandler(req: VercelRequest, res: VercelResponse): Promise<v
   // Overall health is OK if env is ok (supabase can be degraded)
   const ok = envCheck === 'ok'
 
-  // Determine payment mode (priority: facilitator > cdp > mock > none)
-  const hasFacilitatorUrl = !!serverEnv.X402_PROVIDER_URL
+  // Determine payment mode based on X402_MODE
   const hasCDPKeys = !!(serverEnv.CDP_API_KEY_ID && serverEnv.CDP_API_KEY_SECRET)
 
   // Debug logging to diagnose env var issues
   if (serverEnv.STAGE === 'dev') {
     console.log('[health] Debug payment config:', {
-      X402_PROVIDER_URL: serverEnv.X402_PROVIDER_URL || 'MISSING',
+      X402_MODE: serverEnv.X402_MODE,
+      X402_FACILITATOR_URL: serverEnv.X402_FACILITATOR_URL || 'MISSING',
       CDP_API_KEY_ID: serverEnv.CDP_API_KEY_ID ? `${serverEnv.CDP_API_KEY_ID.substring(0, 10)}...` : 'MISSING',
       CDP_API_KEY_SECRET: serverEnv.CDP_API_KEY_SECRET ? `${serverEnv.CDP_API_KEY_SECRET.substring(0, 10)}...` : 'MISSING',
-      hasFacilitatorUrl,
       hasCDPKeys,
       ENABLE_X402: serverEnv.ENABLE_X402,
       ENABLE_MOCK_PAYMENTS: serverEnv.ENABLE_MOCK_PAYMENTS
@@ -132,10 +131,12 @@ async function healthHandler(req: VercelRequest, res: VercelResponse): Promise<v
   }
 
   let paymentMode: 'facilitator' | 'cdp' | 'mock' | 'none' = 'none'
-  if (serverEnv.ENABLE_X402 && hasFacilitatorUrl) {
-    paymentMode = 'facilitator'
-  } else if (serverEnv.ENABLE_X402 && hasCDPKeys) {
-    paymentMode = 'cdp'
+  if (serverEnv.ENABLE_X402) {
+    if (serverEnv.X402_MODE === 'facilitator' && serverEnv.X402_FACILITATOR_URL) {
+      paymentMode = 'facilitator'
+    } else if (serverEnv.X402_MODE === 'cdp' && hasCDPKeys) {
+      paymentMode = 'cdp'
+    }
   } else if (serverEnv.ENABLE_MOCK_PAYMENTS) {
     paymentMode = 'mock'
   }
@@ -153,8 +154,8 @@ async function healthHandler(req: VercelRequest, res: VercelResponse): Promise<v
         enabled: serverEnv.ENABLE_X402,
         mockEnabled: serverEnv.ENABLE_MOCK_PAYMENTS,
         mode: paymentMode,
-        hasCDPKeys,
-        hasFacilitatorUrl
+        facilitatorUrl: serverEnv.X402_FACILITATOR_URL || null,
+        hasCDPKeys
       }
     },
     requestId

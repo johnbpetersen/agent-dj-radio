@@ -153,15 +153,73 @@ When `code === "RATE_LIMITED"`, response includes standard rate limit headers:
 
 The UI displays a countdown and disables the verify button until the rate limit expires.
 
-### Demo Flow
+### Demo Flow (Facilitator Mode - Base Sepolia)
 
-1. Get Base Sepolia testnet USDC from faucet
-2. Submit a track (e.g., 60s @ $0.05 = 0.05 USDC = 50000 atomic units)
-3. Copy payment address from modal
-4. Send USDC via MetaMask/Coinbase Wallet
-5. Copy transaction hash
-6. Paste into modal and click "Verify Payment"
-7. Track appears in queue once verified
+**Environment Setup:**
+```bash
+# .env.local for testnet development
+ENABLE_X402=true
+ENABLE_MOCK_PAYMENTS=false
+
+# Facilitator mode (x402.org community service)
+X402_MODE=facilitator
+X402_FACILITATOR_URL=https://x402.org/facilitator
+
+# Payment parameters
+X402_RECEIVING_ADDRESS=0x5563f81AA5e6ae358D3752147A67198C8a528EA6
+X402_CHAIN=base-sepolia
+X402_ACCEPTED_ASSET=USDC
+```
+
+**Health Check:**
+```bash
+# Verify facilitator mode is active
+curl -s http://localhost:5173/api/health | grep -A 5 '"x402"'
+
+# Expected output:
+# "x402": {
+#   "enabled": true,
+#   "mockEnabled": false,
+#   "mode": "facilitator",
+#   "facilitatorUrl": "https://x402.org/facilitator",
+#   ...
+# }
+```
+
+**UI Flow:**
+1. **Get Testnet USDC**: Base Sepolia faucet → your wallet
+2. **Submit Track**: Enter prompt (e.g., "60s lofi beats") → HTTP 402 response
+3. **Payment Modal Opens**: Shows amount (e.g., "0.15 USDC"), address, countdown
+4. **Send Payment**: MetaMask/Coinbase Wallet → Base Sepolia USDC transfer
+5. **Paste TX Hash**: Copy transaction hash from wallet → paste in modal
+6. **Confirm**: Click "Verify Payment" → server verifies via facilitator
+7. **Success**: Track moves to PAID → GENERATING → READY → plays on station
+
+**Expected Server Logs:**
+```
+[startup] Payment configuration: {
+  mode: 'facilitator',
+  x402Enabled: true,
+  x402Mode: 'facilitator',
+  facilitatorUrl: 'https://x402.org/facilitator',
+  ...
+}
+
+[x402-facilitator] Verification started { txHash: '0x12345678...abcdef', ... }
+[x402-facilitator] Verification successful { txHash: '0x12345678...abcdef', amountPaid: 3000000, durationMs: 234, attempts: 1 }
+[metrics] x402_verify_total{mode="facilitator",code="success"} 1
+[metrics] x402_verify_latency_ms{mode="facilitator"} 234ms
+
+queue/confirm payment confirmed { txHash: '0x12345678...abcdef', amountPaidAtomic: 3000000, ... }
+```
+
+**Success Indicators:**
+- ✅ Health endpoint shows `mode: "facilitator"`
+- ✅ Server logs show "using Facilitator verification"
+- ✅ Metrics emitted: `x402_verify_total`, `x402_verify_latency_ms`
+- ✅ Payment confirmed with masked txHash in logs
+- ✅ Track transitions: PENDING_PAYMENT → PAID → GENERATING → READY
+- ✅ No CDP API keys required (testnet only)
 
 ### Idempotency
 

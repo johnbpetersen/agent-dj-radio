@@ -58,6 +58,8 @@ const serverSchema = z.object({
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 
   // X402 configuration (required in alpha)
+  X402_MODE: z.enum(['facilitator', 'cdp', 'none']).default('none'),
+  X402_FACILITATOR_URL: urlSchema.optional(),
   X402_PROVIDER_URL: urlSchema.optional(),
   CDP_API_KEY_ID: z.string().optional(),
   CDP_API_KEY_SECRET: z.string().optional(),
@@ -80,12 +82,18 @@ const serverSchema = z.object({
 }).refine((data) => {
   // Stage-specific validations
   if (data.STAGE === 'alpha') {
-    const required = {
-      X402_PROVIDER_URL: data.X402_PROVIDER_URL,
-      CDP_API_KEY_ID: data.CDP_API_KEY_ID,
-      CDP_API_KEY_SECRET: data.CDP_API_KEY_SECRET,
+    const required: Record<string, any> = {
       X402_RECEIVING_ADDRESS: data.X402_RECEIVING_ADDRESS,
       ELEVEN_API_KEY: data.ELEVEN_API_KEY,
+    }
+
+    // X402 mode-specific requirements
+    if (data.X402_MODE === 'facilitator') {
+      required.X402_FACILITATOR_URL = data.X402_FACILITATOR_URL
+    } else if (data.X402_MODE === 'cdp') {
+      required.X402_PROVIDER_URL = data.X402_PROVIDER_URL
+      required.CDP_API_KEY_ID = data.CDP_API_KEY_ID
+      required.CDP_API_KEY_SECRET = data.CDP_API_KEY_SECRET
     }
 
     const missing = Object.entries(required)
@@ -93,7 +101,7 @@ const serverSchema = z.object({
       .map(([key]) => key)
 
     if (missing.length > 0) {
-      throw new Error(`Alpha stage requires: ${missing.join(', ')}`)
+      throw new Error(`Alpha stage with X402_MODE=${data.X402_MODE} requires: ${missing.join(', ')}`)
     }
   }
 
@@ -102,8 +110,10 @@ const serverSchema = z.object({
 
 // Environment validation and loading
 function loadServerEnv() {
+  let env: z.infer<typeof serverSchema>
+
   try {
-    return serverSchema.parse(process.env)
+    env = serverSchema.parse(process.env)
   } catch (error) {
     console.error('❌ Server environment validation failed:')
     if (isZodError(error)) {
@@ -118,6 +128,19 @@ function loadServerEnv() {
     }
     throw new Error('Server env validation failed; see above.')
   }
+
+  // Apply legacy alias: X402_PROVIDER_URL → X402_FACILITATOR_URL
+  if (env.X402_PROVIDER_URL && !env.X402_FACILITATOR_URL) {
+    console.warn('⚠️  [env] X402_PROVIDER_URL is deprecated. Use X402_FACILITATOR_URL instead.')
+    env.X402_FACILITATOR_URL = env.X402_PROVIDER_URL
+  }
+
+  // If both set, prefer X402_FACILITATOR_URL and warn
+  if (env.X402_PROVIDER_URL && env.X402_FACILITATOR_URL && env.X402_PROVIDER_URL !== env.X402_FACILITATOR_URL) {
+    console.warn('⚠️  [env] Both X402_PROVIDER_URL and X402_FACILITATOR_URL are set. Using X402_FACILITATOR_URL.')
+  }
+
+  return env
 }
 
 // Token masking utility for secure logging
@@ -149,14 +172,16 @@ export const isAlpha = serverEnv.STAGE === 'alpha'
 export const isProduction = isStaging || isAlpha
 
 // Startup log: payment configuration (non-secret)
-const hasFacilitatorUrl = !!serverEnv.X402_PROVIDER_URL
+const hasFacilitatorUrl = !!serverEnv.X402_FACILITATOR_URL
 const hasCDPKeys = !!(serverEnv.CDP_API_KEY_ID && serverEnv.CDP_API_KEY_SECRET)
 
 let paymentMode: 'facilitator' | 'cdp' | 'mock' | 'none' = 'none'
-if (serverEnv.ENABLE_X402 && hasFacilitatorUrl) {
-  paymentMode = 'facilitator'
-} else if (serverEnv.ENABLE_X402 && hasCDPKeys) {
-  paymentMode = 'cdp'
+if (serverEnv.ENABLE_X402) {
+  if (serverEnv.X402_MODE === 'facilitator' && hasFacilitatorUrl) {
+    paymentMode = 'facilitator'
+  } else if (serverEnv.X402_MODE === 'cdp' && hasCDPKeys) {
+    paymentMode = 'cdp'
+  }
 } else if (serverEnv.ENABLE_MOCK_PAYMENTS) {
   paymentMode = 'mock'
 }
@@ -164,8 +189,9 @@ if (serverEnv.ENABLE_X402 && hasFacilitatorUrl) {
 console.log('[startup] Payment configuration:', {
   mode: paymentMode,
   x402Enabled: serverEnv.ENABLE_X402,
+  x402Mode: serverEnv.X402_MODE,
   mockEnabled: serverEnv.ENABLE_MOCK_PAYMENTS,
-  facilitatorUrl: serverEnv.X402_PROVIDER_URL || 'none',
+  facilitatorUrl: serverEnv.X402_FACILITATOR_URL || 'none',
   hasCDPKeys,
   stage: serverEnv.STAGE
 })

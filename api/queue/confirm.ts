@@ -5,13 +5,14 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { z, ZodError } from 'zod'
 import { supabaseAdmin } from '../_shared/supabase.js'
 import { verifyPayment } from '../_shared/payments/x402-cdp.js'
-import { verifyWithFacilitator } from '../_shared/payments/x402-facilitator.js'
+import { facilitatorVerify } from '../_shared/payments/x402-facilitator.js'
 import { serverEnv } from '../../src/config/env.server.js'
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
 import { errorTracker } from '../../src/lib/error-tracking.js'
 import { broadcastQueueUpdate } from '../../src/server/realtime.js'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
 import { sanitizeForClient } from '../_shared/security.js'
+import { maskTxHash } from '../../src/lib/crypto-utils.js'
 
 // Request validation schema
 const confirmRequestSchema = z.object({
@@ -96,7 +97,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       throw error
     }
 
-    logger.info('queue/confirm processing', { requestId, challengeId, txHash })
+    logger.info('queue/confirm processing', { requestId, challengeId, txHash: maskTxHash(txHash) })
 
     // Early guard: Reject mock tx hashes in live mode
     if (serverEnv.ENABLE_X402) {
@@ -109,7 +110,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
         logger.warn('queue/confirm mock proof rejected in live mode', {
           requestId,
           challengeId,
-          txHash: txHash.substring(0, 10) + '...',
+          txHash: maskTxHash(txHash),
           isMockPattern,
           isStrictHex
         })
@@ -163,7 +164,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       logger.info('queue/confirm idempotent (already confirmed)', {
         requestId,
         challengeId,
-        txHash,
+        txHash: maskTxHash(txHash),
         trackId,
         existingConfirmationId: existingConfirmation.id
       })
@@ -226,45 +227,50 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
     }
 
     // 4. Branch: Facilitator, CDP, or mock verification
-    let verificationResult: { ok: true; amountPaidAtomic: number } | { ok: false; code: string; detail?: string }
+    let verificationResult: { ok: true; amountPaidAtomic: number | string } | { ok: false; code: string; message?: string; detail?: string }
 
-    // Provider selection (priority: facilitator > cdp > mock > none)
-    const hasFacilitatorUrl = !!serverEnv.X402_PROVIDER_URL
-    const hasCDPKeys = !!(serverEnv.CDP_API_KEY_ID && serverEnv.CDP_API_KEY_SECRET)
-
-    if (serverEnv.ENABLE_X402 && hasFacilitatorUrl) {
-      // Facilitator verification (x402.org or custom)
-      logger.info('queue/confirm using facilitator verification', {
+    // Provider selection based on X402_MODE
+    if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'facilitator') {
+      // Facilitator verification (x402.org REST API for testnet)
+      logger.info('queue/confirm using Facilitator verification', {
         requestId,
         challengeId,
-        facilitatorUrl: serverEnv.X402_PROVIDER_URL
+        facilitatorUrl: serverEnv.X402_FACILITATOR_URL,
+        chain: challenge.chain,
+        asset: challenge.asset
       })
 
-      // Ensure we have the x_payment_header from challenge
-      if (!challenge.x_payment_header) {
-        logger.error('queue/confirm missing x_payment_header', { requestId, challengeId })
-        res.status(500).json({
-          error: {
-            code: 'INTERNAL',
-            message: 'Payment challenge missing required header data'
-          },
+      const vr = await facilitatorVerify({
+        chain: challenge.chain,
+        asset: challenge.asset,
+        amountAtomic: String(challenge.amount_atomic),
+        payTo: challenge.pay_to,
+        txHash
+      })
+
+      if (!vr.ok) {
+        // Map to granular 4xx status codes
+        const status = vr.code === 'NO_MATCH' ? 404 : 400
+        logger.warn('queue/confirm facilitator verification failed', {
+          requestId,
+          challengeId,
+          txHash: maskTxHash(txHash),
+          code: vr.code,
+          message: vr.message
+        })
+        res.status(status).json({
+          error: { code: vr.code, message: vr.message },
           requestId
         })
         return
       }
 
-      verificationResult = await verifyWithFacilitator({
-        facilitatorUrl: serverEnv.X402_PROVIDER_URL,
-        xPaymentHeader: challenge.x_payment_header,
-        txHash,
-        chain: challenge.chain,
-        asset: challenge.asset,
-        payTo: challenge.pay_to,
-        amountAtomic: Number(challenge.amount_atomic),
-        challengeId
-      })
-    } else if (serverEnv.ENABLE_X402 && hasCDPKeys) {
-      // Direct CDP verification
+      verificationResult = {
+        ok: true,
+        amountPaidAtomic: Number(vr.amountPaidAtomic)
+      }
+    } else if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'cdp') {
+      // Direct CDP verification (for mainnet SDK later)
       logger.info('queue/confirm using CDP verification', { requestId, challengeId })
       verificationResult = await verifyPayment({
         txHash,
@@ -283,8 +289,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       logger.error('queue/confirm payments disabled', {
         requestId,
         x402Enabled: serverEnv.ENABLE_X402,
-        hasFacilitatorUrl,
-        hasCDPKeys,
+        x402Mode: serverEnv.X402_MODE,
         mockEnabled: serverEnv.ENABLE_MOCK_PAYMENTS
       })
       res.status(503).json({
@@ -302,7 +307,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       logger.warn('queue/confirm verification failed', {
         requestId,
         challengeId,
-        txHash,
+        txHash: maskTxHash(txHash),
         code: verificationResult.code,
         message: verificationResult.message,
         detail: verificationResult.detail
@@ -312,7 +317,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       logger.info('queue/confirm audit: verification failed', {
         requestId,
         challengeId,
-        txHash,
+        txHash: maskTxHash(txHash),
         userId: challenge.user_id,
         trackId: challenge.track_id,
         amountAtomic: challenge.amount_atomic,
@@ -335,9 +340,9 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
     // 6. Verification successful! Insert confirmation record
     // Determine provider based on which mode was used
     let provider: string
-    if (hasFacilitatorUrl) {
+    if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'facilitator') {
       provider = 'facilitator'
-    } else if (hasCDPKeys) {
+    } else if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'cdp') {
       provider = 'cdp'
     } else {
       provider = 'mock'
@@ -468,7 +473,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
     logger.info('queue/confirm payment confirmed', {
       requestId,
       challengeId,
-      txHash,
+      txHash: maskTxHash(txHash),
       trackId: challenge.track_id,
       amountPaidAtomic: verificationResult.amountPaidAtomic,
       durationMs: Date.now() - startTime
@@ -478,7 +483,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
     logger.info('queue/confirm audit: success', {
       requestId,
       challengeId,
-      txHash,
+      txHash: maskTxHash(txHash),
       userId: challenge.user_id,
       trackId: challenge.track_id,
       amountAtomic: challenge.amount_atomic,

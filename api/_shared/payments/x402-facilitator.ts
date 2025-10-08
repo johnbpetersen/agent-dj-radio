@@ -1,197 +1,328 @@
 // api/_shared/payments/x402-facilitator.ts
-// x402 facilitator payment verification using official SDK
+// x402 facilitator payment verification using REST API (for testnet/Base Sepolia)
+// Hardened with timeouts, retries, strict validation, and observability
 
-import { createFacilitator } from '@coinbase/x402/server'
-import { logger } from '../../../src/lib/logger.js'
-import type { VerifyPaymentSuccess, VerifyPaymentFailure, VerificationErrorCode } from './x402-cdp.js'
+import { serverEnv } from '../../../src/config/env.server.js'
+import { maskTxHash, maskAddress, normalizeAddress, normalizeIdentifier } from '../../../src/lib/crypto-utils.js'
+import { incrementCounter, recordLatency } from '../../../src/lib/metrics.js'
 
-export interface VerifyWithFacilitatorInput {
-  facilitatorUrl: string
-  xPaymentHeader: string
-  txHash: string
-  // Challenge data for requirements
-  chain: string
-  asset: string
-  payTo: string
-  amountAtomic: number
-  challengeId: string
+export type VerifyOk = {
+  ok: true
+  amountPaidAtomic: string | number
+  providerRaw?: any
+}
+
+export type VerifyErr = {
+  ok: false
+  code: 'WRONG_CHAIN'|'WRONG_ASSET'|'WRONG_AMOUNT'|'NO_MATCH'|'EXPIRED'|'PROVIDER_ERROR'
+  message: string
+  detail?: string
+}
+
+export type VerifyResult = VerifyOk | VerifyErr
+
+// Retry configuration
+const TIMEOUT_MS = 10000 // 10s per attempt
+const RETRY_DELAYS_MS = [300, 800] // 2 retries with jitter base delays
+const MAX_ATTEMPTS = 1 + RETRY_DELAYS_MS.length // initial + retries
+
+/**
+ * Add jitter to retry delay (±25% randomization)
+ */
+function addJitter(baseMs: number): number {
+  const jitter = baseMs * 0.25
+  return Math.floor(baseMs + (Math.random() * 2 - 1) * jitter)
 }
 
 /**
- * Map facilitator error responses to our standardized error codes
+ * Check if error is retryable (5xx or network error)
  */
-function mapFacilitatorError(error: any): VerifyPaymentFailure {
-  const errorMsg = error?.message || 'Verification failed'
-  const errorCode = error?.code || 'UNKNOWN'
+function isRetryable(status?: number, error?: any): boolean {
+  // Network errors (fetch failures)
+  if (error && (
+    error.message?.includes('fetch failed') ||
+    error.message?.includes('ECONNREFUSED') ||
+    error.message?.includes('ENOTFOUND') ||
+    error.message?.includes('ETIMEDOUT')
+  )) {
+    return true
+  }
 
-  logger.debug('Mapping facilitator error', { errorCode, errorMsg, fullError: error })
+  // 5xx errors
+  if (status && status >= 500) {
+    return true
+  }
 
-  // Map common error patterns
-  if (errorCode.includes('WRONG_CHAIN') || errorMsg.toLowerCase().includes('chain')) {
+  return false
+}
+
+/**
+ * Validate facilitator response fields against expected values
+ */
+function validateResponse(
+  json: any,
+  expected: { chain: string; asset: string; payTo: string; amountAtomic: number }
+): VerifyErr | null {
+  // Field name variations: to/payTo, asset/symbol, chain/network, amount/amountAtomic
+  const responseTo = json.to || json.payTo
+  const responseAsset = json.asset || json.symbol
+  const responseChain = json.chain || json.network
+  const responseAmount = json.amountAtomic || json.amount
+
+  // Check required fields present
+  if (!responseTo || !responseAsset || !responseChain || !responseAmount) {
+    return {
+      ok: false,
+      code: 'PROVIDER_ERROR',
+      message: 'Facilitator response missing required fields',
+      detail: `Missing: to=${!responseTo}, asset=${!responseAsset}, chain=${!responseChain}, amount=${!responseAmount}`
+    }
+  }
+
+  // Validate 'to' address matches
+  if (normalizeAddress(responseTo) !== normalizeAddress(expected.payTo)) {
+    return {
+      ok: false,
+      code: 'NO_MATCH',
+      message: 'Payment sent to wrong address',
+      detail: `Expected ${maskAddress(expected.payTo)}, got ${maskAddress(responseTo)}`
+    }
+  }
+
+  // Validate chain matches
+  if (normalizeIdentifier(responseChain) !== normalizeIdentifier(expected.chain)) {
     return {
       ok: false,
       code: 'WRONG_CHAIN',
       message: 'Payment sent on wrong blockchain network',
-      detail: errorMsg
+      detail: `Expected ${expected.chain}, got ${responseChain}`
     }
   }
 
-  if (errorCode.includes('WRONG_ASSET') || errorMsg.toLowerCase().includes('asset') || errorMsg.toLowerCase().includes('token')) {
+  // Validate asset matches
+  if (normalizeIdentifier(responseAsset) !== normalizeIdentifier(expected.asset)) {
     return {
       ok: false,
       code: 'WRONG_ASSET',
       message: 'Wrong cryptocurrency used for payment',
-      detail: errorMsg
+      detail: `Expected ${expected.asset}, got ${responseAsset}`
     }
   }
 
-  if (errorCode.includes('WRONG_AMOUNT') || errorCode.includes('INSUFFICIENT') || errorMsg.toLowerCase().includes('amount')) {
+  // Validate amount is sufficient
+  const amountPaid = typeof responseAmount === 'string' ? parseInt(responseAmount, 10) : responseAmount
+  if (isNaN(amountPaid) || amountPaid < expected.amountAtomic) {
     return {
       ok: false,
       code: 'WRONG_AMOUNT',
       message: 'Payment amount is insufficient',
-      detail: errorMsg
+      detail: `Expected ${expected.amountAtomic}, got ${amountPaid}`
     }
   }
 
-  if (errorCode.includes('NOT_FOUND') || errorCode.includes('NO_TRANSACTION') || errorMsg.toLowerCase().includes('not found')) {
-    return {
-      ok: false,
-      code: 'NO_MATCH',
-      message: 'Transaction not found on blockchain',
-      detail: errorMsg
-    }
-  }
-
-  if (errorCode.includes('EXPIRED') || errorMsg.toLowerCase().includes('expired')) {
-    return {
-      ok: false,
-      code: 'EXPIRED',
-      message: 'Transaction expired or timed out',
-      detail: errorMsg
-    }
-  }
-
-  // Default to PROVIDER_ERROR
-  return {
-    ok: false,
-    code: 'PROVIDER_ERROR',
-    message: 'Payment verification service error',
-    detail: errorMsg
-  }
+  return null // validation passed
 }
 
 /**
- * Verify payment using x402 facilitator with official SDK
+ * Single attempt to verify payment with facilitator
  */
-export async function verifyWithFacilitator(
-  input: VerifyWithFacilitatorInput
-): Promise<VerifyPaymentSuccess | VerifyPaymentFailure> {
-  const { facilitatorUrl, xPaymentHeader, txHash, chain, asset, payTo, amountAtomic, challengeId } = input
-
-  logger.info('Facilitator verification started', {
-    challengeId,
-    txHash,
-    facilitatorUrl,
-    chain,
-    asset,
-    amountAtomic,
-    payTo: payTo.substring(0, 10) + '...'
-  })
+async function attemptVerify(
+  url: string,
+  params: { chain: string; asset: string; amountAtomic: string | number; payTo: string; txHash: string },
+  attemptNum: number
+): Promise<{ res?: Response; error?: any }> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
   try {
-    // Create facilitator instance
-    const facilitator = createFacilitator({ url: facilitatorUrl.replace(/\/$/, '') })
-
-    // Verify payment using SDK
-    const result = await facilitator.verify({
-      paymentPayload: {
-        payment: xPaymentHeader, // Exact X-PAYMENT header string
-        txHash
-      },
-      paymentRequirements: {
-        chain,
-        asset,
-        to: payTo,
-        amount: amountAtomic.toString() // SDK expects string
-      }
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        chain: params.chain,
+        asset: params.asset,
+        amountAtomic: String(params.amountAtomic),
+        payTo: params.payTo,
+        txHash: params.txHash
+      }),
+      signal: controller.signal
     })
 
-    // Check verification result
-    if (!result.ok) {
-      logger.warn('Facilitator verification rejected', {
-        challengeId,
-        txHash,
-        error: result.error
-      })
-      return mapFacilitatorError(result.error)
+    clearTimeout(timeoutId)
+    return { res }
+  } catch (error: any) {
+    clearTimeout(timeoutId)
+
+    // Distinguish timeout from other errors
+    if (error.name === 'AbortError') {
+      return { error: new Error('Request timeout after 10s') }
     }
 
-    // Success! Extract verified payment details
-    const verifiedPayment = result.data
-    const amountPaid = parseInt(verifiedPayment.amount || '0', 10)
+    return { error }
+  }
+}
 
-    // Validate amount meets minimum requirement
-    if (amountPaid < amountAtomic) {
-      const diff = amountAtomic - amountPaid
-      logger.warn('Facilitator verification: insufficient amount', {
-        challengeId,
-        txHash,
-        expected: amountAtomic,
-        actual: amountPaid,
-        shortfall: diff
+export async function facilitatorVerify(params: {
+  chain: string
+  asset: string
+  amountAtomic: string | number
+  payTo: string
+  txHash: string
+}): Promise<VerifyResult> {
+  const startTime = Date.now()
+  const base = serverEnv.X402_FACILITATOR_URL
+  const url = `${base.replace(/\/$/, '')}/verify`
+  const maskedTx = maskTxHash(params.txHash)
+
+  console.log('[x402-facilitator] Verification started', {
+    txHash: maskedTx,
+    chain: params.chain,
+    asset: params.asset,
+    payTo: maskAddress(params.payTo)
+  })
+
+  let lastError: any
+  let lastStatus: number | undefined
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    // Add retry delay (skip for first attempt)
+    if (attempt > 0) {
+      const baseDelay = RETRY_DELAYS_MS[attempt - 1]
+      const delayMs = addJitter(baseDelay)
+      console.log(`[x402-facilitator] Retry attempt ${attempt + 1}/${MAX_ATTEMPTS} after ${delayMs}ms`, {
+        txHash: maskedTx
       })
+      await new Promise(resolve => setTimeout(resolve, delayMs))
+    }
+
+    const { res, error } = await attemptVerify(url, params, attempt + 1)
+
+    // Handle fetch errors
+    if (error) {
+      lastError = error
+      console.warn('[x402-facilitator] Attempt failed', {
+        txHash: maskedTx,
+        attempt: attempt + 1,
+        error: error.message
+      })
+
+      // Check if retryable
+      if (attempt < MAX_ATTEMPTS - 1 && isRetryable(undefined, error)) {
+        continue // retry
+      }
+
+      // Final attempt or non-retryable
+      const durationMs = Date.now() - startTime
+      incrementCounter('x402_verify_total', { mode: 'facilitator', code: 'PROVIDER_ERROR' })
+      recordLatency('x402_verify_latency_ms', { mode: 'facilitator' }, durationMs)
+
       return {
         ok: false,
-        code: 'WRONG_AMOUNT',
-        message: 'Payment amount is insufficient',
-        detail: `Insufficient payment: expected ${amountAtomic}, got ${amountPaid} (short by ${diff})`
+        code: 'PROVIDER_ERROR',
+        message: error.message?.includes('timeout')
+          ? 'Payment verification service timeout'
+          : 'Payment verification service temporarily unavailable',
+        detail: error.message
       }
     }
 
-    logger.info('Facilitator verification successful', {
-      challengeId,
-      txHash,
-      amountPaidAtomic: amountPaid,
-      asset: verifiedPayment.asset,
-      chain: verifiedPayment.chain
+    // Parse response
+    const text = await res!.text()
+    let json: any = null
+    try { json = text ? JSON.parse(text) : null } catch {}
+
+    lastStatus = res!.status
+
+    // Handle non-2xx responses
+    if (!res!.ok) {
+      console.warn('[x402-facilitator] Non-OK response', {
+        txHash: maskedTx,
+        status: res!.status,
+        attempt: attempt + 1
+      })
+
+      // Check if retryable (5xx)
+      if (attempt < MAX_ATTEMPTS - 1 && isRetryable(res!.status)) {
+        continue // retry
+      }
+
+      // Final attempt or 4xx (non-retryable)
+      const durationMs = Date.now() - startTime
+      const code = json?.error?.code ?? 'PROVIDER_ERROR'
+      const msg = json?.error?.message ?? `Provider returned ${res!.status}`
+
+      incrementCounter('x402_verify_total', { mode: 'facilitator', code })
+      recordLatency('x402_verify_latency_ms', { mode: 'facilitator' }, durationMs)
+
+      return { ok: false, code, message: msg, detail: text }
+    }
+
+    // Success response - validate
+    if (json?.verified !== true) {
+      const durationMs = Date.now() - startTime
+      const code = json?.error?.code ?? 'NO_MATCH'
+      const msg = json?.error?.message ?? 'Transaction not found or does not match'
+
+      incrementCounter('x402_verify_total', { mode: 'facilitator', code })
+      recordLatency('x402_verify_latency_ms', { mode: 'facilitator' }, durationMs)
+
+      return { ok: false, code, message: msg, detail: text }
+    }
+
+    // Strict field validation
+    const validationError = validateResponse(json, {
+      chain: params.chain,
+      asset: params.asset,
+      payTo: params.payTo,
+      amountAtomic: typeof params.amountAtomic === 'string'
+        ? parseInt(params.amountAtomic, 10)
+        : params.amountAtomic
     })
+
+    if (validationError) {
+      const durationMs = Date.now() - startTime
+      console.warn('[x402-facilitator] Validation failed', {
+        txHash: maskedTx,
+        code: validationError.code,
+        detail: validationError.detail
+      })
+
+      incrementCounter('x402_verify_total', { mode: 'facilitator', code: validationError.code })
+      recordLatency('x402_verify_latency_ms', { mode: 'facilitator' }, durationMs)
+
+      return validationError
+    }
+
+    // Success!
+    const durationMs = Date.now() - startTime
+    const amountPaid = json.amountAtomic || json.amount
+
+    console.log('[x402-facilitator] Verification successful', {
+      txHash: maskedTx,
+      amountPaid,
+      durationMs,
+      attempts: attempt + 1
+    })
+
+    incrementCounter('x402_verify_total', { mode: 'facilitator', code: 'success' })
+    recordLatency('x402_verify_latency_ms', { mode: 'facilitator' }, durationMs)
 
     return {
       ok: true,
-      amountPaidAtomic: amountPaid
+      amountPaidAtomic: amountPaid,
+      providerRaw: json
     }
-  } catch (error) {
-    const err = error instanceof Error ? error : new Error(String(error))
+  }
 
-    logger.error('Facilitator verification error', {
-      challengeId,
-      txHash,
-      error: err.message,
-      stack: err.stack
-    })
+  // Should not reach here, but handle gracefully
+  const durationMs = Date.now() - startTime
+  incrementCounter('x402_verify_total', { mode: 'facilitator', code: 'PROVIDER_ERROR' })
+  recordLatency('x402_verify_latency_ms', { mode: 'facilitator' }, durationMs)
 
-    // Check if it's a network/HTTP error
-    if (err.message.includes('fetch failed') || err.message.includes('ECONNREFUSED')) {
-      return {
-        ok: false,
-        code: 'PROVIDER_ERROR',
-        message: 'Payment verification service unavailable',
-        detail: `Facilitator unavailable: ${err.message}`
-      }
-    }
-
-    // Check for timeout
-    if (err.message.includes('timeout') || err.message.includes('AbortError')) {
-      return {
-        ok: false,
-        code: 'PROVIDER_ERROR',
-        message: 'Payment verification service timeout',
-        detail: `Facilitator timeout: ${err.message}`
-      }
-    }
-
-    // Generic error
-    return mapFacilitatorError(err)
+  return {
+    ok: false,
+    code: 'PROVIDER_ERROR',
+    message: 'Payment verification failed after retries',
+    detail: lastError?.message || `Last status: ${lastStatus}`
   }
 }
