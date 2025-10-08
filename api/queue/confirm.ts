@@ -227,11 +227,49 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       return
     }
 
-    // 4. Branch: Facilitator, CDP, or mock verification
+    // 4. Branch: RPC-only, Facilitator, CDP, or mock verification
     let verificationResult: { ok: true; amountPaidAtomic: number | string } | { ok: false; code: string; message?: string; detail?: string }
 
     // Provider selection based on X402_MODE
-    if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'facilitator') {
+    if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'rpc-only') {
+      // RPC-only verification (simple transaction verification, not full x402 protocol)
+      logger.info('queue/confirm using RPC-only verification', {
+        requestId,
+        challengeId,
+        chain: challenge.chain,
+        asset: challenge.asset,
+        chainId: serverEnv.X402_CHAIN_ID
+      })
+
+      const rpcResult = await verifyViaRPC({
+        txHash,
+        tokenAddress: serverEnv.X402_TOKEN_ADDRESS!,
+        payTo: challenge.pay_to,
+        amountAtomic: Number(challenge.amount_atomic),
+        chainId: serverEnv.X402_CHAIN_ID
+      })
+
+      if (!rpcResult.ok) {
+        const status = rpcResult.code === 'NO_MATCH' ? 404 : 400
+        logger.warn('queue/confirm RPC verification failed', {
+          requestId,
+          challengeId,
+          txHash: maskTxHash(txHash),
+          code: rpcResult.code,
+          message: rpcResult.message
+        })
+        res.status(status).json({
+          error: { code: rpcResult.code, message: rpcResult.message },
+          requestId
+        })
+        return
+      }
+
+      verificationResult = {
+        ok: true,
+        amountPaidAtomic: Number(rpcResult.amountPaidAtomic)
+      }
+    } else if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'facilitator') {
       // Facilitator verification (x402.org REST API for testnet)
       logger.info('queue/confirm using Facilitator verification', {
         requestId,
@@ -389,7 +427,9 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
     // 6. Verification successful! Insert confirmation record
     // Determine provider based on which mode was used
     let provider: string
-    if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'facilitator') {
+    if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'rpc-only') {
+      provider = 'rpc'
+    } else if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'facilitator') {
       provider = 'facilitator'
     } else if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'cdp') {
       provider = 'cdp'

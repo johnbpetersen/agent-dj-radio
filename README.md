@@ -153,7 +153,10 @@ When `code === "RATE_LIMITED"`, response includes standard rate limit headers:
 
 The UI displays a countdown and disables the verify button until the rate limit expires.
 
-### Demo Flow (Facilitator Mode - Base Sepolia)
+### Demo Flow (RPC-Only Mode - Base Sepolia)
+
+**⚠️ Note on x402 Protocol:**
+This implementation uses **simplified transaction verification** (RPC-only mode), NOT the full x402 protocol. The full x402 protocol requires cryptographic payment authorizations (ERC-3009 transferWithAuthorization) verified BEFORE settlement. Our current flow verifies completed transactions AFTER they've been sent to the blockchain. This works for testing but is not production-grade x402.
 
 **Environment Setup:**
 ```bash
@@ -161,16 +164,15 @@ The UI displays a countdown and disables the verify button until the rate limit 
 ENABLE_X402=true
 ENABLE_MOCK_PAYMENTS=false
 
-# Facilitator mode (x402.org community service)
-X402_MODE=facilitator
-X402_FACILITATOR_URL=https://x402.org/facilitator
+# RPC-only mode (direct blockchain verification)
+X402_MODE=rpc-only
 
 # Payment parameters
 X402_RECEIVING_ADDRESS=0x5563f81AA5e6ae358D3752147A67198C8a528EA6
 X402_CHAIN=base-sepolia
 X402_ACCEPTED_ASSET=USDC
 
-# RPC fallback configuration (REQUIRED for robust verification)
+# RPC verification configuration (REQUIRED for rpc-only mode)
 X402_TOKEN_ADDRESS=0x036CbD53842c5426634e7929541eC2318f3dCF7e  # USDC on Base Sepolia
 X402_CHAIN_ID=84532  # Base Sepolia
 BASE_SEPOLIA_RPC_URL=https://sepolia.base.org  # Optional, defaults to this
@@ -178,15 +180,15 @@ BASE_SEPOLIA_RPC_URL=https://sepolia.base.org  # Optional, defaults to this
 
 **Health Check:**
 ```bash
-# Verify facilitator mode is active
+# Verify rpc-only mode is active
 curl -s http://localhost:5173/api/health | grep -A 5 '"x402"'
 
 # Expected output:
 # "x402": {
 #   "enabled": true,
 #   "mockEnabled": false,
-#   "mode": "facilitator",
-#   "facilitatorUrl": "https://x402.org/facilitator",
+#   "mode": "rpc-only",
+#   "facilitatorUrl": null,
 #   ...
 # }
 ```
@@ -197,42 +199,45 @@ curl -s http://localhost:5173/api/health | grep -A 5 '"x402"'
 3. **Payment Modal Opens**: Shows amount (e.g., "0.15 USDC"), address, countdown
 4. **Send Payment**: MetaMask/Coinbase Wallet → Base Sepolia USDC transfer
 5. **Paste TX Hash**: Copy transaction hash from wallet → paste in modal
-6. **Confirm**: Click "Verify Payment" → server verifies via facilitator
+6. **Confirm**: Click "Verify Payment" → server verifies via RPC (direct blockchain query)
 7. **Success**: Track moves to PAID → GENERATING → READY → plays on station
 
 **Expected Server Logs:**
 ```
 [startup] Payment configuration: {
-  mode: 'facilitator',
+  mode: 'rpc-only',
   x402Enabled: true,
-  x402Mode: 'facilitator',
-  facilitatorUrl: 'https://x402.org/facilitator',
+  x402Mode: 'rpc-only',
   ...
 }
 
-# Happy path: Facilitator succeeds
-[x402-facilitator] Verification started { txHash: '0x12345678...abcdef', ... }
-[x402-facilitator] Verification successful { txHash: '0x12345678...abcdef', amountPaid: 3000000, durationMs: 234, attempts: 1 }
-[metrics] x402_verify_total{mode="facilitator",code="success"} 1
-[metrics] x402_verify_latency_ms{mode="facilitator"} 234ms
-
-# OR: Facilitator 5xx → RPC fallback succeeds
-[x402-facilitator] Non-OK response { status: 500, body: '...' }
+# Happy path: RPC verification succeeds
+queue/confirm using RPC-only verification { chainId: 84532, ... }
 [x402-rpc] RPC fallback verification started { txHash: '0x12345678...abcdef', chainId: 84532 }
 [x402-rpc] RPC verification successful { txHash: '0x12345678...abcdef', amountPaid: '3000000', durationMs: 145 }
 [metrics] x402_rpc_verify_total{chainId="84532",code="success"} 1
+[metrics] x402_rpc_verify_latency_ms{chainId="84532"} 145ms
 
-queue/confirm payment confirmed { txHash: '0x12345678...abcdef', amountPaidAtomic: 3000000, ... }
+queue/confirm payment confirmed { txHash: '0x12345678...abcdef', amountPaidAtomic: 3000000, provider: 'rpc', ... }
 ```
 
 **Success Indicators:**
-- ✅ Health endpoint shows `mode: "facilitator"`
-- ✅ Server logs show "using Facilitator verification"
-- ✅ Metrics emitted: `x402_verify_total`, `x402_verify_latency_ms`, `x402_rpc_verify_total`
+- ✅ Health endpoint shows `mode: "rpc-only"`
+- ✅ Server logs show "using RPC-only verification"
+- ✅ Metrics emitted: `x402_rpc_verify_total`, `x402_rpc_verify_latency_ms`
 - ✅ Payment confirmed with masked txHash in logs
 - ✅ Track transitions: PENDING_PAYMENT → PAID → GENERATING → READY
-- ✅ No CDP API keys required (testnet only)
-- ✅ RPC fallback provides granular errors (WRONG_ASSET, WRONG_AMOUNT, NO_MATCH) even when facilitator is down
+- ✅ No facilitator service or CDP API keys required
+- ✅ Direct blockchain verification provides granular errors (WRONG_ASSET, WRONG_AMOUNT, NO_MATCH, WRONG_CHAIN)
+
+**Testing:**
+```bash
+# Run automated test suite
+./test-rpc-only-mode.sh
+
+# Test with real Base Sepolia transaction
+TEST_TX_HASH=0x... ./test-rpc-only-mode.sh
+```
 
 ### Idempotency
 

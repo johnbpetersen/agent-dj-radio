@@ -58,7 +58,7 @@ const serverSchema = z.object({
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 
   // X402 configuration (required in alpha)
-  X402_MODE: z.enum(['facilitator', 'cdp', 'none']).default('none'),
+  X402_MODE: z.enum(['facilitator', 'cdp', 'rpc-only', 'none']).default('none'),
   X402_FACILITATOR_URL: urlSchema.optional(),
   X402_PROVIDER_URL: urlSchema.optional(),
   CDP_API_KEY_ID: z.string().optional(),
@@ -100,6 +100,8 @@ const serverSchema = z.object({
       required.X402_PROVIDER_URL = data.X402_PROVIDER_URL
       required.CDP_API_KEY_ID = data.CDP_API_KEY_ID
       required.CDP_API_KEY_SECRET = data.CDP_API_KEY_SECRET
+    } else if (data.X402_MODE === 'rpc-only') {
+      required.X402_TOKEN_ADDRESS = data.X402_TOKEN_ADDRESS
     }
 
     const missing = Object.entries(required)
@@ -181,12 +183,14 @@ export const isProduction = isStaging || isAlpha
 const hasFacilitatorUrl = !!serverEnv.X402_FACILITATOR_URL
 const hasCDPKeys = !!(serverEnv.CDP_API_KEY_ID && serverEnv.CDP_API_KEY_SECRET)
 
-let paymentMode: 'facilitator' | 'cdp' | 'mock' | 'none' = 'none'
+let paymentMode: 'facilitator' | 'cdp' | 'rpc-only' | 'mock' | 'none' = 'none'
 if (serverEnv.ENABLE_X402) {
   if (serverEnv.X402_MODE === 'facilitator' && hasFacilitatorUrl) {
     paymentMode = 'facilitator'
   } else if (serverEnv.X402_MODE === 'cdp' && hasCDPKeys) {
     paymentMode = 'cdp'
+  } else if (serverEnv.X402_MODE === 'rpc-only' && serverEnv.X402_TOKEN_ADDRESS) {
+    paymentMode = 'rpc-only'
   }
 } else if (serverEnv.ENABLE_MOCK_PAYMENTS) {
   paymentMode = 'mock'

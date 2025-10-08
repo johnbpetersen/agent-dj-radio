@@ -29,7 +29,7 @@ interface HealthResponse {
     x402: {
       enabled: boolean
       mockEnabled: boolean
-      mode: 'facilitator' | 'cdp' | 'mock' | 'none'
+      mode: 'facilitator' | 'cdp' | 'rpc-only' | 'mock' | 'none'
       facilitatorUrl: string | null
       hasCDPKeys: boolean
     }
@@ -130,9 +130,11 @@ async function healthHandler(req: VercelRequest, res: VercelResponse): Promise<v
     })
   }
 
-  let paymentMode: 'facilitator' | 'cdp' | 'mock' | 'none' = 'none'
+  let paymentMode: 'facilitator' | 'cdp' | 'rpc-only' | 'mock' | 'none' = 'none'
   if (serverEnv.ENABLE_X402) {
-    if (serverEnv.X402_MODE === 'facilitator' && serverEnv.X402_FACILITATOR_URL) {
+    if (serverEnv.X402_MODE === 'rpc-only' && serverEnv.X402_TOKEN_ADDRESS) {
+      paymentMode = 'rpc-only'
+    } else if (serverEnv.X402_MODE === 'facilitator' && serverEnv.X402_FACILITATOR_URL) {
       paymentMode = 'facilitator'
     } else if (serverEnv.X402_MODE === 'cdp' && hasCDPKeys) {
       paymentMode = 'cdp'
