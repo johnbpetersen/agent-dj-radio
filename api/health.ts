@@ -32,6 +32,10 @@ interface HealthResponse {
       mode: 'facilitator' | 'cdp' | 'rpc-only' | 'mock' | 'none'
       facilitatorUrl: string | null
       hasCDPKeys: boolean
+      binding: {
+        required: boolean
+        ttlSeconds: number
+      }
     }
   }
   requestId: string
@@ -157,7 +161,11 @@ async function healthHandler(req: VercelRequest, res: VercelResponse): Promise<v
         mockEnabled: serverEnv.ENABLE_MOCK_PAYMENTS,
         mode: paymentMode,
         facilitatorUrl: serverEnv.X402_FACILITATOR_URL || null,
-        hasCDPKeys
+        hasCDPKeys,
+        binding: {
+          required: serverEnv.X402_REQUIRE_BINDING,
+          ttlSeconds: serverEnv.BINDING_TTL_SECONDS
+        }
       }
     },
     requestId

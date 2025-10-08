@@ -9,6 +9,7 @@ import { incrementCounter, recordLatency } from '../../../src/lib/metrics.js'
 export type VerifyOk = {
   ok: true
   amountPaidAtomic: string | number
+  txFrom?: string  // Transaction sender address (for wallet binding verification)
   providerRaw?: any
 }
 

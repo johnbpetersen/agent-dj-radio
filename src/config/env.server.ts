@@ -84,6 +84,10 @@ const serverSchema = z.object({
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60000),
   RATE_LIMIT_MAX: z.coerce.number().default(60),
   RATE_LIMIT_PATH_OVERRIDES: z.string().optional(),
+
+  // Wallet binding configuration (RPC-only mode security)
+  X402_REQUIRE_BINDING: booleanFromString.default(true),
+  BINDING_TTL_SECONDS: z.coerce.number().default(300), // 5 minutes
 }).refine((data) => {
   // Stage-specific validations
   if (data.STAGE === 'alpha') {

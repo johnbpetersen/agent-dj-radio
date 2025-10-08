@@ -15,6 +15,7 @@ const RPC_TIMEOUT_MS = 1500
 
 interface TransactionReceipt {
   transactionHash: string
+  from?: string
   status?: string
   logs?: Array<{
     address: string
@@ -218,6 +219,7 @@ export async function verifyViaRPC(params: {
     console.log('[x402-rpc] RPC verification successful', {
       txHash: maskedTx,
       amountPaid: transferAmount.toString(),
+      txFrom: receipt.from ? maskAddress(receipt.from) : '(not available)',
       durationMs
     })
 
@@ -227,6 +229,7 @@ export async function verifyViaRPC(params: {
     return {
       ok: true,
       amountPaidAtomic: transferAmount.toString(),
+      txFrom: receipt.from, // Transaction sender for wallet binding verification
       providerRaw: { source: 'rpc-fallback', receipt }
     }
   }

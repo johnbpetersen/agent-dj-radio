@@ -13,7 +13,8 @@ import { errorTracker } from '../../src/lib/error-tracking.js'
 import { broadcastQueueUpdate } from '../../src/server/realtime.js'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
 import { sanitizeForClient } from '../_shared/security.js'
-import { maskTxHash } from '../../src/lib/crypto-utils.js'
+import { maskTxHash, maskAddress } from '../../src/lib/crypto-utils.js'
+import { normalizeEvmAddress, addressesMatch } from '../../src/lib/binding-utils.js'
 
 // Request validation schema
 const confirmRequestSchema = z.object({
@@ -263,6 +264,66 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
           requestId
         })
         return
+      }
+
+      // Wallet binding enforcement (RPC-only mode security)
+      if (serverEnv.X402_REQUIRE_BINDING) {
+        // Check if wallet was bound
+        if (!challenge.bound_address) {
+          logger.warn('queue/confirm wallet not bound', {
+            requestId,
+            challengeId,
+            txHash: maskTxHash(txHash)
+          })
+          res.status(400).json({
+            error: {
+              code: 'WALLET_NOT_BOUND',
+              message: 'Wallet address must be proven before payment. Please connect and prove your wallet first.'
+            },
+            requestId
+          })
+          return
+        }
+
+        // Check if transaction sender matches bound address
+        if (rpcResult.txFrom) {
+          if (!addressesMatch(rpcResult.txFrom, challenge.bound_address)) {
+            const normalizedTxFrom = normalizeEvmAddress(rpcResult.txFrom)
+            const normalizedBound = normalizeEvmAddress(challenge.bound_address)
+
+            logger.warn('queue/confirm wrong payer', {
+              requestId,
+              challengeId,
+              txHash: maskTxHash(txHash),
+              txFrom: maskAddress(normalizedTxFrom),
+              boundAddress: maskAddress(normalizedBound)
+            })
+
+            res.status(400).json({
+              error: {
+                code: 'WRONG_PAYER',
+                message: 'Payment sent from different wallet than proven. Please rebind your wallet or pay from the correct address.',
+                detail: `Transaction from ${maskAddress(normalizedTxFrom)}, expected ${maskAddress(normalizedBound)}`
+              },
+              requestId
+            })
+            return
+          }
+
+          logger.info('queue/confirm wallet binding verified', {
+            requestId,
+            challengeId,
+            address: maskAddress(challenge.bound_address)
+          })
+        } else {
+          // RPC didn't return txFrom - log warning but allow (defensive)
+          logger.warn('queue/confirm RPC result missing txFrom', {
+            requestId,
+            challengeId,
+            txHash: maskTxHash(txHash),
+            note: 'Binding check skipped due to missing sender address'
+          })
+        }
       }
 
       verificationResult = {

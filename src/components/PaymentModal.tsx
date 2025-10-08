@@ -1,5 +1,5 @@
 // src/components/PaymentModal.tsx
-// Payment modal for x402 challenge fulfillment
+// Payment modal for x402 challenge fulfillment with wallet binding
 
 import { useState, useEffect } from 'react'
 import {
@@ -11,6 +11,9 @@ import {
   getBlockExplorerUrl,
   type ParsedXPayment
 } from '../lib/x402-utils'
+import { useWalletConnect } from '../hooks/useWalletConnect'
+import { useWalletBinding } from '../hooks/useWalletBinding'
+import { confirmPayment, PaymentError } from '../lib/paymentClient'
 
 interface PaymentModalProps {
   challenge: ParsedXPayment
@@ -24,23 +27,23 @@ interface HealthResponse {
     x402?: {
       enabled: boolean
       mockEnabled: boolean
+      binding?: {
+        required: boolean
+        ttlSeconds: number
+      }
     }
   }
 }
 
 /**
  * Convert unknown error types to readable string
- * Handles Response, Error, structured error objects, and unknown types
- * Never returns "[object Object]" - always a readable string
  */
 async function toErrorString(x: unknown): Promise<string> {
-  // Handle Response objects
   if (x instanceof Response) {
     try {
       const data = await x.json()
       return toErrorStringSync(data)
     } catch {
-      // JSON parse failed, try text
       try {
         const text = await x.text()
         return text || `HTTP ${x.status}`
@@ -53,18 +56,14 @@ async function toErrorString(x: unknown): Promise<string> {
   return toErrorStringSync(x)
 }
 
-/**
- * Synchronous version for non-Response errors
- */
 function toErrorStringSync(x: unknown): string {
-  // Handle structured error object
   if (x && typeof x === 'object' && 'error' in x) {
     const errObj = (x as any).error
     const code = errObj?.code || 'UNKNOWN'
     const message = errObj?.message || 'An error occurred'
     const hint = errObj?.hint
+    const detail = errObj?.detail
 
-    // Format fields array if present (for VALIDATION_ERROR)
     if (Array.isArray(errObj?.fields) && errObj.fields.length > 0) {
       const fieldMessages = errObj.fields
         .map((f: any) => `${f.path}: ${f.message}`)
@@ -74,25 +73,25 @@ function toErrorStringSync(x: unknown): string {
         : `${code}: ${message} (${fieldMessages})`
     }
 
+    if (detail) {
+      return `${code}: ${message} - ${detail}`
+    }
+
     return hint ? `${code}: ${message} - ${hint}` : `${code}: ${message}`
   }
 
-  // Handle Error instances
   if (x instanceof Error) {
     return x.message
   }
 
-  // Handle plain string
   if (typeof x === 'string') {
     return x
   }
 
-  // Handle top-level message property
   if (x && typeof x === 'object' && 'message' in x && typeof (x as any).message === 'string') {
     return (x as any).message
   }
 
-  // Last resort: try JSON.stringify but cap length
   if (x && typeof x === 'object') {
     try {
       const str = JSON.stringify(x)
@@ -102,12 +101,10 @@ function toErrorStringSync(x: unknown): string {
     }
   }
 
-  // Absolute fallback
   return String(x) || 'An unexpected error occurred'
 }
 
 export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: PaymentModalProps) {
-  // Safe guard: if no challenge provided, show error
   if (!challenge) {
     return (
       <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -120,34 +117,48 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
     )
   }
 
+  // Wallet connection
+  const wallet = useWalletConnect()
+  const binding = useWalletBinding()
+
+  // Form state
   const [txHash, setTxHash] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [countdown, setCountdown] = useState(0)
   const [copied, setCopied] = useState(false)
+  const [retryAfter, setRetryAfter] = useState<number | null>(null)
+
+  // Feature flags
   const [isLiveMode, setIsLiveMode] = useState(false)
   const [mocksEnabled, setMocksEnabled] = useState(true)
-  const [retryAfter, setRetryAfter] = useState<number | null>(null) // Rate limit countdown
+  const [bindingRequired, setBindingRequired] = useState(false)
 
-  // Fetch feature flags on mount (cached by browser for 60s)
+  // WRONG_PAYER error state
+  const [wrongPayerDetail, setWrongPayerDetail] = useState<string | null>(null)
+
+  // Fetch feature flags on mount
   useEffect(() => {
     fetch('/api/health')
       .then(res => res.json())
       .then((data: HealthResponse) => {
         const x402Enabled = data.features?.x402?.enabled ?? false
         const mockEnabled = data.features?.x402?.mockEnabled ?? true
+        const bindReq = data.features?.x402?.binding?.required ?? false
+
         setIsLiveMode(x402Enabled)
         setMocksEnabled(mockEnabled)
+        setBindingRequired(bindReq)
       })
       .catch(err => {
         console.warn('Failed to fetch health flags:', err)
-        // Default to safe mode (assume live, hide mocks)
         setIsLiveMode(true)
         setMocksEnabled(false)
+        setBindingRequired(false)
       })
   }, [])
 
-  // Initialize countdown from challenge prop
+  // Initialize countdown
   useEffect(() => {
     setCountdown(getExpiryCountdown(challenge.expiresAt))
 
@@ -163,7 +174,7 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
     return () => clearInterval(interval)
   }, [challenge.expiresAt])
 
-  // Countdown timer for rate limit retry
+  // Rate limit countdown
   useEffect(() => {
     if (retryAfter === null) return
 
@@ -171,12 +182,10 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
       setRetryAfter(prev => {
         if (prev === null || prev <= 1) {
           clearInterval(interval)
-          // Re-enable button by setting isSubmitting to false
           setIsSubmitting(false)
           setError(null)
           return null
         }
-        // Update error message with new countdown
         setError(`RATE_LIMITED: Please wait ${prev - 1}s`)
         return prev - 1
       })
@@ -195,6 +204,28 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
     }
   }
 
+  const handleProveWallet = async () => {
+    if (!wallet.client) {
+      setError('No wallet connected')
+      return
+    }
+
+    setError(null)
+
+    try {
+      // Build message
+      const message = binding.buildMessage(challenge.challengeId)
+
+      // Prove ownership (will prompt wallet signature)
+      await binding.proveOwnership(wallet.client, challenge.challengeId, message)
+
+      // Success handled by binding hook state update
+    } catch (err) {
+      // Error already set by binding hook
+      console.error('[PaymentModal] Prove wallet error:', err)
+    }
+  }
+
   const handleVerifyPayment = async () => {
     // Client-side validation
     if (!validateTxHash(txHash)) {
@@ -207,11 +238,10 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
       return
     }
 
-    // Disable button immediately to prevent double-submit
     setIsSubmitting(true)
     setError(null)
+    setWrongPayerDetail(null)
 
-    // Debug log for development
     const payload = {
       challengeId: challenge.challengeId,
       txHash: txHash.trim()
@@ -219,95 +249,47 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
     console.debug('[confirm] payload', payload)
 
     try {
-      const response = await fetch('/api/queue/confirm', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      })
-
-      // Handle 429 (rate limited) specially
-      if (response.status === 429) {
-        // Read Retry-After header or compute from X-RateLimit-Reset
-        let retrySeconds = 30 // Default fallback
-
-        const retryAfterHeader = response.headers.get('Retry-After')
-        if (retryAfterHeader) {
-          retrySeconds = parseInt(retryAfterHeader, 10)
-        } else {
-          const resetHeader = response.headers.get('X-RateLimit-Reset')
-          if (resetHeader) {
-            const resetTime = parseInt(resetHeader, 10) * 1000 // Convert to ms
-            retrySeconds = Math.ceil((resetTime - Date.now()) / 1000)
-          }
-        }
-
-        // Start countdown
-        setRetryAfter(retrySeconds)
-        setError(`RATE_LIMITED: Please wait ${retrySeconds}s`)
-        return
-      }
-
-      // Parse response (handle malformed JSON gracefully)
-      let data: any
-      try {
-        data = await response.json()
-      } catch (jsonError) {
-        // Couldn't parse JSON, use toErrorString on the response
-        const errorText = await toErrorString(response)
-        setError(errorText)
-        return
-      }
-
-      if (!response.ok) {
-        // Use toErrorString helper to extract error message (never "[object Object]")
-        const baseError = toErrorStringSync(data)
-
-        // Enhance with context-specific hints based on error code
-        const errorCode = data.error?.code || 'UNKNOWN'
-        let displayError = baseError
-
-        switch (errorCode) {
-          case 'WRONG_ASSET':
-            displayError = `${baseError} (Expected: ${challenge.asset})`
-            break
-          case 'WRONG_CHAIN':
-            displayError = `${baseError} (Expected: ${getChainDisplayName(challenge.chain)})`
-            break
-          case 'NO_MATCH':
-            displayError = `${baseError} (Check transaction hash)`
-            break
-          case 'DB_ERROR':
-            displayError = `${baseError} (Database error - please try again)`
-            break
-          case 'INTERNAL':
-            displayError = `${baseError} (Server error - please contact support)`
-            break
-          case 'VALIDATION_ERROR':
-            // Already formatted with fields by toErrorStringSync
-            displayError = baseError
-            break
-        }
-
-        setError(displayError)
-        return
-      }
+      const response = await confirmPayment(payload)
 
       // Success!
-      if (data.ok && data.trackId) {
-        onSuccess(data.trackId)
+      if (response.ok && response.trackId) {
+        onSuccess(response.trackId)
       } else {
         setError('Payment verified but track ID not returned')
       }
     } catch (err) {
       console.error('Payment verification error:', err)
-      // Use toErrorString helper for all error types
-      const errorMsg = toErrorStringSync(err)
-      setError(`Network error: ${errorMsg}`)
+
+      if (err instanceof PaymentError) {
+        // Handle special error codes
+        if (err.isBindingRequired()) {
+          setError('Wallet binding required. Please prove your wallet ownership first.')
+        } else if (err.isWrongPayer()) {
+          // Extract addresses from detail if available
+          setWrongPayerDetail(err.detail || null)
+          setError(err.getUserMessage())
+        } else if (err.status === 429) {
+          // Rate limited
+          const retrySeconds = 30
+          setRetryAfter(retrySeconds)
+          setError(`RATE_LIMITED: Please wait ${retrySeconds}s`)
+        } else {
+          setError(err.getUserMessage())
+        }
+      } else {
+        const errorMsg = toErrorStringSync(err)
+        setError(`Network error: ${errorMsg}`)
+      }
     } finally {
       setIsSubmitting(false)
     }
+  }
+
+  const handleRebind = () => {
+    // Reset binding state and errors
+    binding.reset()
+    setError(null)
+    setWrongPayerDetail(null)
   }
 
   const handleRefresh = () => {
@@ -319,6 +301,11 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
   const formattedAmount = formatUSDCAmount(challenge.amount)
   const chainName = getChainDisplayName(challenge.chain)
   const explorerUrl = txHash && validateTxHash(txHash) ? getBlockExplorerUrl(challenge.chain, txHash) : null
+
+  // Determine UI state
+  const needsWallet = bindingRequired && !wallet.isConnected
+  const needsBinding = bindingRequired && wallet.isConnected && !binding.state.isBound
+  const canConfirm = !bindingRequired || binding.state.isBound
 
   return (
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -371,62 +358,152 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
             </button>
           </div>
         ) : (
-          <div className="payment-form">
-            <label htmlFor="txHash">
-              Transaction Hash:
-            </label>
-            <input
-              id="txHash"
-              type="text"
-              value={txHash}
-              onChange={(e) => setTxHash(e.target.value)}
-              placeholder="0x..."
-              disabled={isSubmitting}
-              autoFocus
-            />
-
-            {explorerUrl && (
-              <a
-                href={explorerUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="explorer-link"
-              >
-                View on Block Explorer ↗
-              </a>
+          <>
+            {/* Wallet Connection Section */}
+            {needsWallet && (
+              <div className="binding-section">
+                <h3>Step 1: Connect Wallet</h3>
+                <p className="binding-description">
+                  To prevent payment fraud, you must prove wallet ownership before paying.
+                </p>
+                <div className="wallet-buttons">
+                  <button
+                    className="wallet-button metamask"
+                    onClick={() => wallet.connect('metamask')}
+                    disabled={wallet.isConnecting}
+                  >
+                    {wallet.isConnecting ? 'Connecting...' : 'Connect MetaMask'}
+                  </button>
+                  <button
+                    className="wallet-button coinbase"
+                    onClick={() => wallet.connect('coinbase')}
+                    disabled={wallet.isConnecting}
+                  >
+                    {wallet.isConnecting ? 'Connecting...' : 'Connect Coinbase Wallet'}
+                  </button>
+                </div>
+                {wallet.error && <div className="error-message">{wallet.error}</div>}
+              </div>
             )}
 
-            {error && <div className="error-message">{error}</div>}
+            {/* Wallet Binding Section */}
+            {needsBinding && (
+              <div className="binding-section">
+                <h3>Step 2: Prove Wallet Ownership</h3>
+                <div className="bound-info">
+                  <span className="label">Connected:</span>
+                  <code className="bound-address">
+                    {wallet.address?.slice(0, 6)}...{wallet.address?.slice(-4)}
+                  </code>
+                  <button className="disconnect-button" onClick={wallet.disconnect}>
+                    Disconnect
+                  </button>
+                </div>
+                <p className="binding-description">
+                  Sign a message to prove you control this wallet. This prevents others from using your transaction hash.
+                </p>
 
-            <div className="button-group">
-              <button
-                className="verify-button"
-                onClick={handleVerifyPayment}
-                disabled={isSubmitting || !txHash.trim() || retryAfter !== null}
-              >
-                {retryAfter !== null
-                  ? `Please wait ${retryAfter}s`
-                  : isSubmitting
-                  ? 'Verifying...'
-                  : 'Verify Payment'}
-              </button>
+                {binding.state.messagePreview && (
+                  <details className="message-preview">
+                    <summary>Message Preview</summary>
+                    <pre>{binding.state.messagePreview.message}</pre>
+                  </details>
+                )}
 
-              {error?.includes('expired') && (
-                <button className="refresh-button" onClick={handleRefresh}>
-                  Refresh Challenge
+                <button
+                  className="prove-button"
+                  onClick={handleProveWallet}
+                  disabled={binding.state.isProving}
+                >
+                  {binding.state.isProving ? 'Waiting for signature...' : 'Sign Message to Prove Wallet'}
                 </button>
-              )}
-            </div>
-          </div>
+
+                {binding.state.error && <div className="error-message">{binding.state.error}</div>}
+              </div>
+            )}
+
+            {/* Payment Form Section */}
+            {canConfirm && (
+              <div className="payment-form">
+                {binding.state.isBound && (
+                  <div className="bound-status">
+                    ✓ Wallet Proven: <code>{binding.state.boundAddress?.slice(0, 6)}...{binding.state.boundAddress?.slice(-4)}</code>
+                    <button className="rebind-link" onClick={handleRebind}>Change</button>
+                  </div>
+                )}
+
+                <label htmlFor="txHash">
+                  {binding.state.isBound ? 'Step 3: Enter' : ''} Transaction Hash:
+                </label>
+                <input
+                  id="txHash"
+                  type="text"
+                  value={txHash}
+                  onChange={(e) => setTxHash(e.target.value)}
+                  placeholder="0x..."
+                  disabled={isSubmitting}
+                  autoFocus={!needsBinding}
+                />
+
+                {explorerUrl && (
+                  <a
+                    href={explorerUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="explorer-link"
+                  >
+                    View on Block Explorer ↗
+                  </a>
+                )}
+
+                {error && <div className="error-message">{error}</div>}
+
+                {/* WRONG_PAYER specific UI */}
+                {wrongPayerDetail && (
+                  <div className="wrong-payer-notice">
+                    <p>⚠️ Payment sent from different wallet than proven.</p>
+                    <p className="detail">{wrongPayerDetail}</p>
+                    <button className="rebind-button" onClick={handleRebind}>
+                      Rebind Wallet
+                    </button>
+                  </div>
+                )}
+
+                <div className="button-group">
+                  <button
+                    className="verify-button"
+                    onClick={handleVerifyPayment}
+                    disabled={isSubmitting || !txHash.trim() || retryAfter !== null}
+                  >
+                    {retryAfter !== null
+                      ? `Please wait ${retryAfter}s`
+                      : isSubmitting
+                      ? 'Verifying...'
+                      : 'Verify Payment'}
+                  </button>
+
+                  {error?.includes('expired') && (
+                    <button className="refresh-button" onClick={handleRefresh}>
+                      Refresh Challenge
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         <div className="payment-instructions">
           <details>
             <summary>How to pay</summary>
             <ol>
-              <li>Copy the payment address above</li>
-              <li>Open your wallet (e.g., MetaMask, Coinbase Wallet)</li>
-              <li>Send <strong>{formattedAmount}</strong> on <strong>{chainName}</strong> to the address</li>
+              {bindingRequired && (
+                <>
+                  <li>Connect your wallet (MetaMask, Coinbase Wallet, etc.)</li>
+                  <li>Sign a message to prove wallet ownership (no gas fee)</li>
+                </>
+              )}
+              <li>Send <strong>{formattedAmount}</strong> on <strong>{chainName}</strong> to the address above</li>
               <li>Copy the transaction hash from your wallet</li>
               <li>Paste it above and click "Verify Payment"</li>
             </ol>
@@ -463,6 +540,8 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
           width: 100%;
           color: #fff;
           box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+          max-height: 90vh;
+          overflow-y: auto;
         }
 
         .modal-header {
@@ -578,6 +657,215 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
           padding: 1rem;
           margin-bottom: 1rem;
           text-align: center;
+        }
+
+        /* Wallet Binding Styles */
+        .binding-section {
+          background: #2a2a2a;
+          border-radius: 6px;
+          padding: 1.5rem;
+          margin-bottom: 1.5rem;
+        }
+
+        .binding-section h3 {
+          margin: 0 0 1rem 0;
+          font-size: 1.1rem;
+          color: #4ade80;
+        }
+
+        .binding-description {
+          color: #aaa;
+          font-size: 0.9rem;
+          margin-bottom: 1rem;
+          line-height: 1.5;
+        }
+
+        .wallet-buttons {
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+        }
+
+        .wallet-button {
+          padding: 0.75rem 1.5rem;
+          border: none;
+          border-radius: 4px;
+          font-size: 1rem;
+          cursor: pointer;
+          transition: all 0.2s;
+          font-weight: 500;
+        }
+
+        .wallet-button.metamask {
+          background: #f6851b;
+          color: #fff;
+        }
+
+        .wallet-button.metamask:hover:not(:disabled) {
+          background: #e2761b;
+        }
+
+        .wallet-button.coinbase {
+          background: #0052ff;
+          color: #fff;
+        }
+
+        .wallet-button.coinbase:hover:not(:disabled) {
+          background: #0041cc;
+        }
+
+        .wallet-button:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .bound-info {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          margin-bottom: 1rem;
+          padding: 0.75rem;
+          background: #1a1a1a;
+          border-radius: 4px;
+        }
+
+        .bound-address {
+          font-family: monospace;
+          font-size: 0.9rem;
+          color: #4ade80;
+          flex: 1;
+        }
+
+        .disconnect-button {
+          background: #3a3a3a;
+          border: none;
+          color: #fff;
+          padding: 0.5rem 0.75rem;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 0.85rem;
+        }
+
+        .disconnect-button:hover {
+          background: #4a4a4a;
+        }
+
+        .message-preview {
+          margin-bottom: 1rem;
+          background: #1a1a1a;
+          border-radius: 4px;
+          padding: 0.5rem;
+        }
+
+        .message-preview summary {
+          cursor: pointer;
+          color: #aaa;
+          font-size: 0.85rem;
+          padding: 0.5rem;
+        }
+
+        .message-preview pre {
+          margin: 0.5rem 0 0 0;
+          padding: 0.75rem;
+          background: #0a0a0a;
+          border-radius: 4px;
+          font-size: 0.8rem;
+          overflow-x: auto;
+          white-space: pre-wrap;
+          color: #ccc;
+        }
+
+        .prove-button {
+          width: 100%;
+          padding: 0.75rem 1.5rem;
+          background: #4ade80;
+          color: #000;
+          border: none;
+          border-radius: 4px;
+          font-size: 1rem;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+
+        .prove-button:hover:not(:disabled) {
+          background: #22c55e;
+        }
+
+        .prove-button:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .bound-status {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.75rem;
+          background: #1a3a1a;
+          border: 1px solid #4ade80;
+          border-radius: 4px;
+          margin-bottom: 1rem;
+          font-size: 0.9rem;
+          color: #4ade80;
+        }
+
+        .bound-status code {
+          font-family: monospace;
+          background: #0a1a0a;
+          padding: 0.25rem 0.5rem;
+          border-radius: 3px;
+        }
+
+        .rebind-link {
+          background: none;
+          border: none;
+          color: #4ade80;
+          text-decoration: underline;
+          cursor: pointer;
+          font-size: 0.9rem;
+          padding: 0;
+          margin-left: auto;
+        }
+
+        .rebind-link:hover {
+          color: #22c55e;
+        }
+
+        .wrong-payer-notice {
+          background: #3a1a1a;
+          border: 1px solid #ef4444;
+          border-radius: 4px;
+          padding: 1rem;
+          margin-top: 1rem;
+        }
+
+        .wrong-payer-notice p {
+          margin: 0 0 0.5rem 0;
+          color: #fca5a5;
+          font-size: 0.9rem;
+        }
+
+        .wrong-payer-notice .detail {
+          font-family: monospace;
+          font-size: 0.8rem;
+          color: #aaa;
+        }
+
+        .rebind-button {
+          margin-top: 0.75rem;
+          padding: 0.5rem 1rem;
+          background: #4ade80;
+          color: #000;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 0.9rem;
+          font-weight: 600;
+        }
+
+        .rebind-button:hover {
+          background: #22c55e;
         }
 
         .payment-form {
