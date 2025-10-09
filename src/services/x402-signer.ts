@@ -100,20 +100,34 @@ export async function signX402Payment(
   const usdcAddress = getUSDCAddress(chainId)
   const network = getNetworkName(chainId)
 
-  // Parse expiry time
-  const expiresAt = Math.floor(new Date(challenge.expires_at).getTime() / 1000)
-  const now = Math.floor(Date.now() / 1000)
+  // Parse expiry time with validation
+  const expiryTimestamp = Date.parse(challenge.expires_at)
+  if (isNaN(expiryTimestamp)) {
+    throw new Error(`Invalid expires_at timestamp: "${challenge.expires_at}". Expected ISO 8601 format.`)
+  }
+
+  // Convert to BigInt for uint256 (no Number() wrapper)
+  const amountAtomicString = String(challenge.amount_atomic)
+  const value = BigInt(amountAtomicString)
+  const validBefore = BigInt(Math.trunc(expiryTimestamp / 1000))
+  const validAfter = BigInt(Math.trunc(Date.now() / 1000) - 60)
+
+  // Ensure chainId is a number and integer
+  const chainIdNumber = Number(chainId)
+  if (!Number.isInteger(chainIdNumber)) {
+    throw new Error(`Invalid chainId: ${chainId}. Must be an integer.`)
+  }
 
   // Generate random nonce
   const nonce = generateNonce()
 
-  // Construct authorization message
+  // Construct authorization message (using BigInt for uint256 fields)
   const authorization = {
     from: userAddress,
     to: challenge.pay_to,
-    value: String(challenge.amount_atomic),
-    validAfter: now,
-    validBefore: expiresAt,
+    value,
+    validAfter,
+    validBefore,
     nonce
   }
 
@@ -121,7 +135,7 @@ export async function signX402Payment(
   const domain = {
     name: 'USD Coin',
     version: '2',
-    chainId,
+    chainId: chainIdNumber,
     verifyingContract: usdcAddress
   } as const
 
@@ -140,10 +154,22 @@ export async function signX402Payment(
   console.log('[x402-signer] Signing payment:', {
     from: userAddress,
     to: challenge.pay_to,
-    value: authorization.value,
-    chainId,
+    value: amountAtomicString,
+    chainId: chainIdNumber,
     network,
     usdcAddress
+  })
+
+  // Debug: Typed data sanity check before signing
+  console.log('[x402-signer] Typed data sanity check:', {
+    value: value.toString(),
+    validAfter: validAfter.toString(),
+    validBefore: validBefore.toString(),
+    chainId: chainIdNumber,
+    valueType: typeof value,
+    validAfterType: typeof validAfter,
+    validBeforeType: typeof validBefore,
+    chainIdType: typeof chainIdNumber
   })
 
   try {
@@ -167,7 +193,14 @@ export async function signX402Payment(
       network,
       payload: {
         signature,
-        authorization
+        authorization: {
+          from: authorization.from,
+          to: authorization.to,
+          value: authorization.value.toString(),
+          validAfter: Number(authorization.validAfter),
+          validBefore: Number(authorization.validBefore),
+          nonce: authorization.nonce
+        }
       }
     }
 
