@@ -304,18 +304,27 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
         }
       }
 
+      // Add metrics logging
+      logger.info('queue/confirm metric', {
+        metric: 'x402_confirm_total',
+        code: 'TX_ALREADY_USED',
+        status: 409,
+        requestId,
+        reasonCodes
+      })
+
       // Return 409 TX_ALREADY_USED
       res.status(409).json({
         error: {
           code: 'TX_ALREADY_USED',
           message: 'This transaction was already used to confirm a different payment.',
-          data: {
-            originalChallengeId: existingChallengeId,
-            originalTrackId,
-            originalConfirmedAt,
-            payerAddress,
-            boundAddress: currentBoundAddress,
-            reasonCodes
+          reasonCodes,
+          original: {
+            challengeId: existingChallengeId,
+            trackId: originalTrackId,
+            confirmedAt: originalConfirmedAt,
+            txFrom: payerAddress,
+            boundAddress: currentBoundAddress
           }
         },
         requestId
@@ -431,11 +440,23 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
               boundAddress: maskAddress(normalizedBound)
             })
 
+            // Add metrics logging
+            logger.info('queue/confirm metric', {
+              metric: 'x402_confirm_total',
+              code: 'WRONG_PAYER',
+              status: 400,
+              requestId
+            })
+
             res.status(400).json({
               error: {
                 code: 'WRONG_PAYER',
-                message: 'Payment sent from different wallet than proven. Please rebind your wallet or pay from the correct address.',
-                detail: `Transaction from ${maskAddress(normalizedTxFrom)}, expected ${maskAddress(normalizedBound)}`
+                message: 'Payment sent from different wallet than proven.',
+                reasonCodes: ['WRONG_PAYER'],
+                detected: {
+                  txFrom: normalizedTxFrom,
+                  boundAddress: normalizedBound
+                }
               },
               requestId
             })
@@ -739,17 +760,26 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
             reasonCodes
           })
 
+          // Add metrics logging
+          logger.info('queue/confirm metric', {
+            metric: 'x402_confirm_total',
+            code: 'TX_ALREADY_USED',
+            status: 409,
+            requestId,
+            reasonCodes
+          })
+
           res.status(409).json({
             error: {
               code: 'TX_ALREADY_USED',
               message: 'This transaction was already used to confirm a different payment.',
-              data: {
-                originalChallengeId: existingChallengeId,
-                originalTrackId,
-                originalConfirmedAt,
-                payerAddress,
-                boundAddress: currentBoundAddress,
-                reasonCodes
+              reasonCodes,
+              original: {
+                challengeId: existingChallengeId,
+                trackId: originalTrackId,
+                confirmedAt: originalConfirmedAt,
+                txFrom: payerAddress,
+                boundAddress: currentBoundAddress
               }
             },
             requestId
@@ -833,6 +863,15 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       asset: challenge.asset,
       chain: challenge.chain,
       verdict: 'SUCCESS'
+    })
+
+    // Metrics logging
+    logger.info('queue/confirm metric', {
+      metric: 'x402_confirm_total',
+      code: 'SUCCESS',
+      status: 200,
+      requestId,
+      durationMs: Date.now() - startTime
     })
 
     // 9. Broadcast queue update

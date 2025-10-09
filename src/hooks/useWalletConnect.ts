@@ -1,12 +1,13 @@
 // src/hooks/useWalletConnect.ts
 // Wallet connection hook for x402 payment signing
 // Supports MetaMask, Coinbase Wallet (injected + SDK), and WalletConnect
-// Handles multi-provider injection, EIP-1193 polyfilling, and Base Sepolia chain switching
+// Handles multi-provider injection, EIP-1193 polyfilling, and dynamic Base chain switching
 
 import { useState, useEffect, useCallback } from 'react'
 import { createWalletClient, custom, type WalletClient, type Address } from 'viem'
-import { baseSepolia } from 'viem/chains'
+import { base, baseSepolia } from 'viem/chains'
 import CoinbaseWalletSDK from '@coinbase/wallet-sdk'
+import { getChainConfig, type ChainConfig } from '../lib/env.client'
 
 export type WalletProvider = 'metamask' | 'coinbase' | 'any'
 
@@ -33,8 +34,8 @@ interface UseWalletConnect {
   switchChain: (targetChainId: number) => Promise<void>
 }
 
-const BASE_SEPOLIA_CHAIN_ID = 84532
-const BASE_SEPOLIA_CHAIN_ID_HEX = '0x14a74'
+// Get dynamic chain config from environment
+const CHAIN_CONFIG = getChainConfig()
 
 /**
  * Get injected wallet provider, handling multi-injection scenarios
@@ -208,39 +209,42 @@ function ensureRequestPolyfill(provider: any): any {
 }
 
 /**
- * Switch or add Base Sepolia network to wallet
+ * Switch or add Base network to wallet (mainnet or testnet based on env)
  */
-async function ensureBaseSepoliaChain(provider: any): Promise<void> {
+async function ensureBaseChain(provider: any, config: ChainConfig): Promise<void> {
   try {
     const currentChainId = await provider.request({ method: 'eth_chainId' })
-    console.debug('[useWalletConnect] Current chain:', { currentChainId, target: BASE_SEPOLIA_CHAIN_ID_HEX })
+    console.debug('[useWalletConnect] Current chain:', {
+      currentChainId,
+      target: config.chainIdHex,
+      targetLabel: config.chainLabel
+    })
 
-    if (currentChainId?.toLowerCase() !== BASE_SEPOLIA_CHAIN_ID_HEX) {
-      console.debug('[useWalletConnect] Switching to Base Sepolia...')
+    if (currentChainId?.toLowerCase() !== config.chainIdHex.toLowerCase()) {
+      console.debug(`[useWalletConnect] Switching to ${config.chainLabel}...`)
       try {
         await provider.request({
           method: 'wallet_switchEthereumChain',
-          params: [{ chainId: BASE_SEPOLIA_CHAIN_ID_HEX }]
+          params: [{ chainId: config.chainIdHex }]
         })
         console.debug('[useWalletConnect] Chain switched successfully')
       } catch (switchErr: any) {
         // Error code 4902 means chain not added yet
         if (switchErr?.code === 4902) {
-          console.debug('[useWalletConnect] Chain not found, adding Base Sepolia...')
-          const rpcUrl = import.meta.env.VITE_BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org'
+          console.debug(`[useWalletConnect] Chain not found, adding ${config.chainLabel}...`)
           await provider.request({
             method: 'wallet_addEthereumChain',
             params: [
               {
-                chainId: BASE_SEPOLIA_CHAIN_ID_HEX,
-                chainName: 'Base Sepolia',
+                chainId: config.chainIdHex,
+                chainName: config.chainLabel,
                 nativeCurrency: {
-                  name: 'ETH',
+                  name: 'Ether',
                   symbol: 'ETH',
                   decimals: 18
                 },
-                rpcUrls: [rpcUrl],
-                blockExplorerUrls: ['https://sepolia.basescan.org']
+                rpcUrls: [config.rpcUrl],
+                blockExplorerUrls: [config.explorerUrl]
               }
             ]
           })
@@ -289,13 +293,14 @@ async function connectInjected(prefer: WalletProvider = 'any'): Promise<{
     address: address.slice(0, 6) + '...' + address.slice(-4)
   })
 
-  // Ensure Base Sepolia chain
-  await ensureBaseSepoliaChain(provider)
+  // Ensure Base chain (mainnet or Sepolia based on env)
+  await ensureBaseChain(provider, CHAIN_CONFIG)
 
-  // Create viem wallet client
+  // Create viem wallet client with dynamic chain
+  const viemChain = CHAIN_CONFIG.chainId === 8453 ? base : baseSepolia
   const client = createWalletClient({
     account: address,
-    chain: baseSepolia,
+    chain: viemChain,
     transport: custom(provider)
   })
 
@@ -304,7 +309,7 @@ async function connectInjected(prefer: WalletProvider = 'any'): Promise<{
   return {
     address,
     client,
-    chainId: BASE_SEPOLIA_CHAIN_ID,
+    chainId: CHAIN_CONFIG.chainId,
     provider
   }
 }
@@ -320,11 +325,10 @@ async function connectCoinbaseSdk(): Promise<{
 }> {
   console.debug('[useWalletConnect] Attempting Coinbase SDK connection (fallback)...')
 
-  const rpcUrl = import.meta.env.VITE_BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org'
   const appName = 'Agent DJ Radio'
 
   const sdk = new CoinbaseWalletSDK({ appName })
-  const sdkProvider: any = sdk.makeWeb3Provider(rpcUrl, BASE_SEPOLIA_CHAIN_ID)
+  const sdkProvider: any = sdk.makeWeb3Provider(CHAIN_CONFIG.rpcUrl, CHAIN_CONFIG.chainId)
 
   // IMPORTANT: Wrap SDK provider with ensureRequestPolyfill BEFORE first use
   const provider = ensureRequestPolyfill(sdkProvider)
@@ -343,13 +347,14 @@ async function connectCoinbaseSdk(): Promise<{
     address: address.slice(0, 6) + '...' + address.slice(-4)
   })
 
-  // Ensure Base Sepolia chain
-  await ensureBaseSepoliaChain(provider)
+  // Ensure correct Base chain (mainnet or Sepolia based on env)
+  await ensureBaseChain(provider, CHAIN_CONFIG)
 
-  // Create viem wallet client
+  // Create viem wallet client with dynamic chain
+  const viemChain = CHAIN_CONFIG.chainId === 8453 ? base : baseSepolia
   const client = createWalletClient({
     account: address,
-    chain: baseSepolia,
+    chain: viemChain,
     transport: custom(provider)
   })
 
@@ -358,7 +363,7 @@ async function connectCoinbaseSdk(): Promise<{
   return {
     address,
     client,
-    chainId: BASE_SEPOLIA_CHAIN_ID,
+    chainId: CHAIN_CONFIG.chainId,
     provider
   }
 }

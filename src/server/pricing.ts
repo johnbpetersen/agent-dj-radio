@@ -4,13 +4,14 @@ export const DURATION_OPTIONS = [60, 90, 120] as const
 export type DurationOption = typeof DURATION_OPTIONS[number]
 
 // Base price per second (in USD)
-const BASE_PRICE_PER_SECOND = 0.05
+// NOTE: Testing price - was 0.05 ($3.00/60s), now 0.0001667 ($0.01/60s)
+const BASE_PRICE_PER_SECOND = 0.0001667
 
 // Duration multipliers
 const DURATION_MULTIPLIERS: Record<DurationOption, number> = {
-  60: 1.0,    // $3.00 base
-  90: 0.95,   // $4.28 (slight discount)
-  120: 0.90,  // $5.40 (better discount)
+  60: 1.0,    // $0.01 base
+  90: 0.95,   // $0.014 (slight discount)
+  120: 0.90,  // $0.018 (better discount)
 }
 
 export function calculatePrice(durationSeconds: number): number {
