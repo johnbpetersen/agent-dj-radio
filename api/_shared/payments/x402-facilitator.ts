@@ -250,6 +250,25 @@ export async function facilitatorVerifyAuthorization(params: {
         authorization: params.authorization
       }
 
+      // Debug: Log exact payload being sent
+      console.log('[x402-facilitator] Sending payload to facilitator', {
+        url,
+        scheme: payload.scheme,
+        chain: payload.chain,
+        asset: payload.asset,
+        amountAtomic: payload.amountAtomic,
+        payTo: maskAddress(payload.payTo),
+        chainId: payload.chainId,
+        tokenAddress: maskAddress(payload.tokenAddress),
+        authFrom: maskAddress(payload.authorization.from),
+        authTo: maskAddress(payload.authorization.to),
+        authValue: payload.authorization.value,
+        authNonceLen: payload.authorization.nonce?.length,
+        authSigLen: payload.authorization.signature?.length,
+        authValidAfter: payload.authorization.validAfter,
+        authValidBefore: payload.authorization.validBefore
+      })
+
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
