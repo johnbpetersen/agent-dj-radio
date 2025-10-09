@@ -15,11 +15,20 @@ export const USDC_CONTRACTS = {
 
 export interface PaymentChallenge {
   challengeId: string
-  pay_to: Address
-  amount_atomic: number
-  chain: string
-  asset: string
-  expires_at: string
+  // Prefer camelCase, but accept snake_case for backward compatibility
+  payTo?: Address
+  pay_to?: Address
+  amountAtomic?: string | number
+  amount?: string | number
+  amount_atomic?: number
+  chain?: string
+  chainId?: number
+  asset?: string
+  tokenAddress?: string
+  expiresAt?: string
+  expires_at?: string
+  expiry?: string
+  expiresAtSec?: number  // Unix seconds, optional optimization
 }
 
 export interface SignedPayload {
@@ -100,17 +109,50 @@ export async function signX402Payment(
   const usdcAddress = getUSDCAddress(chainId)
   const network = getNetworkName(chainId)
 
-  // Parse expiry time with validation
-  const expiryTimestamp = Date.parse(challenge.expires_at)
-  if (isNaN(expiryTimestamp)) {
-    throw new Error(`Invalid expires_at timestamp: "${challenge.expires_at}". Expected ISO 8601 format.`)
+  // Robust field extraction: prefer camelCase, fallback to snake_case
+  const iso =
+    challenge.expiresAt ??
+    (challenge as any).expires_at ??
+    (challenge as any).expiry ??
+    null
+
+  if (!iso) {
+    throw new Error('Invalid expiresAt: missing on challenge')
+  }
+
+  const expiresAtMs = Date.parse(iso)
+  if (!Number.isFinite(expiresAtMs)) {
+    throw new Error(`Invalid expiresAt: "${iso}"`)
+  }
+
+  // Extract amount: prefer camelCase, validate format
+  const amountAtomic =
+    challenge.amountAtomic ??
+    challenge.amount ??
+    (challenge as any).amount_atomic ??
+    ''
+
+  const amountAtomicString = String(amountAtomic)
+  if (!/^\d+$/.test(amountAtomicString)) {
+    throw new Error(`Invalid amountAtomic string: "${amountAtomicString}"`)
+  }
+
+  // Extract payTo address
+  const payTo = challenge.payTo ?? (challenge as any).pay_to
+  if (!payTo) {
+    throw new Error('Invalid payTo: missing on challenge')
   }
 
   // Convert to BigInt for uint256 (no Number() wrapper)
-  const amountAtomicString = String(challenge.amount_atomic)
   const value = BigInt(amountAtomicString)
-  const validBefore = BigInt(Math.trunc(expiryTimestamp / 1000))
-  const validAfter = BigInt(Math.trunc(Date.now() / 1000) - 60)
+
+  // Use expiresAtSec if available, otherwise parse ISO string
+  const validBefore = challenge.expiresAtSec
+    ? BigInt(challenge.expiresAtSec)
+    : BigInt(Math.trunc(expiresAtMs / 1000))
+
+  const nowSec = Math.trunc(Date.now() / 1000)
+  const validAfter = BigInt(nowSec - 60) // small skew
 
   // Ensure chainId is a number and integer
   const chainIdNumber = Number(chainId)
@@ -124,7 +166,7 @@ export async function signX402Payment(
   // Construct authorization message (using BigInt for uint256 fields)
   const authorization = {
     from: userAddress,
-    to: challenge.pay_to,
+    to: payTo as Address,
     value,
     validAfter,
     validBefore,
@@ -153,7 +195,7 @@ export async function signX402Payment(
 
   console.log('[x402-signer] Signing payment:', {
     from: userAddress,
-    to: challenge.pay_to,
+    to: payTo,
     value: amountAtomicString,
     chainId: chainIdNumber,
     network,
@@ -161,15 +203,12 @@ export async function signX402Payment(
   })
 
   // Debug: Typed data sanity check before signing
-  console.log('[x402-signer] Typed data sanity check:', {
+  console.debug('[x402-signer] typed-data sanity', {
     value: value.toString(),
     validAfter: validAfter.toString(),
     validBefore: validBefore.toString(),
-    chainId: chainIdNumber,
-    valueType: typeof value,
-    validAfterType: typeof validAfter,
-    validBeforeType: typeof validBefore,
-    chainIdType: typeof chainIdNumber
+    chainId: Number(chainId),
+    expiresAtIso: iso
   })
 
   try {

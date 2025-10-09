@@ -119,7 +119,8 @@ export async function buildChallenge({ priceUsd, trackId }: BuildChallengeParams
     chain: X402_CHAIN,
     payTo: X402_RECEIVING_ADDRESS,
     nonce,
-    expiresAt: expiresAt.toISOString()
+    expiresAt: expiresAt.toISOString(),
+    expiresAtSec: Math.trunc(expiresAt.getTime() / 1000)
   }
 
   logger.info('x402 challenge created', {

@@ -97,6 +97,7 @@ export interface X402Challenge {
   payTo: string
   nonce: string
   expiresAt: string
+  expiresAtSec?: number  // Unix seconds, optional optimization for frontend
 }
 
 export interface X402ChallengeResponse {

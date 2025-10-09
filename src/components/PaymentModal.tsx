@@ -180,6 +180,16 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
         setChainId(chain)
 
         console.log('[PaymentModal] Health loaded:', { mode, chainId: chain, bindReq })
+
+        // Debug log challenge after health is loaded
+        console.debug('[PaymentModal] Challenge from server', {
+          challengeId: challenge.challengeId,
+          amount: (challenge as any).amount,
+          amountAtomic: (challenge as any).amountAtomic,
+          expiresAt: challenge.expiresAt,
+          chain: challenge.chain,
+          chainId: (challenge as any).chainId
+        })
       })
       .catch(err => {
         console.warn('Failed to fetch health flags:', err)
@@ -188,7 +198,7 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
         setBindingRequired(false)
         setPaymentMode('none')
       })
-  }, [])
+  }, [challenge])
 
   // Initialize countdown
   useEffect(() => {
