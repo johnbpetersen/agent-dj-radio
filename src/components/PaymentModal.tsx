@@ -137,6 +137,15 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
   // WRONG_PAYER error state
   const [wrongPayerDetail, setWrongPayerDetail] = useState<string | null>(null)
 
+  // TX_ALREADY_USED error state
+  const [txReuseError, setTxReuseError] = useState<{
+    originalTrackId?: string
+    originalConfirmedAt?: string
+    isWrongPayer: boolean
+    payerAddress?: string | null
+    boundAddress?: string | null
+  } | null>(null)
+
   // Fetch feature flags on mount
   useEffect(() => {
     fetch('/api/health')
@@ -241,6 +250,7 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
     setIsSubmitting(true)
     setError(null)
     setWrongPayerDetail(null)
+    setTxReuseError(null)
 
     const payload = {
       challengeId: challenge.challengeId,
@@ -264,6 +274,19 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
         // Handle special error codes
         if (err.isBindingRequired()) {
           setError('Wallet binding required. Please prove your wallet ownership first.')
+        } else if (err.isTxReused()) {
+          // TX_ALREADY_USED - transaction hash already used for different payment
+          const refs = err.getOriginalRefs()
+          const reasonCodes = err.getReasonCodes()
+
+          setTxReuseError({
+            originalTrackId: refs?.trackId,
+            originalConfirmedAt: refs?.confirmedAt,
+            isWrongPayer: reasonCodes.includes('WRONG_PAYER'),
+            payerAddress: err.data?.payerAddress,
+            boundAddress: err.data?.boundAddress
+          })
+          setError(err.getUserMessage())
         } else if (err.isWrongPayer()) {
           // Extract addresses from detail if available
           setWrongPayerDetail(err.detail || null)
@@ -457,6 +480,53 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
                 )}
 
                 {error && <div className="error-message">{error}</div>}
+
+                {/* TX_ALREADY_USED specific UI */}
+                {txReuseError && (
+                  <div className="tx-reuse-notice">
+                    <h4>⚠️ Transaction Already Used</h4>
+                    <p>
+                      This transaction was already confirmed for payment{' '}
+                      {txReuseError.originalTrackId && (
+                        <code>#{txReuseError.originalTrackId.slice(0, 8)}...</code>
+                      )}
+                      {txReuseError.originalConfirmedAt && (
+                        <span className="timestamp">
+                          {' '}on {new Date(txReuseError.originalConfirmedAt).toLocaleString()}
+                        </span>
+                      )}
+                    </p>
+                    {txReuseError.isWrongPayer && (
+                      <div className="wrong-payer-detail">
+                        <p><strong>Wallet Mismatch:</strong></p>
+                        <p className="address-line">
+                          <span className="label">Payment from:</span>{' '}
+                          <code>
+                            {txReuseError.payerAddress
+                              ? `${txReuseError.payerAddress.slice(0, 6)}...${txReuseError.payerAddress.slice(-4)}`
+                              : 'unknown'}
+                          </code>
+                        </p>
+                        <p className="address-line">
+                          <span className="label">Bound wallet:</span>{' '}
+                          <code>
+                            {txReuseError.boundAddress
+                              ? `${txReuseError.boundAddress.slice(0, 6)}...${txReuseError.boundAddress.slice(-4)}`
+                              : 'none'}
+                          </code>
+                        </p>
+                      </div>
+                    )}
+                    <div className="cta-buttons">
+                      <button className="cta-button rebind" onClick={handleRebind}>
+                        Change Wallet
+                      </button>
+                      <button className="cta-button new-tx" onClick={() => setTxHash('')}>
+                        Send New Payment
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* WRONG_PAYER specific UI */}
                 {wrongPayerDetail && (
@@ -830,6 +900,101 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
 
         .rebind-link:hover {
           color: #22c55e;
+        }
+
+        .tx-reuse-notice {
+          background: #3a2a1a;
+          border: 1px solid #f59e0b;
+          border-radius: 4px;
+          padding: 1rem;
+          margin-top: 1rem;
+        }
+
+        .tx-reuse-notice h4 {
+          margin: 0 0 0.75rem 0;
+          color: #fbbf24;
+          font-size: 1rem;
+          font-weight: 600;
+        }
+
+        .tx-reuse-notice p {
+          margin: 0 0 0.5rem 0;
+          color: #fcd34d;
+          font-size: 0.9rem;
+          line-height: 1.5;
+        }
+
+        .tx-reuse-notice code {
+          font-family: monospace;
+          background: #1a1a1a;
+          padding: 0.2rem 0.4rem;
+          border-radius: 3px;
+          color: #4ade80;
+        }
+
+        .tx-reuse-notice .timestamp {
+          color: #aaa;
+          font-size: 0.85rem;
+        }
+
+        .tx-reuse-notice .wrong-payer-detail {
+          background: #2a1a1a;
+          border: 1px solid #ef4444;
+          border-radius: 4px;
+          padding: 0.75rem;
+          margin: 0.75rem 0;
+        }
+
+        .tx-reuse-notice .wrong-payer-detail p {
+          margin: 0 0 0.25rem 0;
+          color: #fca5a5;
+          font-size: 0.85rem;
+        }
+
+        .tx-reuse-notice .wrong-payer-detail .address-line {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+
+        .tx-reuse-notice .wrong-payer-detail .label {
+          color: #aaa;
+          font-size: 0.8rem;
+        }
+
+        .tx-reuse-notice .cta-buttons {
+          display: flex;
+          gap: 0.5rem;
+          margin-top: 1rem;
+        }
+
+        .tx-reuse-notice .cta-button {
+          flex: 1;
+          padding: 0.5rem 1rem;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 0.9rem;
+          font-weight: 600;
+          transition: all 0.2s;
+        }
+
+        .tx-reuse-notice .cta-button.rebind {
+          background: #4ade80;
+          color: #000;
+        }
+
+        .tx-reuse-notice .cta-button.rebind:hover {
+          background: #22c55e;
+        }
+
+        .tx-reuse-notice .cta-button.new-tx {
+          background: #3b82f6;
+          color: #fff;
+        }
+
+        .tx-reuse-notice .cta-button.new-tx:hover {
+          background: #2563eb;
         }
 
         .wrong-payer-notice {

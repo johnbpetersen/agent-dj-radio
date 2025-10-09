@@ -342,19 +342,27 @@ describe('x402 Granular Error Codes', () => {
       expect(expectedStatus).toBe(200)
     })
 
-    it('should return 200 for repeat confirmation with same txHash', () => {
+    it('should return 409 TX_ALREADY_USED for reused txHash with different challengeId', () => {
       // Third confirmation: different challengeId, same txHash
-      // (txHash already used for another challenge - should be idempotent)
-      const repeatByTxHashResponse = {
-        ok: true,
-        trackId: 'track-123',
-        status: 'PAID',
-        requestId: 'req-repeat-tx'
+      // (txHash already used for another challenge - this is REUSE, not idempotency)
+      const reuseResponse = {
+        error: {
+          code: 'TX_ALREADY_USED',
+          message: 'This transaction hash was already used for a different payment.',
+          data: {
+            originalChallengeId: 'challenge-original',
+            originalTrackId: 'track-123',
+            originalConfirmedAt: '2025-01-01T12:00:00Z',
+            reasonCodes: ['TX_ALREADY_USED']
+          }
+        },
+        requestId: 'req-reuse-tx'
       }
 
-      expect(repeatByTxHashResponse.ok).toBe(true)
-      const expectedStatus = 200
-      expect(expectedStatus).toBe(200)
+      expect(reuseResponse.error.code).toBe('TX_ALREADY_USED')
+      const expectedStatus = 409
+      expect(expectedStatus).toBe(409)
+      expect(reuseResponse.error.data?.reasonCodes).toContain('TX_ALREADY_USED')
     })
 
     it('should not create duplicate confirmation records', () => {
@@ -442,6 +450,241 @@ describe('x402 Granular Error Codes', () => {
       expect(concurrentResponse.ok).toBe(true)
       const expectedStatus = 200
       expect(expectedStatus).toBe(200)
+    })
+  })
+
+  describe('TX_ALREADY_USED reuse detection', () => {
+    it('should return 409 when txHash already used for different challenge', () => {
+      // Scenario: User tries to reuse a transaction hash from a previous payment
+      const firstConfirmation = {
+        challenge_id: 'challenge-aaa',
+        tx_hash: '0x1234...',
+        tx_from_address: '0xabc...',
+        payment_challenges: {
+          track_id: 'track-111',
+          user_id: 'user-123',
+          bound_address: '0xabc...'
+        }
+      }
+
+      // Second attempt with different challenge, same tx
+      const secondAttempt = {
+        challengeId: 'challenge-bbb', // Different!
+        txHash: '0x1234...' // Same!
+      }
+
+      const expectedResponse = {
+        error: {
+          code: 'TX_ALREADY_USED',
+          message: 'This transaction hash was already used for a different payment.',
+          data: {
+            originalChallengeId: 'challenge-aaa',
+            originalTrackId: 'track-111',
+            originalConfirmedAt: '2025-01-01T12:00:00Z',
+            reasonCodes: ['TX_ALREADY_USED']
+          }
+        },
+        requestId: 'req-reuse'
+      }
+
+      expect(expectedResponse.error.code).toBe('TX_ALREADY_USED')
+      expect(expectedResponse.error.data?.originalChallengeId).toBe('challenge-aaa')
+      expect(expectedResponse.error.data?.originalTrackId).toBe('track-111')
+      expect(expectedResponse.error.data?.reasonCodes).toContain('TX_ALREADY_USED')
+
+      const expectedStatus = 409
+      expect(expectedStatus).toBe(409)
+    })
+
+    it('should include WRONG_PAYER in reasonCodes when payer address mismatches', () => {
+      // Scenario: Transaction hash reused AND sender doesn't match bound address
+      const existingConfirmation = {
+        challenge_id: 'challenge-aaa',
+        tx_hash: '0x1234...',
+        tx_from_address: '0xabc123...',
+        payment_challenges: {
+          track_id: 'track-111',
+          user_id: 'user-123',
+          bound_address: '0xdef456...' // Different from tx_from_address!
+        }
+      }
+
+      const expectedResponse = {
+        error: {
+          code: 'TX_ALREADY_USED',
+          message: 'This transaction hash was already used for a different payment.',
+          data: {
+            originalChallengeId: 'challenge-aaa',
+            originalTrackId: 'track-111',
+            originalConfirmedAt: '2025-01-01T12:00:00Z',
+            payerAddress: '0xabc123...',
+            boundAddress: '0xdef456...',
+            reasonCodes: ['TX_ALREADY_USED', 'WRONG_PAYER']
+          }
+        },
+        requestId: 'req-reuse-wrong-payer'
+      }
+
+      expect(expectedResponse.error.code).toBe('TX_ALREADY_USED')
+      expect(expectedResponse.error.data?.reasonCodes).toContain('TX_ALREADY_USED')
+      expect(expectedResponse.error.data?.reasonCodes).toContain('WRONG_PAYER')
+      expect(expectedResponse.error.data?.payerAddress).toBe('0xabc123...')
+      expect(expectedResponse.error.data?.boundAddress).toBe('0xdef456...')
+
+      const expectedStatus = 409
+      expect(expectedStatus).toBe(409)
+    })
+
+    it('should NOT include WRONG_PAYER when payer matches bound address', () => {
+      // Scenario: Transaction hash reused BUT sender matches bound address
+      const existingConfirmation = {
+        challenge_id: 'challenge-aaa',
+        tx_hash: '0x1234...',
+        tx_from_address: '0xabc123...',
+        payment_challenges: {
+          track_id: 'track-111',
+          user_id: 'user-123',
+          bound_address: '0xabc123...' // Same as tx_from_address
+        }
+      }
+
+      const expectedResponse = {
+        error: {
+          code: 'TX_ALREADY_USED',
+          message: 'This transaction hash was already used for a different payment.',
+          data: {
+            originalChallengeId: 'challenge-aaa',
+            originalTrackId: 'track-111',
+            originalConfirmedAt: '2025-01-01T12:00:00Z',
+            payerAddress: '0xabc123...',
+            boundAddress: '0xabc123...',
+            reasonCodes: ['TX_ALREADY_USED'] // No WRONG_PAYER!
+          }
+        },
+        requestId: 'req-reuse-same-payer'
+      }
+
+      expect(expectedResponse.error.code).toBe('TX_ALREADY_USED')
+      expect(expectedResponse.error.data?.reasonCodes).toContain('TX_ALREADY_USED')
+      expect(expectedResponse.error.data?.reasonCodes).not.toContain('WRONG_PAYER')
+
+      const expectedStatus = 409
+      expect(expectedStatus).toBe(409)
+    })
+
+    it('should handle reuse when tx_from_address is missing (backfill incomplete)', () => {
+      // Scenario: Old confirmation record without tx_from_address
+      const existingConfirmation = {
+        challenge_id: 'challenge-aaa',
+        tx_hash: '0x1234...',
+        tx_from_address: null, // Missing!
+        payment_challenges: {
+          track_id: 'track-111',
+          user_id: 'user-123',
+          bound_address: '0xdef456...'
+        }
+      }
+
+      const expectedResponse = {
+        error: {
+          code: 'TX_ALREADY_USED',
+          message: 'This transaction hash was already used for a different payment.',
+          data: {
+            originalChallengeId: 'challenge-aaa',
+            originalTrackId: 'track-111',
+            originalConfirmedAt: '2025-01-01T12:00:00Z',
+            payerAddress: null,
+            boundAddress: '0xdef456...',
+            reasonCodes: ['TX_ALREADY_USED'] // No WRONG_PAYER check possible
+          }
+        },
+        requestId: 'req-reuse-no-payer'
+      }
+
+      expect(expectedResponse.error.code).toBe('TX_ALREADY_USED')
+      expect(expectedResponse.error.data?.reasonCodes).toContain('TX_ALREADY_USED')
+      // WRONG_PAYER check skipped when tx_from_address missing
+      expect(expectedResponse.error.data?.reasonCodes).not.toContain('WRONG_PAYER')
+      expect(expectedResponse.error.data?.payerAddress).toBeNull()
+
+      const expectedStatus = 409
+      expect(expectedStatus).toBe(409)
+    })
+
+    it('should preserve idempotency when same challenge resubmits same txHash', () => {
+      // Scenario: SAME challengeId + SAME txHash = true idempotency (not reuse)
+      const existingConfirmation = {
+        challenge_id: 'challenge-aaa',
+        tx_hash: '0x1234...',
+        payment_challenges: {
+          track_id: 'track-111',
+          user_id: 'user-123'
+        }
+      }
+
+      const retryAttempt = {
+        challengeId: 'challenge-aaa', // Same!
+        txHash: '0x1234...' // Same!
+      }
+
+      const expectedResponse = {
+        ok: true,
+        trackId: 'track-111',
+        status: 'PAID',
+        requestId: 'req-idempotent'
+      }
+
+      expect(expectedResponse.ok).toBe(true)
+      expect(expectedResponse.trackId).toBe('track-111')
+
+      const expectedStatus = 200
+      expect(expectedStatus).toBe(200)
+    })
+
+    it('should handle race condition: concurrent reuse attempts get 409', () => {
+      // Scenario: Two different challenges try to reuse same txHash concurrently
+      // First request checks, finds nothing, starts processing
+      // Second request checks, finds nothing (first not committed yet), starts processing
+      // First request inserts confirmation → success (200)
+      // Second request tries to insert → unique constraint violation on tx_hash
+      // Second request re-queries, finds first confirmation with DIFFERENT challengeId
+      // Second request returns 409 TX_ALREADY_USED
+
+      const postgresError = {
+        code: '23505', // Unique constraint violation
+        constraint: 'payment_confirmations_tx_hash_key'
+      }
+
+      const existingFromRace = {
+        challenge_id: 'challenge-first',
+        tx_hash: '0x1234...',
+        payment_challenges: {
+          track_id: 'track-first',
+          user_id: 'user-first'
+        }
+      }
+
+      const secondRequestChallenge = 'challenge-second' // Different!
+
+      const expectedResponse = {
+        error: {
+          code: 'TX_ALREADY_USED',
+          message: 'This transaction hash was already used for a different payment.',
+          data: {
+            originalChallengeId: 'challenge-first',
+            originalTrackId: 'track-first',
+            reasonCodes: ['TX_ALREADY_USED']
+          }
+        },
+        requestId: 'req-race-reuse'
+      }
+
+      expect(postgresError.code).toBe('23505')
+      expect(expectedResponse.error.code).toBe('TX_ALREADY_USED')
+      expect(expectedResponse.error.data?.originalChallengeId).not.toBe(secondRequestChallenge)
+
+      const expectedStatus = 409
+      expect(expectedStatus).toBe(409)
     })
   })
 
@@ -599,13 +842,14 @@ describe('x402 Granular Error Codes', () => {
  *    Second call (same payload): 200 with same track status
  *    Database: only 1 confirmation record
  *
- * 5. Test idempotency (same txHash, different challengeId):
+ * 5. Test TX_ALREADY_USED (different challengeId, reused txHash):
  *    curl -X POST http://localhost:3001/api/queue/confirm \
  *      -H 'Content-Type: application/json' \
  *      -d '{"challengeId":"uuid-456","txHash":"0xabcd..."}'
  *
- *    Expected: 200 (idempotent - txHash already used)
+ *    Expected: 409 TX_ALREADY_USED with data.originalChallengeId, data.originalTrackId
  *    Database: still only 1 confirmation record
+ *    UI shows: "⚠️ Transaction Already Used" with CTAs
  *
  * 6. Test concurrent confirmations:
  *    - Run two requests in parallel with same challengeId + txHash

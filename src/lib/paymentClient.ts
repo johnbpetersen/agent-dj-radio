@@ -37,9 +37,17 @@ export interface ConfirmPaymentResponse {
 
 export interface ConfirmPaymentError {
   error: {
-    code: 'WALLET_NOT_BOUND' | 'WRONG_PAYER' | 'NO_MATCH' | 'WRONG_AMOUNT' | 'WRONG_ASSET' | 'WRONG_CHAIN' | 'PROVIDER_ERROR' | 'EXPIRED' | 'VALIDATION_ERROR' | 'DB_ERROR' | 'INTERNAL'
+    code: 'WALLET_NOT_BOUND' | 'WRONG_PAYER' | 'TX_ALREADY_USED' | 'NO_MATCH' | 'WRONG_AMOUNT' | 'WRONG_ASSET' | 'WRONG_CHAIN' | 'PROVIDER_ERROR' | 'EXPIRED' | 'VALIDATION_ERROR' | 'DB_ERROR' | 'INTERNAL'
     message: string
     detail?: string
+    data?: {
+      originalChallengeId?: string
+      originalTrackId?: string
+      originalConfirmedAt?: string
+      payerAddress?: string | null
+      boundAddress?: string | null
+      reasonCodes?: string[]
+    }
     fields?: Array<{ path: string; message: string }>
   }
   requestId: string
@@ -95,7 +103,8 @@ export async function confirmPayment(
       error.error.message,
       response.status,
       error.requestId,
-      error.error.detail
+      error.error.detail,
+      error.error.data
     )
   }
 
@@ -112,7 +121,15 @@ export class PaymentError extends Error {
     message: string,
     public status: number,
     public requestId: string,
-    public detail?: string
+    public detail?: string,
+    public data?: {
+      originalChallengeId?: string
+      originalTrackId?: string
+      originalConfirmedAt?: string
+      payerAddress?: string | null
+      boundAddress?: string | null
+      reasonCodes?: string[]
+    }
   ) {
     super(message)
     this.name = 'PaymentError'
@@ -152,5 +169,34 @@ export class PaymentError extends Error {
    */
   isExpired(): boolean {
     return this.code === 'EXPIRED'
+  }
+
+  /**
+   * Check if error indicates transaction hash already used (reuse)
+   */
+  isTxReused(): boolean {
+    return this.code === 'TX_ALREADY_USED'
+  }
+
+  /**
+   * Get reason codes for TX_ALREADY_USED errors
+   * Returns array of codes like ['TX_ALREADY_USED', 'WRONG_PAYER']
+   */
+  getReasonCodes(): string[] {
+    return this.data?.reasonCodes || []
+  }
+
+  /**
+   * Get original payment references for TX_ALREADY_USED errors
+   * Returns null if not applicable
+   */
+  getOriginalRefs(): { challengeId: string; trackId: string; confirmedAt: string } | null {
+    if (!this.isTxReused() || !this.data) return null
+
+    return {
+      challengeId: this.data.originalChallengeId || '',
+      trackId: this.data.originalTrackId || '',
+      confirmedAt: this.data.originalConfirmedAt || ''
+    }
   }
 }

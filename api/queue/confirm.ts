@@ -127,16 +127,19 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       }
     }
 
-    // 1. Check for existing confirmation (idempotency by challengeId OR tx_hash)
-    const { data: existingConfirmation, error: confirmCheckErr } = await supabaseAdmin
+    // 1. Check for existing confirmation by tx_hash (reuse detection)
+    const { data: existingByTxHash, error: txHashCheckErr } = await supabaseAdmin
       .from('payment_confirmations')
-      .select('*, payment_challenges!inner(track_id, user_id)')
-      .or(`challenge_id.eq.${challengeId},tx_hash.eq.${txHash}`)
+      .select('*, payment_challenges!inner(track_id, user_id, bound_address)')
+      .eq('tx_hash', txHash)
       .single()
 
-    if (confirmCheckErr && confirmCheckErr.code !== 'PGRST116') {
+    if (txHashCheckErr && txHashCheckErr.code !== 'PGRST116') {
       // PGRST116 = no rows, which is fine; anything else is an error
-      logger.error('queue/confirm error checking existing confirmation', { requestId, error: confirmCheckErr })
+      logger.error('queue/confirm error checking existing confirmation by tx_hash', {
+        requestId,
+        error: txHashCheckErr
+      })
       res.status(500).json({
         error: {
           code: 'DB_ERROR',
@@ -147,11 +150,59 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       return
     }
 
-    if (existingConfirmation) {
-      // Defensive: Validate joined data structure exists
-      const joinedData = (existingConfirmation as any).payment_challenges
+    if (existingByTxHash) {
+      // Transaction hash already used for a confirmation
+      const existingChallengeId = existingByTxHash.challenge_id
+
+      // Case 1: Same challenge - true idempotency
+      if (existingChallengeId === challengeId) {
+        const joinedData = (existingByTxHash as any).payment_challenges
+        if (!joinedData || !joinedData.track_id) {
+          logger.error('queue/confirm malformed join data', { requestId, existingByTxHash })
+          res.status(500).json({
+            error: {
+              code: 'DB_ERROR',
+              message: 'Invalid database relationship'
+            },
+            requestId
+          })
+          return
+        }
+
+        const trackId = joinedData.track_id
+        logger.info('queue/confirm idempotent (same challenge, same tx)', {
+          requestId,
+          challengeId,
+          txHash: maskTxHash(txHash),
+          trackId,
+          existingConfirmationId: existingByTxHash.id
+        })
+
+        // Load track to return current status
+        const { data: track, error: trackErr } = await supabaseAdmin
+          .from('tracks')
+          .select('*')
+          .eq('id', trackId)
+          .single()
+
+        if (trackErr) {
+          logger.warn('queue/confirm track not found for existing confirmation', { requestId, trackId })
+        }
+
+        res.status(200).json({
+          ok: true,
+          idempotent: true,
+          trackId,
+          status: track?.status || 'PAID',
+          requestId
+        })
+        return
+      }
+
+      // Case 2: Different challenge - TX_ALREADY_USED (reuse detected)
+      const joinedData = (existingByTxHash as any).payment_challenges
       if (!joinedData || !joinedData.track_id) {
-        logger.error('queue/confirm malformed join data', { requestId, existingConfirmation })
+        logger.error('queue/confirm malformed join data for reuse', { requestId, existingByTxHash })
         res.status(500).json({
           error: {
             code: 'DB_ERROR',
@@ -162,30 +213,111 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
         return
       }
 
-      const trackId = joinedData.track_id
-      logger.info('queue/confirm idempotent (already confirmed)', {
+      const originalTrackId = joinedData.track_id
+      const originalConfirmedAt = existingByTxHash.created_at
+      const originalBoundAddress = joinedData.bound_address
+
+      logger.warn('queue/confirm tx_hash reused across different challenges', {
         requestId,
-        challengeId,
+        currentChallengeId: challengeId,
+        existingChallengeId,
         txHash: maskTxHash(txHash),
-        trackId,
-        existingConfirmationId: existingConfirmation.id
+        originalTrackId,
+        originalConfirmedAt
       })
 
-      // Load track to return current status (defensive: handle missing track)
-      const { data: track, error: trackErr } = await supabaseAdmin
-        .from('tracks')
-        .select('*')
-        .eq('id', trackId)
+      // Build reason codes
+      const reasonCodes = ['TX_ALREADY_USED']
+      let payerAddress: string | null = null
+      let currentBoundAddress: string | null = null
+
+      // Load current challenge to check if there's a bound address mismatch
+      const { data: currentChallenge, error: currentChallengeErr } = await supabaseAdmin
+        .from('payment_challenges')
+        .select('bound_address')
+        .eq('challenge_id', challengeId)
         .single()
 
-      if (trackErr) {
-        logger.warn('queue/confirm track not found for existing confirmation', { requestId, trackId })
+      if (!currentChallengeErr && currentChallenge) {
+        currentBoundAddress = currentChallenge.bound_address
       }
 
-      res.status(200).json({
-        ok: true,
-        trackId,
-        status: track?.status || 'PAID',
+      // Check WRONG_PAYER: If existing confirmation has tx_from_address, compare with current bound_address
+      if (existingByTxHash.tx_from_address && currentBoundAddress) {
+        if (!addressesMatch(existingByTxHash.tx_from_address, currentBoundAddress)) {
+          reasonCodes.push('WRONG_PAYER')
+          payerAddress = existingByTxHash.tx_from_address
+          logger.info('queue/confirm reuse with WRONG_PAYER detected', {
+            requestId,
+            txFrom: maskAddress(existingByTxHash.tx_from_address),
+            currentBound: maskAddress(currentBoundAddress)
+          })
+        }
+      } else if (!existingByTxHash.tx_from_address && currentBoundAddress) {
+        // No tx_from_address stored - attempt RPC fetch for WRONG_PAYER detection
+        logger.info('queue/confirm attempting RPC fetch for reuse WRONG_PAYER check', {
+          requestId,
+          txHash: maskTxHash(txHash)
+        })
+
+        try {
+          const rpcUrl = serverEnv.BASE_SEPOLIA_RPC_URL
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => controller.abort(), 2000)
+
+          const response = await fetch(rpcUrl, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 1,
+              method: 'eth_getTransactionReceipt',
+              params: [txHash]
+            }),
+            signal: controller.signal
+          })
+
+          clearTimeout(timeoutId)
+
+          if (response.ok) {
+            const json = await response.json()
+            const receipt = json.result
+            if (receipt && receipt.from) {
+              const txFrom = normalizeEvmAddress(receipt.from)
+              payerAddress = txFrom
+              if (!addressesMatch(txFrom, currentBoundAddress)) {
+                reasonCodes.push('WRONG_PAYER')
+                logger.info('queue/confirm reuse with WRONG_PAYER detected via RPC', {
+                  requestId,
+                  txFrom: maskAddress(txFrom),
+                  currentBound: maskAddress(currentBoundAddress)
+                })
+              }
+            }
+          }
+        } catch (rpcErr: any) {
+          logger.warn('queue/confirm RPC fetch for WRONG_PAYER failed (non-fatal)', {
+            requestId,
+            error: rpcErr?.message
+          })
+          // Continue without WRONG_PAYER signal
+        }
+      }
+
+      // Return 409 TX_ALREADY_USED
+      res.status(409).json({
+        error: {
+          code: 'TX_ALREADY_USED',
+          message: 'This transaction was already used to confirm a different payment.',
+          data: {
+            originalChallengeId: existingChallengeId,
+            originalTrackId,
+            originalConfirmedAt,
+            payerAddress,
+            boundAddress: currentBoundAddress,
+            reasonCodes
+          }
+        },
         requestId
       })
       return
@@ -488,10 +620,19 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
     // 6. Verification successful! Insert confirmation record
     // Determine provider based on which mode was used
     let provider: string
+    let txFrom: string | null = null
     if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'rpc-only') {
       provider = 'rpc'
+      // Extract txFrom from RPC result
+      if ((verificationResult as any).txFrom) {
+        txFrom = normalizeEvmAddress((verificationResult as any).txFrom)
+      }
     } else if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'facilitator') {
       provider = 'facilitator'
+      // Facilitator may also return txFrom
+      if ((verificationResult as any).txFrom) {
+        txFrom = normalizeEvmAddress((verificationResult as any).txFrom)
+      }
     } else if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'cdp') {
       provider = 'cdp'
     } else {
@@ -503,31 +644,39 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       .insert({
         challenge_id: challengeId,
         tx_hash: txHash,
+        tx_from_address: txFrom,
         provider,
         amount_paid_atomic: verificationResult.amountPaidAtomic,
         provider_raw: {
           verified_at: new Date().toISOString(),
-          request_id: requestId
+          request_id: requestId,
+          tx_from: txFrom // Also store in provider_raw for audit
         }
       })
       .select()
       .single()
 
     if (confirmInsertErr) {
-      // Check if this is a uniqueness violation (race condition)
+      // Check if this is a uniqueness violation (race condition on tx_hash)
       if (confirmInsertErr.code === '23505') {
-        // Concurrent request won - re-query and return existing
-        logger.info('queue/confirm concurrent confirmation detected', { requestId, challengeId, txHash })
+        // Concurrent request won - re-query by tx_hash to determine if idempotent or reuse
+        logger.info('queue/confirm concurrent confirmation detected (unique constraint)', {
+          requestId,
+          challengeId,
+          txHash: maskTxHash(txHash)
+        })
+
         const { data: existing, error: existingErr } = await supabaseAdmin
           .from('payment_confirmations')
-          .select('*, payment_challenges!inner(track_id)')
-          .eq('challenge_id', challengeId)
+          .select('*, payment_challenges!inner(track_id, bound_address)')
+          .eq('tx_hash', txHash)
           .single()
 
         if (existingErr) {
           logger.error('queue/confirm failed to retrieve concurrent confirmation', {
             requestId,
             challengeId,
+            txHash: maskTxHash(txHash),
             error: existingErr
           })
           res.status(500).json({
@@ -541,25 +690,68 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
         }
 
         if (existing) {
-          // Defensive: Validate joined data structure
-          const joinedData = (existing as any).payment_challenges
-          if (!joinedData || !joinedData.track_id) {
-            logger.error('queue/confirm malformed concurrent join data', { requestId, existing })
-            res.status(500).json({
-              error: {
-                code: 'DB_ERROR',
-                message: 'Invalid database relationship'
-              },
+          const existingChallengeId = existing.challenge_id
+
+          // Case 1: Same challenge - idempotent
+          if (existingChallengeId === challengeId) {
+            const joinedData = (existing as any).payment_challenges
+            if (!joinedData || !joinedData.track_id) {
+              logger.error('queue/confirm malformed concurrent join data', { requestId, existing })
+              res.status(500).json({
+                error: {
+                  code: 'DB_ERROR',
+                  message: 'Invalid database relationship'
+                },
+                requestId
+              })
+              return
+            }
+
+            const trackId = joinedData.track_id
+            res.status(200).json({
+              ok: true,
+              idempotent: true,
+              trackId,
+              status: 'PAID',
               requestId
             })
             return
           }
 
-          const trackId = joinedData.track_id
-          res.status(200).json({
-            ok: true,
-            trackId,
-            status: 'PAID',
+          // Case 2: Different challenge - TX_ALREADY_USED
+          const joinedData = (existing as any).payment_challenges
+          const originalTrackId = joinedData?.track_id
+          const originalConfirmedAt = existing.created_at
+          const reasonCodes = ['TX_ALREADY_USED']
+          let payerAddress: string | null = existing.tx_from_address || null
+          let currentBoundAddress: string | null = challenge?.bound_address || null
+
+          // Check WRONG_PAYER if we have both addresses
+          if (payerAddress && currentBoundAddress && !addressesMatch(payerAddress, currentBoundAddress)) {
+            reasonCodes.push('WRONG_PAYER')
+          }
+
+          logger.warn('queue/confirm concurrent reuse detected', {
+            requestId,
+            currentChallengeId: challengeId,
+            existingChallengeId,
+            txHash: maskTxHash(txHash),
+            reasonCodes
+          })
+
+          res.status(409).json({
+            error: {
+              code: 'TX_ALREADY_USED',
+              message: 'This transaction was already used to confirm a different payment.',
+              data: {
+                originalChallengeId: existingChallengeId,
+                originalTrackId,
+                originalConfirmedAt,
+                payerAddress,
+                boundAddress: currentBoundAddress,
+                reasonCodes
+              }
+            },
             requestId
           })
           return

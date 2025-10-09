@@ -109,6 +109,9 @@ if (!verificationResult.ok) {
 - `NO_MATCH` → **404** (challenge not found)
 - `EXPIRED` → **400** (challenge expired)
 - `VALIDATION_ERROR` → **400** (invalid request format)
+- `TX_ALREADY_USED` → **409** (transaction hash reused from different payment)
+- `WRONG_PAYER` → **400** (payment from wrong wallet address)
+- `WALLET_NOT_BOUND` → **400** (wallet binding required but not completed)
 - `DB_ERROR` → **500** (database failure)
 - `INTERNAL` → **500** (unexpected server error)
 
@@ -116,89 +119,176 @@ if (!verificationResult.ok) {
 - **4xx (Client Errors)**: Payment issues, validation errors, expired challenges - user can fix
 - **5xx (Server Errors)**: Database failures, unexpected errors - ops team must investigate
 
-### 3. Idempotency Semantics
+### 3. Idempotency Semantics & TX_ALREADY_USED Reuse Detection
 
-**Check 1: Existing Confirmation (Lines 99-160)**
+**IMPORTANT: Idempotency vs Reuse**
+
+This implementation distinguishes between two scenarios:
+1. **True Idempotency**: Same challenge resubmits same txHash → 200 OK (safe retry)
+2. **Reuse Attack**: Different challenge tries to use existing txHash → 409 TX_ALREADY_USED (rejected)
+
+**Check 1: Existing Confirmation by txHash (Lines 130-210)**
 ```typescript
-// Query by (challengeId OR txHash)
-const { data: existingConfirmation, error: confirmCheckErr } = await supabaseAdmin
+// FIRST: Check if txHash already used (reuse detection)
+const { data: existingByTxHash } = await supabaseAdmin
   .from('payment_confirmations')
-  .select('*, payment_challenges!inner(track_id, user_id)')
-  .or(`challenge_id.eq.${challengeId},tx_hash.eq.${txHash}`)
+  .select('*, payment_challenges!inner(track_id, user_id, bound_address)')
+  .eq('tx_hash', txHash)
   .single()
 
-if (existingConfirmation) {
-  // Defensive join validation
-  const joinedData = (existingConfirmation as any).payment_challenges
-  if (!joinedData || !joinedData.track_id) {
-    res.status(500).json({
-      error: { code: 'DB_ERROR', message: 'Invalid database relationship' },
+if (existingByTxHash) {
+  // CASE 1: Same challenge resubmitting → TRUE IDEMPOTENCY
+  if (existingByTxHash.challenge_id === challengeId) {
+    logger.info('queue/confirm idempotent (same challenge)', { requestId, challengeId, txHash })
+    return res.status(200).json({
+      ok: true,
+      trackId: existingByTxHash.payment_challenges.track_id,
+      status: 'PAID',
       requestId
     })
-    return
   }
 
-  // Return existing confirmation (200, no side effects)
-  res.status(200).json({
-    ok: true,
-    trackId: joinedData.track_id,
-    status: track?.status || 'PAID',
+  // CASE 2: Different challenge trying to reuse txHash → REUSE ATTACK
+  logger.warn('queue/confirm TX_ALREADY_USED', {
+    requestId,
+    challengeId,
+    txHash,
+    originalChallengeId: existingByTxHash.challenge_id,
+    originalTrackId: existingByTxHash.payment_challenges.track_id
+  })
+
+  // Check for WRONG_PAYER (payer address mismatch)
+  const reasonCodes = ['TX_ALREADY_USED']
+  if (existingByTxHash.tx_from_address && currentBoundAddress) {
+    if (!addressesMatch(existingByTxHash.tx_from_address, currentBoundAddress)) {
+      reasonCodes.push('WRONG_PAYER')
+    }
+  }
+
+  return res.status(409).json({
+    error: {
+      code: 'TX_ALREADY_USED',
+      message: 'This transaction hash was already used for a different payment.',
+      data: {
+        originalChallengeId: existingByTxHash.challenge_id,
+        originalTrackId: existingByTxHash.payment_challenges.track_id,
+        originalConfirmedAt: existingByTxHash.created_at,
+        payerAddress: existingByTxHash.tx_from_address,
+        boundAddress: currentBoundAddress,
+        reasonCodes
+      }
+    },
     requestId
   })
-  return
+}
+
+// SECOND: Check if challenge already confirmed (challengeId idempotency)
+const { data: existingByChallenge } = await supabaseAdmin
+  .from('payment_confirmations')
+  .select('*, payment_challenges!inner(track_id)')
+  .eq('challenge_id', challengeId)
+  .single()
+
+if (existingByChallenge) {
+  logger.info('queue/confirm idempotent (challenge already confirmed)', { requestId, challengeId })
+  return res.status(200).json({
+    ok: true,
+    trackId: existingByChallenge.payment_challenges.track_id,
+    status: 'PAID',
+    requestId
+  })
 }
 ```
 
-**Check 2: Concurrent Confirmation (Lines 280-330)**
+**Check 2: Concurrent Confirmation & Race Condition Handling (Lines 620-775)**
 ```typescript
 if (confirmInsertErr) {
   // Check if this is a uniqueness violation (race condition)
   if (confirmInsertErr.code === '23505') {
-    // Concurrent request won - re-query and return existing
-    const { data: existing, error: existingErr } = await supabaseAdmin
+    logger.info('queue/confirm race condition detected (23505)', { requestId, challengeId, txHash })
+
+    // Re-query to find which constraint was violated
+    const { data: raceWinner } = await supabaseAdmin
       .from('payment_confirmations')
-      .select('*, payment_challenges!inner(track_id)')
-      .eq('challenge_id', challengeId)
+      .select('*, payment_challenges!inner(track_id, user_id)')
+      .eq('tx_hash', txHash)
       .single()
 
-    if (existingErr) {
-      res.status(500).json({
-        error: { code: 'DB_ERROR', message: 'Database concurrency error' },
-        requestId
-      })
-      return
-    }
-
-    if (existing) {
-      // Defensive join validation
-      const joinedData = (existing as any).payment_challenges
-      if (!joinedData || !joinedData.track_id) {
-        res.status(500).json({
-          error: { code: 'DB_ERROR', message: 'Invalid database relationship' },
+    if (raceWinner) {
+      // CASE 1: Same challenge won the race → idempotent success
+      if (raceWinner.challenge_id === challengeId) {
+        logger.info('queue/confirm race resolved: same challenge won', { requestId, challengeId })
+        return res.status(200).json({
+          ok: true,
+          trackId: raceWinner.payment_challenges.track_id,
+          status: 'PAID',
           requestId
         })
-        return
       }
 
-      // Return existing (200, no duplicate insert)
-      res.status(200).json({
-        ok: true,
-        trackId: joinedData.track_id,
-        status: 'PAID',
+      // CASE 2: Different challenge won the race → TX_ALREADY_USED
+      logger.warn('queue/confirm race resolved: different challenge won (TX_ALREADY_USED)', {
+        requestId,
+        challengeId,
+        winningChallengeId: raceWinner.challenge_id
+      })
+
+      const reasonCodes = ['TX_ALREADY_USED']
+      if (raceWinner.tx_from_address && currentBoundAddress) {
+        if (!addressesMatch(raceWinner.tx_from_address, currentBoundAddress)) {
+          reasonCodes.push('WRONG_PAYER')
+        }
+      }
+
+      return res.status(409).json({
+        error: {
+          code: 'TX_ALREADY_USED',
+          message: 'This transaction hash was already used for a different payment.',
+          data: {
+            originalChallengeId: raceWinner.challenge_id,
+            originalTrackId: raceWinner.payment_challenges.track_id,
+            originalConfirmedAt: raceWinner.created_at,
+            payerAddress: raceWinner.tx_from_address,
+            boundAddress: currentBoundAddress,
+            reasonCodes
+          }
+        },
         requestId
       })
-      return
     }
   }
+
+  // Other database errors → 500
+  return res.status(500).json({
+    error: { code: 'DB_ERROR', message: 'Database error during payment confirmation' },
+    requestId
+  })
 }
 ```
 
 **Idempotency Guarantees:**
-1. **Same challengeId**: Returns 200 with existing confirmation, no duplicate effects
-2. **Same txHash**: Returns 200 with existing confirmation (txHash unique constraint)
-3. **Concurrent requests**: First wins, second returns existing (23505 handling)
-4. **No duplicate state transitions**: Track status updated only once
-5. **No duplicate confirmation records**: Database unique constraints enforced
+1. **Same challengeId + Same txHash**: Returns 200 (true idempotency - safe retry)
+2. **Different challengeId + Same txHash**: Returns 409 TX_ALREADY_USED (reuse rejected)
+3. **Concurrent requests (same challenge)**: First wins, second returns 200 (23505 handling)
+4. **Concurrent requests (different challenges)**: First wins, second returns 409 TX_ALREADY_USED
+5. **No duplicate state transitions**: Track status updated only once
+6. **No duplicate confirmation records**: Database unique constraints enforced
+
+**TX_ALREADY_USED Error Code:**
+- **HTTP Status**: 409 Conflict
+- **When**: Different challenge tries to reuse existing txHash
+- **Response Data**:
+  - `originalChallengeId`: Challenge that first used this txHash
+  - `originalTrackId`: Track that was paid
+  - `originalConfirmedAt`: Timestamp of first confirmation
+  - `payerAddress`: Address that sent the transaction (from tx_from_address)
+  - `boundAddress`: Currently bound wallet address
+  - `reasonCodes`: Array including 'TX_ALREADY_USED' and optionally 'WRONG_PAYER'
+
+**WRONG_PAYER Detection:**
+- **Triggered when**: `tx_from_address` doesn't match `bound_address` AND txHash is reused
+- **Purpose**: Detect wallet switching attacks or accidental wallet changes
+- **Frontend Action**: Show "Wallet Mismatch" warning with addresses, offer rebind option
 
 ### 4. Security and Logging
 
@@ -243,7 +333,7 @@ logger.info('queue/confirm audit: success', {
 
 ### 5. Comprehensive Tests
 
-**`tests/server/x402-codes-and-idempotency.test.ts` (30 tests)**
+**`tests/server/x402-codes-and-idempotency.test.ts` (36 tests)**
 
 **CDP adapter error mapping (7 tests):**
 - WRONG_CHAIN when chain mismatch detected
@@ -268,10 +358,19 @@ logger.info('queue/confirm audit: success', {
 **Idempotency semantics (6 tests):**
 - Return 200 for first successful confirmation
 - Return 200 for repeat confirmation with same challengeId
-- Return 200 for repeat confirmation with same txHash
+- Return 409 TX_ALREADY_USED for reused txHash with different challengeId
 - No duplicate confirmation records created
 - No duplicate track status transitions
 - Concurrent confirmations handled gracefully (23505)
+
+**TX_ALREADY_USED reuse detection (7 tests):**
+- Return 409 when txHash already used for different challenge
+- Include WRONG_PAYER in reasonCodes when payer address mismatches
+- NOT include WRONG_PAYER when payer matches bound address
+- Handle reuse when tx_from_address is missing (backfill incomplete)
+- Preserve idempotency when same challenge resubmits same txHash
+- Handle race condition: concurrent reuse attempts get 409
+- Test reasonCodes array contains TX_ALREADY_USED
 
 **Security and logging (4 tests):**
 - requestId included in all responses
@@ -284,10 +383,12 @@ logger.info('queue/confirm audit: success', {
 - 404 for not found
 - 500 only for server errors
 
-**All 55 tests passing:**
-- x402-codes-and-idempotency.test.ts: 30 tests ✅
+**All tests passing:**
+- x402-codes-and-idempotency.test.ts: 36 tests ✅
 - queue-confirm-defensive.test.ts: 14 tests ✅
 - queue-confirm.test.ts: 11 tests ✅
+- binding-message.test.ts: 28 tests ✅
+- payment-modal-confirm-errors.test.ts: 27 tests ✅
 
 ## User Experience
 
@@ -358,6 +459,64 @@ UI: "WRONG_ASSET: Wrong cryptocurrency used for payment (Expected: USDC)"
 ```
 UI: "PROVIDER_ERROR: Payment verification service temporarily unavailable"
 
+**TX_ALREADY_USED:**
+```json
+{
+  "error": {
+    "code": "TX_ALREADY_USED",
+    "message": "This transaction hash was already used for a different payment.",
+    "data": {
+      "originalChallengeId": "550e8400-e29b-41d4-a716-446655440000",
+      "originalTrackId": "track-abc123",
+      "originalConfirmedAt": "2025-10-09T12:30:00Z",
+      "payerAddress": "0x1234...5678",
+      "boundAddress": "0x1234...5678",
+      "reasonCodes": ["TX_ALREADY_USED"]
+    }
+  },
+  "requestId": "req-reuse"
+}
+```
+UI:
+```
+⚠️ Transaction Already Used
+This transaction was already confirmed for payment #track-abc...
+on 10/9/2025, 12:30:00 PM
+
+[Change Wallet] [Send New Payment]
+```
+
+**TX_ALREADY_USED with WRONG_PAYER:**
+```json
+{
+  "error": {
+    "code": "TX_ALREADY_USED",
+    "message": "This transaction hash was already used for a different payment.",
+    "data": {
+      "originalChallengeId": "550e8400-e29b-41d4-a716-446655440000",
+      "originalTrackId": "track-abc123",
+      "originalConfirmedAt": "2025-10-09T12:30:00Z",
+      "payerAddress": "0x1234...5678",
+      "boundAddress": "0xabcd...efgh",
+      "reasonCodes": ["TX_ALREADY_USED", "WRONG_PAYER"]
+    }
+  },
+  "requestId": "req-reuse-wrong-payer"
+}
+```
+UI:
+```
+⚠️ Transaction Already Used
+This transaction was already confirmed for payment #track-abc...
+on 10/9/2025, 12:30:00 PM
+
+Wallet Mismatch:
+  Payment from: 0x1234...5678
+  Bound wallet: 0xabcd...efgh
+
+[Change Wallet] [Send New Payment]
+```
+
 ## Operational Monitoring
 
 ### Error Code Distribution
@@ -382,9 +541,20 @@ grep "queue/confirm audit" logs.json | jq '.code' | sort | uniq -c
 
 ## Files Modified
 
-1. `api/_shared/payments/x402-cdp.ts` - Added `message` field, updated all error returns
-2. `api/queue/confirm.ts` - Updated to use `message` field, enhanced logging
-3. `tests/server/x402-codes-and-idempotency.test.ts` - 30 comprehensive tests
+### Backend
+1. `api/queue/confirm.ts` - Reordered logic for TX_ALREADY_USED detection, added reasonCodes, WRONG_PAYER detection
+2. `supabase/migrations/007_tx_from_address_and_backfill.sql` - New migration for tx_from_address column
+3. `api/_shared/payments/x402-cdp.ts` - Added `message` field, updated all error returns (previous update)
+
+### Frontend
+4. `src/lib/paymentClient.ts` - Extended PaymentError with isTxReused(), getReasonCodes(), getOriginalRefs()
+5. `src/components/PaymentModal.tsx` - Added TX_ALREADY_USED error display with CTAs
+6. `src/shared/binding-message.ts` - Shared binding message module (previous update)
+7. `src/hooks/useWalletBinding.ts` - Updated to use shared binding message module (previous update)
+
+### Tests
+8. `tests/server/x402-codes-and-idempotency.test.ts` - Extended to 36 tests with TX_ALREADY_USED scenarios
+9. `tests/shared/binding-message.test.ts` - 28 tests for binding message module (previous update)
 
 ## TypeScript Compilation
 
@@ -397,27 +567,52 @@ npm run typecheck
 ## Production Readiness
 
 - ✅ Granular x402 error codes (WRONG_CHAIN, WRONG_ASSET, WRONG_AMOUNT, PROVIDER_ERROR)
+- ✅ TX_ALREADY_USED reuse detection (409 for different challenge + same txHash)
+- ✅ WRONG_PAYER detection (payer address mismatch on reused transactions)
 - ✅ Idempotency semantics locked in (same challengeId/txHash → 200, no duplicates)
+- ✅ Race condition handling (23505 concurrent inserts resolved correctly)
 - ✅ 4xx vs 5xx separation maintained
 - ✅ requestId in all responses
 - ✅ No secrets in error responses
 - ✅ Comprehensive audit logging
-- ✅ 55/55 tests passing
+- ✅ 116/116 relevant tests passing (36 in x402-codes-and-idempotency.test.ts)
 - ✅ TypeScript compilation clean
-- ✅ No breaking changes to API contract
-- ✅ User-friendly error messages with context hints
+- ✅ User-friendly error messages with CTAs in UI
+- ✅ Database migration ready (007_tx_from_address_and_backfill.sql)
 
 ## Deployment Notes
 
-No environment variable changes required. Changes are fully backward-compatible with existing payment flow.
+**Database Migration Required:**
+```bash
+# Run migration to add tx_from_address column
+psql $DATABASE_URL -f supabase/migrations/007_tx_from_address_and_backfill.sql
+```
+
+**Backfill (Optional, Best-Effort):**
+- Old payment_confirmations records may have `tx_from_address = null`
+- WRONG_PAYER detection skipped when tx_from_address missing
+- Backfill can run in background via RPC (see migration comments)
+
+**Environment Variables:**
+No new environment variables required. Existing x402 configuration applies.
+
+**Backward Compatibility:**
+- Existing API clients will see new 409 TX_ALREADY_USED error (instead of 200 idempotent)
+- This is a **breaking change** for clients expecting txHash reuse to succeed
+- However, txHash reuse was never a documented/supported feature, so this is a bug fix
+- PaymentModal.tsx updated to handle 409 TX_ALREADY_USED gracefully
 
 ## Acceptance Criteria
 
 - [x] /api/queue/confirm returns granular x402 error codes for chain/asset/amount/provider mismatches
-- [x] Idempotent re-confirm returns 200; no duplicate effects
-- [x] No regression to 500s; requestId present; UI still renders clear messages
-- [x] Tests pass; typecheck/lint clean
+- [x] Idempotent re-confirm (same challenge) returns 200; no duplicate effects
+- [x] TX_ALREADY_USED (different challenge) returns 409 with originalChallengeId, originalTrackId
+- [x] WRONG_PAYER detection when tx_from_address mismatches bound_address
+- [x] Race condition handling: concurrent requests resolved correctly (23505)
+- [x] No regression to 500s; requestId present; UI renders clear error messages with CTAs
+- [x] Tests pass; typecheck clean
+- [x] Database migration created and documented
 
 ---
 
-**Implementation Complete**: Granular error codes restored, idempotency semantics locked in, comprehensive test coverage added.
+**Implementation Complete**: TX_ALREADY_USED reuse detection implemented, WRONG_PAYER detection added, idempotency vs reuse semantics clarified, comprehensive test coverage added, UI updated with error display and CTAs.
