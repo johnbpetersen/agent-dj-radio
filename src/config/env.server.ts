@@ -92,6 +92,9 @@ const serverSchema = z.object({
   // Wallet binding configuration (RPC-only mode security)
   X402_REQUIRE_BINDING: booleanFromString.default(true),
   BINDING_TTL_SECONDS: z.coerce.number().default(300), // 5 minutes
+
+  // Facilitator settle configuration (optional settlement after verify)
+  ENABLE_FACILITATOR_SETTLE: booleanFromString.default(false),
 }).refine((data) => {
   // Stage-specific validations
   if (data.STAGE === 'alpha') {

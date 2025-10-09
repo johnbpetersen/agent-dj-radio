@@ -14,6 +14,7 @@ import {
 import { useWalletConnect } from '../hooks/useWalletConnect'
 import { useWalletBinding } from '../hooks/useWalletBinding'
 import { confirmPayment, PaymentError } from '../lib/paymentClient'
+import { signX402Payment } from '../services/x402-signer'
 
 interface PaymentModalProps {
   challenge: ParsedXPayment
@@ -27,6 +28,12 @@ interface HealthResponse {
     x402?: {
       enabled: boolean
       mockEnabled: boolean
+      mode?: 'facilitator' | 'rpc-only' | 'cdp' | 'mock' | 'none'
+      chainId?: number
+      tokenAddress?: string
+      receivingAddress?: string
+      chain?: string
+      asset?: string
       binding?: {
         required: boolean
         ttlSeconds: number
@@ -133,6 +140,8 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
   const [isLiveMode, setIsLiveMode] = useState(false)
   const [mocksEnabled, setMocksEnabled] = useState(true)
   const [bindingRequired, setBindingRequired] = useState(false)
+  const [paymentMode, setPaymentMode] = useState<'facilitator' | 'rpc-only' | 'mock' | 'none'>('none')
+  const [chainId, setChainId] = useState<number | undefined>()
 
   // WRONG_PAYER error state
   const [wrongPayerDetail, setWrongPayerDetail] = useState<{
@@ -161,16 +170,23 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
         const x402Enabled = data.features?.x402?.enabled ?? false
         const mockEnabled = data.features?.x402?.mockEnabled ?? true
         const bindReq = data.features?.x402?.binding?.required ?? false
+        const mode = data.features?.x402?.mode ?? 'none'
+        const chain = data.features?.x402?.chainId
 
         setIsLiveMode(x402Enabled)
         setMocksEnabled(mockEnabled)
         setBindingRequired(bindReq)
+        setPaymentMode(mode)
+        setChainId(chain)
+
+        console.log('[PaymentModal] Health loaded:', { mode, chainId: chain, bindReq })
       })
       .catch(err => {
         console.warn('Failed to fetch health flags:', err)
         setIsLiveMode(true)
         setMocksEnabled(false)
         setBindingRequired(false)
+        setPaymentMode('none')
       })
   }, [])
 
@@ -239,6 +255,77 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
     } catch (err) {
       // Error already set by binding hook
       console.error('[PaymentModal] Prove wallet error:', err)
+    }
+  }
+
+  const handleSignAndPay = async () => {
+    if (!wallet.client || !wallet.address) {
+      setError('Please connect your wallet first')
+      return
+    }
+
+    if (countdown <= 0) {
+      setError('Payment challenge has expired. Please refresh to get a new challenge.')
+      return
+    }
+
+    if (!chainId) {
+      setError('Chain configuration not loaded. Please refresh the page.')
+      return
+    }
+
+    setIsSubmitting(true)
+    setError(null)
+    setWrongPayerDetail(null)
+    setTxReuseError(null)
+
+    try {
+      console.log('[PaymentModal] Signing ERC-3009 authorization...', {
+        challengeId: challenge.challengeId,
+        chainId,
+        wallet: wallet.address
+      })
+
+      // Sign ERC-3009 transferWithAuthorization
+      const signedPayload = await signX402Payment(wallet.client, challenge, chainId)
+
+      console.log('[PaymentModal] Authorization signed, submitting to confirm...')
+
+      // Submit authorization to confirm endpoint
+      const payload = {
+        challengeId: challenge.challengeId,
+        authorization: signedPayload.payload.authorization
+      }
+
+      const response = await confirmPayment(payload)
+
+      // Success!
+      if (response.ok && response.trackId) {
+        onSuccess(response.trackId)
+      } else {
+        setError('Payment verified but track ID not returned')
+      }
+    } catch (err) {
+      console.error('Sign & Pay error:', err)
+
+      if (err instanceof PaymentError) {
+        // Handle special error codes
+        if (err.code === 'AUTH_REUSED') {
+          const refs = err.getOriginalRefs?.()
+          setError(`Authorization already used for payment ${refs?.trackId ? `#${refs.trackId.slice(0, 8)}...` : ''}`)
+        } else if (err.status === 429) {
+          const retrySeconds = 30
+          setRetryAfter(retrySeconds)
+          setError(`RATE_LIMITED: Please wait ${retrySeconds}s`)
+        } else {
+          setError(err.getUserMessage())
+        }
+      } else {
+        const errorMsg = toErrorStringSync(err)
+        setError(`Sign & Pay failed: ${errorMsg}`)
+      }
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -333,10 +420,14 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
   const chainName = getChainDisplayName(challenge.chain)
   const explorerUrl = txHash && validateTxHash(txHash) ? getBlockExplorerUrl(challenge.chain, txHash) : null
 
-  // Determine UI state
-  const needsWallet = bindingRequired && !wallet.isConnected
-  const needsBinding = bindingRequired && wallet.isConnected && !binding.state.isBound
-  const canConfirm = !bindingRequired || binding.state.isBound
+  // Determine UI state based on payment mode
+  const isFacilitatorMode = paymentMode === 'facilitator'
+
+  // In facilitator mode: wallet connection is required, but binding is optional (ERC-3009 binds payer)
+  // In RPC mode: binding is required
+  const needsWallet = isFacilitatorMode ? !wallet.isConnected : (bindingRequired && !wallet.isConnected)
+  const needsBinding = !isFacilitatorMode && bindingRequired && wallet.isConnected && !binding.state.isBound
+  const canConfirm = isFacilitatorMode ? wallet.isConnected : (!bindingRequired || binding.state.isBound)
 
   return (
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -393,9 +484,11 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
             {/* Wallet Connection Section */}
             {needsWallet && (
               <div className="binding-section">
-                <h3>Step 1: Connect Wallet</h3>
+                <h3>{isFacilitatorMode ? 'Step 1: Connect Wallet' : 'Step 1: Connect Wallet'}</h3>
                 <p className="binding-description">
-                  To prevent payment fraud, you must prove wallet ownership before paying.
+                  {isFacilitatorMode
+                    ? 'Connect your wallet to sign the payment authorization.'
+                    : 'To prevent payment fraud, you must prove wallet ownership before paying.'}
                 </p>
                 <div className="wallet-buttons">
                   <button
@@ -456,38 +549,73 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
             {/* Payment Form Section */}
             {canConfirm && (
               <div className="payment-form">
-                {binding.state.isBound && (
-                  <div className="bound-status">
-                    ✓ Wallet Proven: <code>{binding.state.boundAddress?.slice(0, 6)}...{binding.state.boundAddress?.slice(-4)}</code>
-                    <button className="rebind-link" onClick={handleRebind}>Change</button>
-                  </div>
-                )}
+                {/* Facilitator mode: Show connected wallet and Sign & Pay button */}
+                {isFacilitatorMode ? (
+                  <>
+                    <div className="wallet-connected">
+                      <div className="connected-info">
+                        <span className="label">Connected Wallet:</span>
+                        <code className="address-display">
+                          {wallet.address?.slice(0, 6)}...{wallet.address?.slice(-4)}
+                        </code>
+                        <button className="disconnect-button" onClick={wallet.disconnect}>
+                          Disconnect
+                        </button>
+                      </div>
+                      <p className="facilitator-notice">
+                        Click below to sign a payment authorization. Your wallet will prompt you to sign (no gas required).
+                      </p>
+                    </div>
 
-                <label htmlFor="txHash">
-                  {binding.state.isBound ? 'Step 3: Enter' : ''} Transaction Hash:
-                </label>
-                <input
-                  id="txHash"
-                  type="text"
-                  value={txHash}
-                  onChange={(e) => setTxHash(e.target.value)}
-                  placeholder="0x..."
-                  disabled={isSubmitting}
-                  autoFocus={!needsBinding}
-                />
+                    {error && <div className="error-message">{error}</div>}
 
-                {explorerUrl && (
-                  <a
-                    href={explorerUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="explorer-link"
-                  >
-                    View on Block Explorer ↗
-                  </a>
-                )}
+                    <button
+                      className="sign-pay-button"
+                      onClick={handleSignAndPay}
+                      disabled={isSubmitting || retryAfter !== null}
+                    >
+                      {retryAfter !== null
+                        ? `Please wait ${retryAfter}s`
+                        : isSubmitting
+                        ? 'Signing...'
+                        : 'Sign & Pay (x402)'}
+                    </button>
+                  </>
+                ) : (
+                  /* RPC mode: Show tx-hash input */
+                  <>
+                    {binding.state.isBound && (
+                      <div className="bound-status">
+                        ✓ Wallet Proven: <code>{binding.state.boundAddress?.slice(0, 6)}...{binding.state.boundAddress?.slice(-4)}</code>
+                        <button className="rebind-link" onClick={handleRebind}>Change</button>
+                      </div>
+                    )}
 
-                {error && <div className="error-message">{error}</div>}
+                    <label htmlFor="txHash">
+                      {binding.state.isBound ? 'Step 3: Enter' : ''} Transaction Hash:
+                    </label>
+                    <input
+                      id="txHash"
+                      type="text"
+                      value={txHash}
+                      onChange={(e) => setTxHash(e.target.value)}
+                      placeholder="0x..."
+                      disabled={isSubmitting}
+                      autoFocus={!needsBinding}
+                    />
+
+                    {explorerUrl && (
+                      <a
+                        href={explorerUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="explorer-link"
+                      >
+                        View on Block Explorer ↗
+                      </a>
+                    )}
+
+                    {error && <div className="error-message">{error}</div>}
 
                 {/* TX_ALREADY_USED specific UI */}
                 {txReuseError && (
@@ -584,25 +712,27 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
                   </div>
                 )}
 
-                <div className="button-group">
-                  <button
-                    className="verify-button"
-                    onClick={handleVerifyPayment}
-                    disabled={isSubmitting || !txHash.trim() || retryAfter !== null}
-                  >
-                    {retryAfter !== null
-                      ? `Please wait ${retryAfter}s`
-                      : isSubmitting
-                      ? 'Verifying...'
-                      : 'Verify Payment'}
-                  </button>
+                    <div className="button-group">
+                      <button
+                        className="verify-button"
+                        onClick={handleVerifyPayment}
+                        disabled={isSubmitting || !txHash.trim() || retryAfter !== null}
+                      >
+                        {retryAfter !== null
+                          ? `Please wait ${retryAfter}s`
+                          : isSubmitting
+                          ? 'Verifying...'
+                          : 'Verify Payment'}
+                      </button>
 
-                  {error?.includes('expired') && (
-                    <button className="refresh-button" onClick={handleRefresh}>
-                      Refresh Challenge
-                    </button>
-                  )}
-                </div>
+                      {error?.includes('expired') && (
+                        <button className="refresh-button" onClick={handleRefresh}>
+                          Refresh Challenge
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </>
@@ -1080,6 +1210,63 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
 
         .payment-form {
           margin-bottom: 1.5rem;
+        }
+
+        .wallet-connected {
+          background: #2a2a2a;
+          border-radius: 6px;
+          padding: 1.5rem;
+          margin-bottom: 1.5rem;
+        }
+
+        .connected-info {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          margin-bottom: 1rem;
+          padding: 0.75rem;
+          background: #1a1a1a;
+          border-radius: 4px;
+        }
+
+        .address-display {
+          font-family: monospace;
+          font-size: 0.9rem;
+          color: #4ade80;
+          flex: 1;
+        }
+
+        .facilitator-notice {
+          color: #aaa;
+          font-size: 0.85rem;
+          margin: 0;
+          line-height: 1.5;
+        }
+
+        .sign-pay-button {
+          width: 100%;
+          padding: 1rem 1.5rem;
+          background: #4ade80;
+          color: #000;
+          border: none;
+          border-radius: 4px;
+          font-size: 1.1rem;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.2s;
+          margin-top: 1rem;
+        }
+
+        .sign-pay-button:hover:not(:disabled) {
+          background: #22c55e;
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(74, 222, 128, 0.3);
+        }
+
+        .sign-pay-button:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+          transform: none;
         }
 
         .payment-form label {

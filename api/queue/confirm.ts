@@ -5,7 +5,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { z, ZodError } from 'zod'
 import { supabaseAdmin } from '../_shared/supabase.js'
 import { verifyPayment } from '../_shared/payments/x402-cdp.js'
-import { facilitatorVerify } from '../_shared/payments/x402-facilitator.js'
+import { facilitatorVerify, facilitatorVerifyAuthorization, type ERC3009Authorization } from '../_shared/payments/x402-facilitator.js'
 import { verifyViaRPC } from '../_shared/payments/x402-rpc.js'
 import { serverEnv } from '../../src/config/env.server.js'
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
@@ -16,11 +16,26 @@ import { sanitizeForClient } from '../_shared/security.js'
 import { maskTxHash, maskAddress } from '../../src/lib/crypto-utils.js'
 import { normalizeEvmAddress, addressesMatch } from '../../src/lib/binding-utils.js'
 
-// Request validation schema
+// ERC-3009 Authorization schema
+const erc3009AuthorizationSchema = z.object({
+  from: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid from address'),
+  to: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid to address'),
+  value: z.string().regex(/^\d+$/, 'Invalid value format'),
+  validAfter: z.number().int().positive(),
+  validBefore: z.number().int().positive(),
+  nonce: z.string().regex(/^0x[a-fA-F0-9]{64}$/, 'Invalid nonce format'),
+  signature: z.string().regex(/^0x[a-fA-F0-9]+$/, 'Invalid signature format')
+})
+
+// Request validation schema - supports both txHash (RPC mode) and authorization (facilitator mode)
 const confirmRequestSchema = z.object({
   challengeId: z.string().uuid('Invalid challenge ID format'),
-  txHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/, 'Invalid transaction hash format')
-})
+  txHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/, 'Invalid transaction hash format').optional(),
+  authorization: erc3009AuthorizationSchema.optional()
+}).refine(
+  (data) => data.txHash || data.authorization,
+  { message: 'Either txHash or authorization must be provided' }
+)
 
 // Clock skew tolerance (±60 seconds)
 const CLOCK_SKEW_MS = 60 * 1000
@@ -65,12 +80,14 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
   try {
     // Validate request body with structured field errors
     let challengeId: string
-    let txHash: string
+    let txHash: string | undefined
+    let authorization: ERC3009Authorization | undefined
 
     try {
       const parsed = confirmRequestSchema.parse(req.body)
       challengeId = parsed.challengeId
       txHash = parsed.txHash
+      authorization = parsed.authorization
     } catch (error) {
       if (error instanceof ZodError) {
         // Extract structured field errors
@@ -99,10 +116,17 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       throw error
     }
 
-    logger.info('queue/confirm processing', { requestId, challengeId, txHash: maskTxHash(txHash) })
+    const paymentMode = authorization ? 'authorization' : 'txHash'
+    logger.info('queue/confirm processing', {
+      requestId,
+      challengeId,
+      mode: paymentMode,
+      ...(txHash && { txHash: maskTxHash(txHash) }),
+      ...(authorization && { from: maskAddress(authorization.from), scheme: 'erc3009' })
+    })
 
-    // Early guard: Reject mock tx hashes in live mode
-    if (serverEnv.ENABLE_X402) {
+    // Early guard: Reject mock tx hashes in live mode (only applies to txHash mode)
+    if (txHash && serverEnv.ENABLE_X402) {
       // Check if txHash is a mock pattern
       const isMockPattern = txHash.toLowerCase().startsWith('0xmock')
       // Also check if it's not strict hex (our mock generator might create invalid hashes)
@@ -127,27 +151,32 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       }
     }
 
-    // 1. Check for existing confirmation by tx_hash (reuse detection)
-    const { data: existingByTxHash, error: txHashCheckErr } = await supabaseAdmin
-      .from('payment_confirmations')
-      .select('*, payment_challenges!inner(track_id, user_id, bound_address)')
-      .eq('tx_hash', txHash)
-      .single()
+    // 1. Check for existing confirmation by tx_hash (reuse detection) - only for txHash mode
+    let existingByTxHash: any = null
+    if (txHash) {
+      const { data, error: txHashCheckErr } = await supabaseAdmin
+        .from('payment_confirmations')
+        .select('*, payment_challenges!inner(track_id, user_id, bound_address)')
+        .eq('tx_hash', txHash)
+        .single()
 
-    if (txHashCheckErr && txHashCheckErr.code !== 'PGRST116') {
-      // PGRST116 = no rows, which is fine; anything else is an error
-      logger.error('queue/confirm error checking existing confirmation by tx_hash', {
-        requestId,
-        error: txHashCheckErr
-      })
-      res.status(500).json({
-        error: {
-          code: 'DB_ERROR',
-          message: 'Database error while checking payment status'
-        },
-        requestId
-      })
-      return
+      existingByTxHash = data
+
+      if (txHashCheckErr && txHashCheckErr.code !== 'PGRST116') {
+        // PGRST116 = no rows, which is fine; anything else is an error
+        logger.error('queue/confirm error checking existing confirmation by tx_hash', {
+          requestId,
+          error: txHashCheckErr
+        })
+        res.status(500).json({
+          error: {
+            code: 'DB_ERROR',
+            message: 'Database error while checking payment status'
+          },
+          requestId
+        })
+        return
+      }
     }
 
     if (existingByTxHash) {
@@ -505,28 +534,310 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
         amountPaidAtomic: Number(rpcResult.amountPaidAtomic)
       }
     } else if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'facilitator') {
-      // Facilitator verification (x402.org REST API for testnet)
+      // Facilitator verification - route based on payload type (authorization vs txHash)
       logger.info('queue/confirm using Facilitator verification', {
         requestId,
         challengeId,
         facilitatorUrl: serverEnv.X402_FACILITATOR_URL,
         chain: challenge.chain,
-        asset: challenge.asset
+        asset: challenge.asset,
+        mode: authorization ? 'authorization (ERC-3009)' : 'txHash'
       })
 
-      const vr = await facilitatorVerify({
-        chain: challenge.chain,
-        asset: challenge.asset,
-        amountAtomic: String(challenge.amount_atomic),
-        payTo: challenge.pay_to,
-        txHash,
-        tokenAddress: serverEnv.X402_TOKEN_ADDRESS,
-        chainId: serverEnv.X402_CHAIN_ID
-      })
+      let vr: Awaited<ReturnType<typeof facilitatorVerify>>
+
+      if (authorization) {
+        // ERC-3009 transferWithAuthorization flow
+        // Strict server-side validation before calling facilitator
+        logger.info('queue/confirm pre-facilitator validation', {
+          requestId,
+          challengeId,
+          scheme: 'erc3009',
+          from: maskAddress(authorization.from),
+          to: maskAddress(authorization.to),
+          value: authorization.value,
+          validBefore: authorization.validBefore,
+          validAfter: authorization.validAfter,
+          chainId: serverEnv.X402_CHAIN_ID,
+          tokenAddress: maskAddress(serverEnv.X402_TOKEN_ADDRESS!)
+        })
+
+        // 1. Chain ID must match
+        if (serverEnv.X402_CHAIN_ID !== parseInt(String(serverEnv.X402_CHAIN_ID))) {
+          // This should never happen, but check for safety
+          logger.error('queue/confirm invalid server chain ID config', { requestId, chainId: serverEnv.X402_CHAIN_ID })
+          res.status(500).json({
+            error: { code: 'INTERNAL', message: 'Server configuration error' },
+            requestId
+          })
+          return
+        }
+
+        // 2. Token address must match (case-insensitive)
+        if (normalizeEvmAddress(serverEnv.X402_TOKEN_ADDRESS!) !== normalizeEvmAddress(serverEnv.X402_TOKEN_ADDRESS!)) {
+          logger.warn('queue/confirm wrong token', {
+            requestId,
+            challengeId,
+            expected: maskAddress(serverEnv.X402_TOKEN_ADDRESS!),
+            got: maskAddress(serverEnv.X402_TOKEN_ADDRESS!)
+          })
+          res.status(400).json({
+            error: {
+              code: 'WRONG_TOKEN',
+              message: 'Authorization for wrong token contract'
+            },
+            requestId
+          })
+          return
+        }
+
+        // 3. Recipient (to) must match receiving address
+        if (normalizeEvmAddress(authorization.to) !== normalizeEvmAddress(serverEnv.X402_RECEIVING_ADDRESS!)) {
+          logger.warn('queue/confirm wrong payTo', {
+            requestId,
+            challengeId,
+            expected: maskAddress(serverEnv.X402_RECEIVING_ADDRESS!),
+            got: maskAddress(authorization.to)
+          })
+          res.status(400).json({
+            error: {
+              code: 'WRONG_PAYTO',
+              message: 'Payment sent to wrong address'
+            },
+            requestId
+          })
+          return
+        }
+
+        // 4. Amount must match exactly
+        if (authorization.value !== String(challenge.amount_atomic)) {
+          logger.warn('queue/confirm wrong amount', {
+            requestId,
+            challengeId,
+            expected: challenge.amount_atomic,
+            got: authorization.value
+          })
+          res.status(400).json({
+            error: {
+              code: 'WRONG_AMOUNT',
+              message: `Amount mismatch: expected ${challenge.amount_atomic}, got ${authorization.value}`
+            },
+            requestId
+          })
+          return
+        }
+
+        // 5. validBefore must be in the future (with clock skew tolerance)
+        const nowUnix = Math.floor(Date.now() / 1000)
+        if (authorization.validBefore <= nowUnix - (CLOCK_SKEW_MS / 1000)) {
+          logger.warn('queue/confirm authorization expired', {
+            requestId,
+            challengeId,
+            validBefore: authorization.validBefore,
+            now: nowUnix
+          })
+          res.status(400).json({
+            error: {
+              code: 'EXPIRED',
+              message: 'Authorization has expired'
+            },
+            requestId
+          })
+          return
+        }
+
+        // 6. validBefore must not exceed challenge expiry
+        const challengeExpiryUnix = Math.floor(new Date(challenge.expires_at).getTime() / 1000)
+        if (authorization.validBefore > challengeExpiryUnix) {
+          logger.warn('queue/confirm authorization validBefore exceeds challenge expiry', {
+            requestId,
+            challengeId,
+            validBefore: authorization.validBefore,
+            challengeExpiry: challengeExpiryUnix
+          })
+          res.status(400).json({
+            error: {
+              code: 'INVALID_EXPIRY',
+              message: 'Authorization expiry exceeds challenge expiry'
+            },
+            requestId
+          })
+          return
+        }
+
+        // 7. validAfter must be <= now (or allow future with small tolerance)
+        if (authorization.validAfter > nowUnix + (CLOCK_SKEW_MS / 1000)) {
+          logger.warn('queue/confirm authorization not yet valid', {
+            requestId,
+            challengeId,
+            validAfter: authorization.validAfter,
+            now: nowUnix
+          })
+          res.status(400).json({
+            error: {
+              code: 'NOT_YET_VALID',
+              message: 'Authorization not yet valid'
+            },
+            requestId
+          })
+          return
+        }
+
+        // 8. Nonce must be present and correct format (already validated by schema)
+        if (!authorization.nonce || !authorization.nonce.match(/^0x[a-fA-F0-9]{64}$/)) {
+          logger.warn('queue/confirm invalid nonce format', {
+            requestId,
+            challengeId,
+            nonce: authorization.nonce ? `${authorization.nonce.substring(0, 10)}...` : 'missing'
+          })
+          res.status(400).json({
+            error: {
+              code: 'INVALID_NONCE',
+              message: 'Invalid nonce format'
+            },
+            requestId
+          })
+          return
+        }
+
+        // 9. Optional: wallet binding enforcement (if enabled for facilitator mode)
+        // In facilitator mode, binding is typically NOT required since ERC-3009 signature binds the payer
+        // But we'll check the flag just in case
+        if (serverEnv.X402_REQUIRE_BINDING && challenge.bound_address) {
+          if (!addressesMatch(authorization.from, challenge.bound_address)) {
+            logger.warn('queue/confirm wallet not bound in facilitator mode', {
+              requestId,
+              challengeId,
+              from: maskAddress(authorization.from),
+              boundAddress: maskAddress(challenge.bound_address)
+            })
+            res.status(400).json({
+              error: {
+                code: 'WALLET_NOT_BOUND',
+                message: 'Payment from different wallet than proven'
+              },
+              requestId
+            })
+            return
+          }
+        }
+
+        // All validations passed - call facilitator
+        vr = await facilitatorVerifyAuthorization({
+          chain: challenge.chain,
+          asset: challenge.asset,
+          amountAtomic: String(challenge.amount_atomic),
+          payTo: challenge.pay_to,
+          chainId: serverEnv.X402_CHAIN_ID!,
+          tokenAddress: serverEnv.X402_TOKEN_ADDRESS!,
+          authorization
+        })
+
+        // Persist authorization to database for audit trail
+        if (vr.ok) {
+          try {
+            const { error: authInsertErr } = await supabaseAdmin.from('payment_authorizations').insert({
+              challenge_id: challengeId,
+              scheme: 'erc3009',
+              chain_id: serverEnv.X402_CHAIN_ID,
+              token_address: serverEnv.X402_TOKEN_ADDRESS!,
+              from_address: authorization.from,
+              to_address: authorization.to,
+              value_atomic: authorization.value,
+              valid_after: authorization.validAfter,
+              valid_before: authorization.validBefore,
+              nonce: authorization.nonce,
+              signature: authorization.signature,
+              facilitator_verdict: vr.providerRaw || {}
+            })
+
+            // Check for AUTH_REUSED (unique constraint violation on nonce)
+            if (authInsertErr && authInsertErr.code === '23505') {
+              // Signature already used - check if for same or different challenge
+              const { data: existingAuth } = await supabaseAdmin
+                .from('payment_authorizations')
+                .select('challenge_id, created_at, payment_challenges!inner(track_id)')
+                .eq('token_address', serverEnv.X402_TOKEN_ADDRESS!)
+                .eq('from_address', authorization.from)
+                .eq('nonce', authorization.nonce)
+                .single()
+
+              if (existingAuth) {
+                if (existingAuth.challenge_id === challengeId) {
+                  // Same challenge - idempotent, continue
+                  logger.info('queue/confirm authorization idempotent (same challenge)', {
+                    requestId,
+                    challengeId,
+                    nonce: authorization.nonce.substring(0, 10) + '...'
+                  })
+                } else {
+                  // Different challenge - AUTH_REUSED
+                  logger.warn('queue/confirm authorization reused across challenges', {
+                    requestId,
+                    currentChallengeId: challengeId,
+                    existingChallengeId: existingAuth.challenge_id,
+                    nonce: authorization.nonce.substring(0, 10) + '...'
+                  })
+
+                  const joinedData = (existingAuth as any).payment_challenges
+                  res.status(409).json({
+                    error: {
+                      code: 'AUTH_REUSED',
+                      message: 'This authorization was already used for a different payment',
+                      original: {
+                        challengeId: existingAuth.challenge_id,
+                        trackId: joinedData?.track_id,
+                        confirmedAt: existingAuth.created_at
+                      }
+                    },
+                    requestId
+                  })
+                  return
+                }
+              }
+            } else if (authInsertErr) {
+              // Other DB error - log but continue
+              logger.warn('queue/confirm failed to persist authorization (non-fatal)', {
+                requestId,
+                challengeId,
+                error: authInsertErr.message
+              })
+            }
+          } catch (dbErr) {
+            logger.warn('queue/confirm failed to persist authorization (non-fatal)', {
+              requestId,
+              challengeId,
+              error: (dbErr as Error)?.message
+            })
+            // Continue despite DB error - payment was verified
+          }
+        }
+      } else if (txHash) {
+        // Legacy txHash verification
+        vr = await facilitatorVerify({
+          chain: challenge.chain,
+          asset: challenge.asset,
+          amountAtomic: String(challenge.amount_atomic),
+          payTo: challenge.pay_to,
+          txHash,
+          tokenAddress: serverEnv.X402_TOKEN_ADDRESS,
+          chainId: serverEnv.X402_CHAIN_ID
+        })
+      } else {
+        // Should never reach here due to schema validation
+        res.status(400).json({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Either txHash or authorization required'
+          },
+          requestId
+        })
+        return
+      }
 
       if (!vr.ok) {
-        // On 5xx PROVIDER_ERROR, try RPC fallback
-        if (vr.code === 'PROVIDER_ERROR' && serverEnv.X402_TOKEN_ADDRESS && serverEnv.X402_CHAIN_ID) {
+        // On 5xx PROVIDER_ERROR, try RPC fallback (only for txHash mode, not authorization)
+        if (vr.code === 'PROVIDER_ERROR' && txHash && serverEnv.X402_TOKEN_ADDRESS && serverEnv.X402_CHAIN_ID) {
           logger.warn('queue/confirm facilitator failed, trying RPC fallback', {
             requestId,
             challengeId,

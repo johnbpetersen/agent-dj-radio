@@ -196,7 +196,15 @@ async function healthHandler(req: VercelRequest, res: VercelResponse): Promise<v
           required: serverEnv.X402_REQUIRE_BINDING,
           ttlSeconds: serverEnv.BINDING_TTL_SECONDS
         },
-        ...(rpcInfo && { rpc: rpcInfo })
+        ...(rpcInfo && { rpc: rpcInfo }),
+        // Expose chain and token info for frontend ERC-3009 signing
+        ...(paymentMode === 'facilitator' && {
+          chain: serverEnv.X402_CHAIN,
+          chainId: serverEnv.X402_CHAIN_ID,
+          tokenAddress: serverEnv.X402_TOKEN_ADDRESS,
+          receivingAddress: serverEnv.X402_RECEIVING_ADDRESS,
+          asset: serverEnv.X402_ACCEPTED_ASSET
+        })
       }
     },
     requestId

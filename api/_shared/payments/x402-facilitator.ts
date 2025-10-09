@@ -183,6 +183,220 @@ async function attemptVerify(
   }
 }
 
+/**
+ * ERC-3009 Authorization structure for facilitator verification
+ */
+export interface ERC3009Authorization {
+  from: string          // payer address
+  to: string           // recipient address
+  value: string        // amount in atomic units
+  validAfter: number   // unix timestamp
+  validBefore: number  // unix timestamp
+  nonce: string        // 32-byte hex nonce
+  signature: string    // EIP-712 signature
+}
+
+/**
+ * Verify ERC-3009 transferWithAuthorization via facilitator
+ */
+export async function facilitatorVerifyAuthorization(params: {
+  chain: string
+  asset: string
+  amountAtomic: string | number
+  payTo: string
+  chainId: number
+  tokenAddress: string
+  authorization: ERC3009Authorization
+}): Promise<VerifyResult> {
+  const startTime = Date.now()
+  const base = serverEnv.X402_FACILITATOR_URL
+  const url = `${base.replace(/\/$/, '')}/verify`
+  const maskedFrom = maskAddress(params.authorization.from)
+
+  console.log('[x402-facilitator] ERC-3009 verification started', {
+    from: maskedFrom,
+    to: maskAddress(params.payTo),
+    chain: params.chain,
+    asset: params.asset,
+    scheme: 'erc3009'
+  })
+
+  let lastError: any
+  let lastStatus: number | undefined
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    // Add retry delay (skip for first attempt)
+    if (attempt > 0) {
+      const baseDelay = RETRY_DELAYS_MS[attempt - 1]
+      const delayMs = addJitter(baseDelay)
+      console.log(`[x402-facilitator] Retry attempt ${attempt + 1}/${MAX_ATTEMPTS} after ${delayMs}ms`, {
+        from: maskedFrom
+      })
+      await new Promise(resolve => setTimeout(resolve, delayMs))
+    }
+
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS)
+
+    try {
+      const payload = {
+        scheme: 'erc3009',
+        chain: params.chain,
+        asset: params.asset,
+        amountAtomic: String(params.amountAtomic),
+        payTo: params.payTo,
+        chainId: params.chainId,
+        tokenAddress: params.tokenAddress,
+        authorization: params.authorization
+      }
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      })
+
+      clearTimeout(timeoutId)
+
+      // Parse response
+      const text = await res.text()
+      const truncatedBody = text.length > 500 ? text.substring(0, 500) + '...[truncated]' : text
+
+      let json: any = null
+      try { json = text ? JSON.parse(text) : null } catch {}
+
+      lastStatus = res.status
+
+      // Handle non-2xx responses
+      if (!res.ok) {
+        console.warn('[x402-facilitator] Non-OK response (ERC-3009)', {
+          from: maskedFrom,
+          status: res.status,
+          attempt: attempt + 1,
+          body: truncatedBody
+        })
+
+        // Check if retryable (5xx)
+        if (attempt < MAX_ATTEMPTS - 1 && isRetryable(res.status)) {
+          continue // retry
+        }
+
+        // Final attempt or 4xx (non-retryable)
+        const durationMs = Date.now() - startTime
+        const code = json?.error?.code ?? 'PROVIDER_ERROR'
+        const msg = json?.error?.message ?? `Provider returned ${res.status}`
+
+        incrementCounter('x402_verify_total', { mode: 'facilitator', code, scheme: 'erc3009' })
+        recordLatency('x402_verify_latency_ms', { mode: 'facilitator', scheme: 'erc3009' }, durationMs)
+
+        return { ok: false, code, message: msg, detail: truncatedBody }
+      }
+
+      // Success response - validate
+      if (json?.verified !== true) {
+        const durationMs = Date.now() - startTime
+        const code = json?.error?.code ?? 'NO_MATCH'
+        const msg = json?.error?.message ?? 'Authorization not verified'
+
+        incrementCounter('x402_verify_total', { mode: 'facilitator', code, scheme: 'erc3009' })
+        recordLatency('x402_verify_latency_ms', { mode: 'facilitator', scheme: 'erc3009' }, durationMs)
+
+        return { ok: false, code, message: msg, detail: text }
+      }
+
+      // Strict field validation
+      const validationError = validateResponse(json, {
+        chain: params.chain,
+        asset: params.asset,
+        payTo: params.payTo,
+        amountAtomic: typeof params.amountAtomic === 'string'
+          ? parseInt(params.amountAtomic, 10)
+          : params.amountAtomic
+      })
+
+      if (validationError) {
+        const durationMs = Date.now() - startTime
+        console.warn('[x402-facilitator] Validation failed (ERC-3009)', {
+          from: maskedFrom,
+          code: validationError.code,
+          detail: validationError.detail
+        })
+
+        incrementCounter('x402_verify_total', { mode: 'facilitator', code: validationError.code, scheme: 'erc3009' })
+        recordLatency('x402_verify_latency_ms', { mode: 'facilitator', scheme: 'erc3009' }, durationMs)
+
+        return validationError
+      }
+
+      // Success!
+      const durationMs = Date.now() - startTime
+      const amountPaid = json.amountAtomic || json.amount
+
+      console.log('[x402-facilitator] ERC-3009 verification successful', {
+        from: maskedFrom,
+        amountPaid,
+        durationMs,
+        attempts: attempt + 1
+      })
+
+      incrementCounter('x402_verify_total', { mode: 'facilitator', code: 'success', scheme: 'erc3009' })
+      recordLatency('x402_verify_latency_ms', { mode: 'facilitator', scheme: 'erc3009' }, durationMs)
+
+      return {
+        ok: true,
+        amountPaidAtomic: amountPaid,
+        tokenFrom: params.authorization.from, // Payer is cryptographically bound in signature
+        providerRaw: json
+      }
+
+    } catch (error: any) {
+      clearTimeout(timeoutId)
+      lastError = error
+
+      console.warn('[x402-facilitator] Attempt failed (ERC-3009)', {
+        from: maskedFrom,
+        attempt: attempt + 1,
+        error: error.message
+      })
+
+      // Check if retryable
+      if (attempt < MAX_ATTEMPTS - 1 && isRetryable(undefined, error)) {
+        continue // retry
+      }
+
+      // Final attempt or non-retryable
+      const durationMs = Date.now() - startTime
+      incrementCounter('x402_verify_total', { mode: 'facilitator', code: 'PROVIDER_ERROR', scheme: 'erc3009' })
+      recordLatency('x402_verify_latency_ms', { mode: 'facilitator', scheme: 'erc3009' }, durationMs)
+
+      return {
+        ok: false,
+        code: 'PROVIDER_ERROR',
+        message: error.message?.includes('timeout')
+          ? 'Payment verification service timeout'
+          : 'Payment verification service temporarily unavailable',
+        detail: error.message
+      }
+    }
+  }
+
+  // Should not reach here, but handle gracefully
+  const durationMs = Date.now() - startTime
+  incrementCounter('x402_verify_total', { mode: 'facilitator', code: 'PROVIDER_ERROR', scheme: 'erc3009' })
+  recordLatency('x402_verify_latency_ms', { mode: 'facilitator', scheme: 'erc3009' }, durationMs)
+
+  return {
+    ok: false,
+    code: 'PROVIDER_ERROR',
+    message: 'ERC-3009 verification failed after retries',
+    detail: lastError?.message || `Last status: ${lastStatus}`
+  }
+}
+
+/**
+ * Verify transaction hash via facilitator (original txHash-based flow)
+ */
 export async function facilitatorVerify(params: {
   chain: string
   asset: string
