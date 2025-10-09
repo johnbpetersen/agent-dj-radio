@@ -10,7 +10,8 @@ import { serverEnv } from '../../src/config/env.server.js'
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
 import { errorTracker } from '../../src/lib/error-tracking.js'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
-import { validateBindingMessage, normalizeEvmAddress } from '../../src/lib/binding-utils.js'
+import { normalizeEvmAddress } from '../../src/lib/binding-utils.js'
+import { validateBindingMessageV1, maskForLogging } from '../../src/shared/binding-message.js'
 
 // Request validation schema
 const proveRequestSchema = z.object({
@@ -110,8 +111,45 @@ async function proveHandler(req: VercelRequest, res: VercelResponse): Promise<vo
     }
 
     // 3. Validate message format and TTL
+    let parsed: ReturnType<typeof validateBindingMessageV1>
     try {
-      validateBindingMessage(message, challengeId, serverEnv.BINDING_TTL_SECONDS)
+      // Use shared parser with clock skew tolerance (±120s)
+      parsed = validateBindingMessageV1(message, challengeId, 120)
+
+      // Log message diagnostics
+      const masked = maskForLogging(parsed)
+      logger.info('wallet/prove message diagnostics', {
+        requestId,
+        challengeId: masked.challengeIdMasked,
+        lineEnding: masked.lineEnding,
+        lineCount: masked.lineCount,
+        hasTrailingNewline: masked.hasTrailingNewline
+      })
+
+      logger.info('wallet/prove parsed message', {
+        requestId,
+        ...masked
+      })
+
+      // Additional TTL check: ensure (ts + ttl) hasn't passed serverEnv.BINDING_TTL_SECONDS
+      const nowUnix = Math.floor(Date.now() / 1000)
+      const age = nowUnix - parsed.ts
+      const remaining = parsed.ttl - age
+
+      if (remaining < 0) {
+        throw new Error(
+          `Message expired: issued ${age}s ago with ttl=${parsed.ttl}s`
+        )
+      }
+
+      logger.info('wallet/prove TTL check', {
+        requestId,
+        age,
+        ttl: parsed.ttl,
+        remaining,
+        maxTtl: serverEnv.BINDING_TTL_SECONDS
+      })
+
     } catch (error: any) {
       logger.warn('wallet/prove message validation failed', {
         requestId,
@@ -123,7 +161,7 @@ async function proveHandler(req: VercelRequest, res: VercelResponse): Promise<vo
         error: {
           code: 'VALIDATION_ERROR',
           message: error.message,
-          hint: 'Message must be recent and match expected format'
+          hint: 'Message must be recent and match expected format (v1)'
         },
         requestId
       })

@@ -5,6 +5,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import type { WalletClient } from 'viem'
 import { proveWallet, PaymentError } from '../lib/paymentClient'
+import { buildBindingMessageV1 } from '../shared/binding-message'
 
 export interface BindingMessage {
   message: string
@@ -37,29 +38,41 @@ export interface UseWalletBinding {
 }
 
 /**
- * Build binding message matching server-side validation
+ * Build binding message v1 using shared module
  * Format:
  * ```
- * Agent DJ Radio — Wallet Proof
- *
- * Challenge: {challengeId}
- * Issued At: {unixSeconds}
- * Nonce: {uuidv4}
- *
- * By signing, I prove control of this wallet for this payment session.
+ * Agent DJ Radio Wallet Binding v1
+ * challengeId={uuid}; ts={unix}; ttl={seconds}
+ * nonce={32-hex}
  * ```
  */
 function buildBindingMessage(challengeId: string): BindingMessage {
   const issuedAt = Math.floor(Date.now() / 1000) // Unix seconds
-  const nonce = crypto.randomUUID()
+  const ttl = 300 // 5 minutes (from env or default)
 
-  const message = `Agent DJ Radio — Wallet Proof
+  // Get TTL from env if available (client-side)
+  const envTtl = import.meta.env.VITE_BINDING_TTL_SECONDS
+  const ttlSeconds = envTtl ? parseInt(envTtl, 10) : ttl
 
-Challenge: ${challengeId}
-Issued At: ${issuedAt}
-Nonce: ${nonce}
+  const message = buildBindingMessageV1({
+    challengeId,
+    ts: issuedAt,
+    ttl: ttlSeconds
+  })
 
-By signing, I prove control of this wallet for this payment session.`
+  // Extract nonce from message for compatibility with existing interface
+  const lines = message.split('\n')
+  const nonceLine = lines[2] || ''
+  const nonceMatch = nonceLine.match(/nonce=([0-9a-fA-F]{64})/)
+  const nonce = nonceMatch ? nonceMatch[1] : ''
+
+  // Log preview for debugging
+  console.log('[useWalletBinding] Built message:', {
+    preview: message.slice(0, 80) + '...',
+    length: message.length,
+    lineCount: lines.length,
+    nonce: nonce.slice(0, 6) + '...' + nonce.slice(-4)
+  })
 
   return {
     message,
