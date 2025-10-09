@@ -1,5 +1,5 @@
 // api/_shared/payments/x402-rpc.ts
-// RPC fallback verifier for Base Sepolia ERC-20 payments
+// RPC verifier for Base mainnet and Base Sepolia ERC-20 payments
 // Used when facilitator service is unavailable
 
 import { serverEnv } from '../../../src/config/env.server.js'
@@ -12,6 +12,26 @@ import type { VerifyResult } from './x402-facilitator.js'
 const TRANSFER_TOPIC0 = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
 
 const RPC_TIMEOUT_MS = 1500
+
+// Chain configuration for RPC verification
+interface ChainInfo {
+  name: 'base' | 'base-sepolia'
+  defaultRpc: string
+  rpcEnvKey: 'BASE_MAINNET_RPC_URL' | 'BASE_SEPOLIA_RPC_URL'
+}
+
+const CHAIN_CONFIG: Record<number, ChainInfo> = {
+  8453: {
+    name: 'base',
+    defaultRpc: 'https://mainnet.base.org',
+    rpcEnvKey: 'BASE_MAINNET_RPC_URL'
+  },
+  84532: {
+    name: 'base-sepolia',
+    defaultRpc: 'https://sepolia.base.org',
+    rpcEnvKey: 'BASE_SEPOLIA_RPC_URL'
+  }
+}
 
 interface TransactionReceipt {
   transactionHash: string
@@ -46,10 +66,9 @@ function decodeUint256(data: string): bigint {
 }
 
 /**
- * Fetch transaction receipt from Base Sepolia RPC
+ * Fetch transaction receipt from RPC endpoint
  */
-async function fetchReceipt(txHash: string): Promise<TransactionReceipt | null> {
-  const rpcUrl = serverEnv.BASE_SEPOLIA_RPC_URL
+async function fetchReceipt(txHash: string, rpcUrl: string): Promise<TransactionReceipt | null> {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), RPC_TIMEOUT_MS)
 
@@ -110,7 +129,7 @@ export async function verifyViaRPC(params: {
   const maskedTx = maskTxHash(txHash)
   const maskedAddr = maskAddress(payTo)
 
-  console.log('[x402-rpc] RPC fallback verification started', {
+  console.log('[x402-rpc] RPC verification started', {
     txHash: maskedTx,
     tokenAddress: maskAddress(tokenAddress),
     payTo: maskedAddr,
@@ -118,22 +137,33 @@ export async function verifyViaRPC(params: {
     chainId
   })
 
-  // Only support Base Sepolia for now
-  if (chainId !== 84532) {
+  // Check if chain is supported
+  const chainInfo = CHAIN_CONFIG[chainId]
+  if (!chainInfo) {
     const durationMs = Date.now() - startTime
     incrementCounter('x402_rpc_verify_total', { chainId: String(chainId), code: 'WRONG_CHAIN' })
     recordLatency('x402_rpc_verify_latency_ms', { chainId: String(chainId) }, durationMs)
 
+    const supportedChains = Object.keys(CHAIN_CONFIG).join(', ')
     return {
       ok: false,
       code: 'WRONG_CHAIN',
-      message: 'RPC fallback only supports Base Sepolia',
-      detail: `chainId ${chainId} not supported`
+      message: `Unsupported chainId ${chainId}. Supported: 8453 (Base), 84532 (Base Sepolia).`,
+      detail: `Supported chains: ${supportedChains}`
     }
   }
 
+  // Get RPC URL from env or use default
+  const rpcUrl = serverEnv[chainInfo.rpcEnvKey] || chainInfo.defaultRpc
+
+  console.log('[x402-rpc] Using RPC endpoint', {
+    chain: chainInfo.name,
+    chainId,
+    rpcHost: new URL(rpcUrl).hostname
+  })
+
   // Fetch transaction receipt
-  const receipt = await fetchReceipt(txHash)
+  const receipt = await fetchReceipt(txHash, rpcUrl)
 
   if (!receipt) {
     const durationMs = Date.now() - startTime

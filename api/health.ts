@@ -36,6 +36,12 @@ interface HealthResponse {
         required: boolean
         ttlSeconds: number
       }
+      rpc?: {
+        chain: string
+        chainId: number
+        tokenAddress: string
+        rpcEndpoint: string
+      }
     }
   }
   requestId: string
@@ -147,6 +153,30 @@ async function healthHandler(req: VercelRequest, res: VercelResponse): Promise<v
     paymentMode = 'mock'
   }
 
+  // Build RPC info if in rpc-only mode
+  let rpcInfo: HealthResponse['features']['x402']['rpc'] | undefined
+  if (paymentMode === 'rpc-only' && serverEnv.X402_TOKEN_ADDRESS) {
+    const chainId = serverEnv.X402_CHAIN_ID
+    const rpcUrl = chainId === 8453
+      ? serverEnv.BASE_MAINNET_RPC_URL
+      : serverEnv.BASE_SEPOLIA_RPC_URL
+
+    // Mask token address (show first 6 and last 4 chars)
+    const maskedToken = serverEnv.X402_TOKEN_ADDRESS
+      ? `${serverEnv.X402_TOKEN_ADDRESS.substring(0, 6)}...${serverEnv.X402_TOKEN_ADDRESS.substring(38)}`
+      : '(not set)'
+
+    // Mask RPC endpoint (show only hostname)
+    const rpcHost = new URL(rpcUrl).hostname
+
+    rpcInfo = {
+      chain: serverEnv.X402_CHAIN,
+      chainId,
+      tokenAddress: maskedToken,
+      rpcEndpoint: `${rpcHost} (masked)`
+    }
+  }
+
   const response: HealthResponse = {
     ok,
     stage: serverEnv.STAGE,
@@ -165,7 +195,8 @@ async function healthHandler(req: VercelRequest, res: VercelResponse): Promise<v
         binding: {
           required: serverEnv.X402_REQUIRE_BINDING,
           ttlSeconds: serverEnv.BINDING_TTL_SECONDS
-        }
+        },
+        ...(rpcInfo && { rpc: rpcInfo })
       }
     },
     requestId

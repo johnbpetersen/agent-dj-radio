@@ -67,10 +67,14 @@ const serverSchema = z.object({
   X402_ACCEPTED_ASSET: z.string().default('USDC'),
   X402_RECEIVING_ADDRESS: hexAddressSchema.optional(),
 
-  // X402 RPC fallback configuration (for facilitator mode)
-  X402_TOKEN_ADDRESS: hexAddressSchema.optional(), // USDC token address on Base Sepolia
-  X402_CHAIN_ID: z.coerce.number().default(84532), // Base Sepolia chain ID
+  // X402 RPC fallback configuration (for rpc-only mode)
+  // NOTE: X402_TOKEN_ADDRESS must match the chain specified by X402_CHAIN_ID
+  // Base mainnet (8453): 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+  // Base Sepolia (84532): 0x036CbD53842c5426634e7929541eC2318f3dCF7e
+  X402_TOKEN_ADDRESS: hexAddressSchema.optional(),
+  X402_CHAIN_ID: z.coerce.number().default(84532), // 8453 (Base) or 84532 (Base Sepolia)
   BASE_SEPOLIA_RPC_URL: urlSchema.default('https://sepolia.base.org'),
+  BASE_MAINNET_RPC_URL: urlSchema.default('https://mainnet.base.org'),
 
   // ElevenLabs configuration (required in alpha)
   ELEVEN_API_KEY: z.string().optional(),
