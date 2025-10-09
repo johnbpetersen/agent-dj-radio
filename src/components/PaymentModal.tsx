@@ -135,7 +135,14 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
   const [bindingRequired, setBindingRequired] = useState(false)
 
   // WRONG_PAYER error state
-  const [wrongPayerDetail, setWrongPayerDetail] = useState<string | null>(null)
+  const [wrongPayerDetail, setWrongPayerDetail] = useState<{
+    payerSource?: 'tokenFrom' | 'txSender' | 'txFrom'
+    payer?: string
+    tokenFrom?: string
+    txSender?: string
+    boundAddress?: string
+    txFrom?: string
+  } | null>(null)
 
   // TX_ALREADY_USED error state
   const [txReuseError, setTxReuseError] = useState<{
@@ -288,8 +295,9 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
           })
           setError(err.getUserMessage())
         } else if (err.isWrongPayer()) {
-          // Extract addresses from detail if available
-          setWrongPayerDetail(err.detail || null)
+          // Extract payer info from error
+          const payerInfo = err.getDetectedPayer()
+          setWrongPayerDetail(payerInfo)
           setError(err.getUserMessage())
         } else if (err.status === 429) {
           // Rate limited
@@ -532,7 +540,44 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
                 {wrongPayerDetail && (
                   <div className="wrong-payer-notice">
                     <p>⚠️ Payment sent from different wallet than proven.</p>
-                    <p className="detail">{wrongPayerDetail}</p>
+                    {wrongPayerDetail.payerSource && (
+                      <p className="payer-source">
+                        Source: <span className="source-label">
+                          {wrongPayerDetail.payerSource === 'tokenFrom' && 'ERC-20 Transfer event'}
+                          {wrongPayerDetail.payerSource === 'txSender' && 'Transaction sender'}
+                          {wrongPayerDetail.payerSource === 'txFrom' && 'Transaction sender (legacy)'}
+                        </span>
+                      </p>
+                    )}
+                    {wrongPayerDetail.payer && (
+                      <p className="address-line">
+                        <span className="label">Detected payer:</span>{' '}
+                        <code>
+                          {wrongPayerDetail.payer.slice(0, 6)}...{wrongPayerDetail.payer.slice(-4)}
+                        </code>
+                      </p>
+                    )}
+                    {wrongPayerDetail.tokenFrom && wrongPayerDetail.txSender && wrongPayerDetail.tokenFrom !== wrongPayerDetail.txSender && (
+                      <div className="relayer-info">
+                        <p><small>ℹ️ Payment used a relayer/router:</small></p>
+                        <p className="address-line">
+                          <span className="label">Token from:</span>{' '}
+                          <code>{wrongPayerDetail.tokenFrom.slice(0, 6)}...{wrongPayerDetail.tokenFrom.slice(-4)}</code>
+                        </p>
+                        <p className="address-line">
+                          <span className="label">Transaction sender:</span>{' '}
+                          <code>{wrongPayerDetail.txSender.slice(0, 6)}...{wrongPayerDetail.txSender.slice(-4)}</code>
+                        </p>
+                      </div>
+                    )}
+                    {wrongPayerDetail.boundAddress && (
+                      <p className="address-line">
+                        <span className="label">Bound wallet:</span>{' '}
+                        <code>
+                          {wrongPayerDetail.boundAddress.slice(0, 6)}...{wrongPayerDetail.boundAddress.slice(-4)}
+                        </code>
+                      </p>
+                    )}
                     <button className="rebind-button" onClick={handleRebind}>
                       Rebind Wallet
                     </button>

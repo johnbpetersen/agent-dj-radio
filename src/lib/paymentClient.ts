@@ -51,8 +51,13 @@ export interface ConfirmPaymentError {
     }
     // WRONG_PAYER error shape (400)
     detected?: {
-      txFrom: string
-      boundAddress: string
+      payerSource?: 'tokenFrom' | 'txSender' | 'txFrom'
+      payer?: string
+      tokenFrom?: string
+      txSender?: string
+      boundAddress?: string
+      // Legacy fields (deprecated)
+      txFrom?: string
     }
     // Legacy data field (deprecated, use original/detected)
     data?: {
@@ -249,15 +254,26 @@ export class PaymentError extends Error {
    * Get detected payer info for WRONG_PAYER errors
    * Returns null if not applicable
    */
-  getDetectedPayer(): { txFrom: string; boundAddress: string } | null {
+  getDetectedPayer(): {
+    payerSource?: 'tokenFrom' | 'txSender' | 'txFrom'
+    payer?: string
+    tokenFrom?: string
+    txSender?: string
+    boundAddress?: string
+    txFrom?: string  // Legacy
+  } | null {
     if (!this.isWrongPayer()) return null
 
     // Check new detected format first
     const errorData = (this as any).error
     if (errorData?.detected) {
       return {
-        txFrom: errorData.detected.txFrom,
-        boundAddress: errorData.detected.boundAddress
+        payerSource: errorData.detected.payerSource,
+        payer: errorData.detected.payer,
+        tokenFrom: errorData.detected.tokenFrom,
+        txSender: errorData.detected.txSender,
+        boundAddress: errorData.detected.boundAddress,
+        txFrom: errorData.detected.txFrom  // Legacy
       }
     }
 

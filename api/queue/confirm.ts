@@ -242,18 +242,20 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
         currentBoundAddress = currentChallenge.bound_address
       }
 
-      // Check WRONG_PAYER: If existing confirmation has tx_from_address, compare with current bound_address
-      if (existingByTxHash.tx_from_address && currentBoundAddress) {
-        if (!addressesMatch(existingByTxHash.tx_from_address, currentBoundAddress)) {
+      // Check WRONG_PAYER: Prefer token_from_address over tx_from_address
+      const existingPayer = (existingByTxHash as any).token_from_address ?? existingByTxHash.tx_from_address
+      if (existingPayer && currentBoundAddress) {
+        if (!addressesMatch(existingPayer, currentBoundAddress)) {
           reasonCodes.push('WRONG_PAYER')
-          payerAddress = existingByTxHash.tx_from_address
+          payerAddress = existingPayer
           logger.info('queue/confirm reuse with WRONG_PAYER detected', {
             requestId,
-            txFrom: maskAddress(existingByTxHash.tx_from_address),
+            payer: maskAddress(existingPayer),
+            payerSource: (existingByTxHash as any).token_from_address ? 'tokenFrom' : 'txSender',
             currentBound: maskAddress(currentBoundAddress)
           })
         }
-      } else if (!existingByTxHash.tx_from_address && currentBoundAddress) {
+      } else if (!existingPayer && currentBoundAddress) {
         // No tx_from_address stored - attempt RPC fetch for WRONG_PAYER detection
         logger.info('queue/confirm attempting RPC fetch for reuse WRONG_PAYER check', {
           requestId,
@@ -426,57 +428,76 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
           return
         }
 
-        // Check if transaction sender matches bound address
-        if (rpcResult.txFrom) {
-          if (!addressesMatch(rpcResult.txFrom, challenge.bound_address)) {
-            const normalizedTxFrom = normalizeEvmAddress(rpcResult.txFrom)
-            const normalizedBound = normalizeEvmAddress(challenge.bound_address)
+        // Resolve payer: prefer ERC-20 Transfer 'from' over transaction sender
+        const payer = rpcResult.tokenFrom ?? rpcResult.txSender ?? rpcResult.txFrom
+        const payerSource = rpcResult.tokenFrom ? 'tokenFrom' : (rpcResult.txSender ? 'txSender' : 'txFrom')
 
-            logger.warn('queue/confirm wrong payer', {
-              requestId,
-              challengeId,
-              txHash: maskTxHash(txHash),
-              txFrom: maskAddress(normalizedTxFrom),
-              boundAddress: maskAddress(normalizedBound)
-            })
-
-            // Add metrics logging
-            logger.info('queue/confirm metric', {
-              metric: 'x402_confirm_total',
-              code: 'WRONG_PAYER',
-              status: 400,
-              requestId
-            })
-
-            res.status(400).json({
-              error: {
-                code: 'WRONG_PAYER',
-                message: 'Payment sent from different wallet than proven.',
-                reasonCodes: ['WRONG_PAYER'],
-                detected: {
-                  txFrom: normalizedTxFrom,
-                  boundAddress: normalizedBound
-                }
-              },
-              requestId
-            })
-            return
-          }
-
-          logger.info('queue/confirm wallet binding verified', {
+        if (!payer) {
+          logger.error('queue/confirm payer unknown (no addresses available)', {
             requestId,
             challengeId,
-            address: maskAddress(challenge.bound_address)
+            txHash: maskTxHash(txHash)
           })
-        } else {
-          // RPC didn't return txFrom - log warning but allow (defensive)
-          logger.warn('queue/confirm RPC result missing txFrom', {
+          res.status(500).json({
+            error: {
+              code: 'PAYER_UNKNOWN',
+              message: 'Could not determine payment sender. Verification incomplete.'
+            },
+            requestId
+          })
+          return
+        }
+
+        // Check if payer matches bound address
+        if (!addressesMatch(payer, challenge.bound_address)) {
+          const normalizedPayer = normalizeEvmAddress(payer)
+          const normalizedBound = normalizeEvmAddress(challenge.bound_address)
+
+          logger.warn('queue/confirm wrong payer', {
             requestId,
             challengeId,
             txHash: maskTxHash(txHash),
-            note: 'Binding check skipped due to missing sender address'
+            payer: maskAddress(normalizedPayer),
+            payerSource,
+            tokenFrom: rpcResult.tokenFrom ? maskAddress(rpcResult.tokenFrom) : undefined,
+            txSender: rpcResult.txSender ? maskAddress(rpcResult.txSender) : undefined,
+            boundAddress: maskAddress(normalizedBound)
           })
+
+          // Add metrics logging
+          logger.info('queue/confirm metric', {
+            metric: 'x402_confirm_total',
+            code: 'WRONG_PAYER',
+            status: 400,
+            requestId,
+            payerSource
+          })
+
+          res.status(400).json({
+            error: {
+              code: 'WRONG_PAYER',
+              message: 'Payment sent from different wallet than proven.',
+              reasonCodes: ['WRONG_PAYER'],
+              detected: {
+                payerSource,
+                payer: normalizedPayer,
+                tokenFrom: rpcResult.tokenFrom ? normalizeEvmAddress(rpcResult.tokenFrom) : undefined,
+                txSender: rpcResult.txSender ? normalizeEvmAddress(rpcResult.txSender) : undefined,
+                boundAddress: normalizedBound
+              }
+            },
+            requestId
+          })
+          return
         }
+
+        logger.info('queue/confirm wallet binding verified', {
+          requestId,
+          challengeId,
+          address: maskAddress(challenge.bound_address),
+          payerSource,
+          sameAddress: rpcResult.tokenFrom && rpcResult.txSender ? rpcResult.tokenFrom === rpcResult.txSender : 'unknown'
+        })
       }
 
       verificationResult = {
@@ -641,18 +662,33 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
     // 6. Verification successful! Insert confirmation record
     // Determine provider based on which mode was used
     let provider: string
-    let txFrom: string | null = null
+    let tokenFrom: string | null = null
+    let txSender: string | null = null
+
     if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'rpc-only') {
       provider = 'rpc'
-      // Extract txFrom from RPC result
-      if ((verificationResult as any).txFrom) {
-        txFrom = normalizeEvmAddress((verificationResult as any).txFrom)
+      // Extract both addresses from RPC result
+      if ((verificationResult as any).tokenFrom) {
+        tokenFrom = normalizeEvmAddress((verificationResult as any).tokenFrom)
+      }
+      if ((verificationResult as any).txSender) {
+        txSender = normalizeEvmAddress((verificationResult as any).txSender)
+      }
+      // Fallback to deprecated txFrom
+      if (!txSender && (verificationResult as any).txFrom) {
+        txSender = normalizeEvmAddress((verificationResult as any).txFrom)
       }
     } else if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'facilitator') {
       provider = 'facilitator'
-      // Facilitator may also return txFrom
-      if ((verificationResult as any).txFrom) {
-        txFrom = normalizeEvmAddress((verificationResult as any).txFrom)
+      // Facilitator may also return these addresses
+      if ((verificationResult as any).tokenFrom) {
+        tokenFrom = normalizeEvmAddress((verificationResult as any).tokenFrom)
+      }
+      if ((verificationResult as any).txSender) {
+        txSender = normalizeEvmAddress((verificationResult as any).txSender)
+      }
+      if (!txSender && (verificationResult as any).txFrom) {
+        txSender = normalizeEvmAddress((verificationResult as any).txFrom)
       }
     } else if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'cdp') {
       provider = 'cdp'
@@ -660,18 +696,20 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       provider = 'mock'
     }
 
-    const { data: confirmation, error: confirmInsertErr } = await supabaseAdmin
+    const { data: confirmation, error: confirmInsertErr} = await supabaseAdmin
       .from('payment_confirmations')
       .insert({
         challenge_id: challengeId,
         tx_hash: txHash,
-        tx_from_address: txFrom,
+        token_from_address: tokenFrom,
+        tx_from_address: txSender,
         provider,
         amount_paid_atomic: verificationResult.amountPaidAtomic,
         provider_raw: {
           verified_at: new Date().toISOString(),
           request_id: requestId,
-          tx_from: txFrom // Also store in provider_raw for audit
+          token_from: tokenFrom,
+          tx_sender: txSender
         }
       })
       .select()
@@ -744,7 +782,8 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
           const originalTrackId = joinedData?.track_id
           const originalConfirmedAt = existing.created_at
           const reasonCodes = ['TX_ALREADY_USED']
-          let payerAddress: string | null = existing.tx_from_address || null
+          // Prefer token_from_address over tx_from_address for payer resolution
+          let payerAddress: string | null = (existing as any).token_from_address ?? existing.tx_from_address ?? null
           let currentBoundAddress: string | null = challenge?.bound_address || null
 
           // Check WRONG_PAYER if we have both addresses

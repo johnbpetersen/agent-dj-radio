@@ -114,6 +114,60 @@ async function fetchReceipt(txHash: string, rpcUrl: string): Promise<Transaction
 }
 
 /**
+ * Fetch transaction sender (from field) from RPC endpoint
+ * Returns lowercase address or null if fetch fails
+ */
+async function fetchTransactionSender(txHash: string, rpcUrl: string): Promise<string | null> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), RPC_TIMEOUT_MS)
+
+  try {
+    const response = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'eth_getTransactionByHash',
+        params: [txHash]
+      }),
+      signal: controller.signal
+    })
+
+    clearTimeout(timeoutId)
+
+    if (!response.ok) {
+      console.warn('[x402-rpc] RPC returned non-OK status for transaction fetch', { status: response.status })
+      return null
+    }
+
+    const json = await response.json()
+
+    if (json.error) {
+      console.warn('[x402-rpc] RPC returned error for transaction fetch', { error: json.error })
+      return null
+    }
+
+    const tx = json.result
+    if (!tx || !tx.from) {
+      return null
+    }
+
+    return normalizeAddress(tx.from)
+  } catch (error: any) {
+    clearTimeout(timeoutId)
+
+    if (error.name === 'AbortError') {
+      console.warn('[x402-rpc] RPC request timeout for transaction fetch')
+      return null
+    }
+
+    console.warn('[x402-rpc] Transaction fetch failed', { error: error.message })
+    return null
+  }
+}
+
+/**
  * Verify ERC-20 payment via RPC fallback
  * Fetches transaction receipt and validates Transfer event
  */
@@ -221,6 +275,9 @@ export async function verifyViaRPC(params: {
 
     foundMatchingRecipient = true
 
+    // Decode 'from' address from topics[1] (the authoritative payer)
+    const fromAddress = log.topics.length >= 2 ? normalizeAddress(decodeAddressFromTopic(log.topics[1])) : null
+
     // Decode amount from data
     const transferAmount = decodeUint256(log.data)
 
@@ -244,12 +301,17 @@ export async function verifyViaRPC(params: {
       }
     }
 
-    // Success!
+    // Success! Now fetch transaction sender for audit trail
+    // Fetch transaction sender (may be different from Transfer 'from' if using relayer)
+    const txSender = await fetchTransactionSender(txHash, rpcUrl)
+
     const durationMs = Date.now() - startTime
     console.log('[x402-rpc] RPC verification successful', {
       txHash: maskedTx,
       amountPaid: transferAmount.toString(),
-      txFrom: receipt.from ? maskAddress(receipt.from) : '(not available)',
+      tokenFrom: fromAddress ? maskAddress(fromAddress) : '(not available)',
+      txSender: txSender ? maskAddress(txSender) : '(not available)',
+      sameAddress: fromAddress && txSender ? fromAddress === txSender : 'unknown',
       durationMs
     })
 
@@ -259,7 +321,9 @@ export async function verifyViaRPC(params: {
     return {
       ok: true,
       amountPaidAtomic: transferAmount.toString(),
-      txFrom: receipt.from, // Transaction sender for wallet binding verification
+      tokenFrom: fromAddress || undefined, // ERC-20 Transfer 'from' (authoritative payer)
+      txSender: txSender || undefined,      // Transaction sender (may be relayer)
+      txFrom: txSender || receipt.from,     // Deprecated: kept for backward compatibility
       providerRaw: { source: 'rpc-fallback', receipt }
     }
   }
