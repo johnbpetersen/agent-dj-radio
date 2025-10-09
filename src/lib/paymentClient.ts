@@ -23,10 +23,23 @@ export interface ProveWalletError {
   requestId: string
 }
 
-export interface ConfirmPaymentRequest {
-  challengeId: string
-  txHash: string
-}
+// Support both txHash (RPC mode) and authorization (facilitator mode)
+export type ConfirmPaymentRequest =
+  | { challengeId: string; txHash: string }
+  | {
+      challengeId: string
+      authorization: {
+        signature: string
+        authorization: {
+          from: string
+          to: string
+          value: string
+          validAfter: number
+          validBefore: number
+          nonce: string
+        }
+      }
+    }
 
 export interface ConfirmPaymentResponse {
   ok: true
@@ -37,7 +50,7 @@ export interface ConfirmPaymentResponse {
 
 export interface ConfirmPaymentError {
   error: {
-    code: 'WALLET_NOT_BOUND' | 'WRONG_PAYER' | 'TX_ALREADY_USED' | 'NO_MATCH' | 'WRONG_AMOUNT' | 'WRONG_ASSET' | 'WRONG_CHAIN' | 'PROVIDER_ERROR' | 'EXPIRED' | 'VALIDATION_ERROR' | 'DB_ERROR' | 'INTERNAL'
+    code: 'WALLET_NOT_BOUND' | 'WRONG_PAYER' | 'TX_ALREADY_USED' | 'AUTH_REUSED' | 'NO_MATCH' | 'WRONG_AMOUNT' | 'WRONG_ASSET' | 'WRONG_CHAIN' | 'WRONG_TOKEN' | 'WRONG_PAYTO' | 'INVALID_EXPIRY' | 'NOT_YET_VALID' | 'INVALID_NONCE' | 'PROVIDER_ERROR' | 'EXPIRED' | 'VALIDATION_ERROR' | 'DB_ERROR' | 'INTERNAL'
     message: string
     detail?: string
     reasonCodes?: string[]

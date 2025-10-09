@@ -16,15 +16,20 @@ import { sanitizeForClient } from '../_shared/security.js'
 import { maskTxHash, maskAddress } from '../../src/lib/crypto-utils.js'
 import { normalizeEvmAddress, addressesMatch } from '../../src/lib/binding-utils.js'
 
-// ERC-3009 Authorization schema
-const erc3009AuthorizationSchema = z.object({
+// ERC-3009 authorization fields (nested under authorization.authorization)
+const erc3009AuthFieldsSchema = z.object({
   from: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid from address'),
   to: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid to address'),
-  value: z.string().regex(/^\d+$/, 'Invalid value format'),
-  validAfter: z.number().int().positive(),
-  validBefore: z.number().int().positive(),
-  nonce: z.string().regex(/^0x[a-fA-F0-9]{64}$/, 'Invalid nonce format'),
-  signature: z.string().regex(/^0x[a-fA-F0-9]+$/, 'Invalid signature format')
+  value: z.union([z.string().regex(/^\d+$/, 'Invalid value format'), z.number()]).transform(v => String(v)),
+  validAfter: z.union([z.number(), z.string()]).transform(v => Number(v)),
+  validBefore: z.union([z.number(), z.string()]).transform(v => Number(v)),
+  nonce: z.string().regex(/^0x[a-fA-F0-9]{64}$/, 'Invalid nonce format')
+})
+
+// Full authorization object with signature at top level
+const erc3009AuthorizationSchema = z.object({
+  signature: z.string().regex(/^0x[a-fA-F0-9]+$/, 'Invalid signature format'),
+  authorization: erc3009AuthFieldsSchema
 })
 
 // Request validation schema - supports both txHash (RPC mode) and authorization (facilitator mode)
@@ -122,7 +127,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       challengeId,
       mode: paymentMode,
       ...(txHash && { txHash: maskTxHash(txHash) }),
-      ...(authorization && { from: maskAddress(authorization.from), scheme: 'erc3009' })
+      ...(authorization && { from: maskAddress(authorization.authorization.from), scheme: 'erc3009' })
     })
 
     // Early guard: Reject mock tx hashes in live mode (only applies to txHash mode)
@@ -548,16 +553,31 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
 
       if (authorization) {
         // ERC-3009 transferWithAuthorization flow
+        // Extract auth fields for easier access
+        const authFields = authorization.authorization
+        const signature = authorization.signature
+
+        // Debug log before facilitator call
+        logger.debug('facilitator payload sanity', {
+          requestId,
+          hasSignature: typeof signature === 'string',
+          sigLen: signature?.length,
+          value: authFields.value,
+          validAfter: authFields.validAfter,
+          validBefore: authFields.validBefore,
+          nonceLen: authFields.nonce?.length
+        })
+
         // Strict server-side validation before calling facilitator
         logger.info('queue/confirm pre-facilitator validation', {
           requestId,
           challengeId,
           scheme: 'erc3009',
-          from: maskAddress(authorization.from),
-          to: maskAddress(authorization.to),
-          value: authorization.value,
-          validBefore: authorization.validBefore,
-          validAfter: authorization.validAfter,
+          from: maskAddress(authFields.from),
+          to: maskAddress(authFields.to),
+          value: authFields.value,
+          validBefore: authFields.validBefore,
+          validAfter: authFields.validAfter,
           chainId: serverEnv.X402_CHAIN_ID,
           tokenAddress: maskAddress(serverEnv.X402_TOKEN_ADDRESS!)
         })
@@ -592,12 +612,12 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
         }
 
         // 3. Recipient (to) must match receiving address
-        if (normalizeEvmAddress(authorization.to) !== normalizeEvmAddress(serverEnv.X402_RECEIVING_ADDRESS!)) {
+        if (normalizeEvmAddress(authFields.to) !== normalizeEvmAddress(serverEnv.X402_RECEIVING_ADDRESS!)) {
           logger.warn('queue/confirm wrong payTo', {
             requestId,
             challengeId,
             expected: maskAddress(serverEnv.X402_RECEIVING_ADDRESS!),
-            got: maskAddress(authorization.to)
+            got: maskAddress(authFields.to)
           })
           res.status(400).json({
             error: {
@@ -610,17 +630,17 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
         }
 
         // 4. Amount must match exactly
-        if (authorization.value !== String(challenge.amount_atomic)) {
+        if (authFields.value !== String(challenge.amount_atomic)) {
           logger.warn('queue/confirm wrong amount', {
             requestId,
             challengeId,
             expected: challenge.amount_atomic,
-            got: authorization.value
+            got: authFields.value
           })
           res.status(400).json({
             error: {
               code: 'WRONG_AMOUNT',
-              message: `Amount mismatch: expected ${challenge.amount_atomic}, got ${authorization.value}`
+              message: `Amount mismatch: expected ${challenge.amount_atomic}, got ${authFields.value}`
             },
             requestId
           })
@@ -629,11 +649,11 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
 
         // 5. validBefore must be in the future (with clock skew tolerance)
         const nowUnix = Math.floor(Date.now() / 1000)
-        if (authorization.validBefore <= nowUnix - (CLOCK_SKEW_MS / 1000)) {
+        if (authFields.validBefore <= nowUnix - (CLOCK_SKEW_MS / 1000)) {
           logger.warn('queue/confirm authorization expired', {
             requestId,
             challengeId,
-            validBefore: authorization.validBefore,
+            validBefore: authFields.validBefore,
             now: nowUnix
           })
           res.status(400).json({
@@ -648,11 +668,11 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
 
         // 6. validBefore must not exceed challenge expiry
         const challengeExpiryUnix = Math.floor(new Date(challenge.expires_at).getTime() / 1000)
-        if (authorization.validBefore > challengeExpiryUnix) {
+        if (authFields.validBefore > challengeExpiryUnix) {
           logger.warn('queue/confirm authorization validBefore exceeds challenge expiry', {
             requestId,
             challengeId,
-            validBefore: authorization.validBefore,
+            validBefore: authFields.validBefore,
             challengeExpiry: challengeExpiryUnix
           })
           res.status(400).json({
@@ -666,11 +686,11 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
         }
 
         // 7. validAfter must be <= now (or allow future with small tolerance)
-        if (authorization.validAfter > nowUnix + (CLOCK_SKEW_MS / 1000)) {
+        if (authFields.validAfter > nowUnix + (CLOCK_SKEW_MS / 1000)) {
           logger.warn('queue/confirm authorization not yet valid', {
             requestId,
             challengeId,
-            validAfter: authorization.validAfter,
+            validAfter: authFields.validAfter,
             now: nowUnix
           })
           res.status(400).json({
@@ -684,11 +704,11 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
         }
 
         // 8. Nonce must be present and correct format (already validated by schema)
-        if (!authorization.nonce || !authorization.nonce.match(/^0x[a-fA-F0-9]{64}$/)) {
+        if (!authFields.nonce || !authFields.nonce.match(/^0x[a-fA-F0-9]{64}$/)) {
           logger.warn('queue/confirm invalid nonce format', {
             requestId,
             challengeId,
-            nonce: authorization.nonce ? `${authorization.nonce.substring(0, 10)}...` : 'missing'
+            nonce: authFields.nonce ? `${authFields.nonce.substring(0, 10)}...` : 'missing'
           })
           res.status(400).json({
             error: {
@@ -704,11 +724,11 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
         // In facilitator mode, binding is typically NOT required since ERC-3009 signature binds the payer
         // But we'll check the flag just in case
         if (serverEnv.X402_REQUIRE_BINDING && challenge.bound_address) {
-          if (!addressesMatch(authorization.from, challenge.bound_address)) {
+          if (!addressesMatch(authFields.from, challenge.bound_address)) {
             logger.warn('queue/confirm wallet not bound in facilitator mode', {
               requestId,
               challengeId,
-              from: maskAddress(authorization.from),
+              from: maskAddress(authFields.from),
               boundAddress: maskAddress(challenge.bound_address)
             })
             res.status(400).json({
@@ -722,7 +742,17 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
           }
         }
 
-        // All validations passed - call facilitator
+        // All validations passed - call facilitator with flattened authorization
+        const flatAuthorization: ERC3009Authorization = {
+          from: authFields.from,
+          to: authFields.to,
+          value: authFields.value,
+          validAfter: authFields.validAfter,
+          validBefore: authFields.validBefore,
+          nonce: authFields.nonce,
+          signature: signature
+        }
+
         vr = await facilitatorVerifyAuthorization({
           chain: challenge.chain,
           asset: challenge.asset,
@@ -730,7 +760,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
           payTo: challenge.pay_to,
           chainId: serverEnv.X402_CHAIN_ID!,
           tokenAddress: serverEnv.X402_TOKEN_ADDRESS!,
-          authorization
+          authorization: flatAuthorization
         })
 
         // Persist authorization to database for audit trail
@@ -741,13 +771,13 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
               scheme: 'erc3009',
               chain_id: serverEnv.X402_CHAIN_ID,
               token_address: serverEnv.X402_TOKEN_ADDRESS!,
-              from_address: authorization.from,
-              to_address: authorization.to,
-              value_atomic: authorization.value,
-              valid_after: authorization.validAfter,
-              valid_before: authorization.validBefore,
-              nonce: authorization.nonce,
-              signature: authorization.signature,
+              from_address: flatAuthorization.from,
+              to_address: flatAuthorization.to,
+              value_atomic: flatAuthorization.value,
+              valid_after: flatAuthorization.validAfter,
+              valid_before: flatAuthorization.validBefore,
+              nonce: flatAuthorization.nonce,
+              signature: flatAuthorization.signature,
               facilitator_verdict: vr.providerRaw || {}
             })
 
@@ -758,8 +788,8 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
                 .from('payment_authorizations')
                 .select('challenge_id, created_at, payment_challenges!inner(track_id)')
                 .eq('token_address', serverEnv.X402_TOKEN_ADDRESS!)
-                .eq('from_address', authorization.from)
-                .eq('nonce', authorization.nonce)
+                .eq('from_address', flatAuthorization.from)
+                .eq('nonce', flatAuthorization.nonce)
                 .single()
 
               if (existingAuth) {
@@ -768,7 +798,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
                   logger.info('queue/confirm authorization idempotent (same challenge)', {
                     requestId,
                     challengeId,
-                    nonce: authorization.nonce.substring(0, 10) + '...'
+                    nonce: flatAuthorization.nonce.substring(0, 10) + '...'
                   })
                 } else {
                   // Different challenge - AUTH_REUSED
@@ -776,7 +806,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
                     requestId,
                     currentChallengeId: challengeId,
                     existingChallengeId: existingAuth.challenge_id,
-                    nonce: authorization.nonce.substring(0, 10) + '...'
+                    nonce: flatAuthorization.nonce.substring(0, 10) + '...'
                   })
 
                   const joinedData = (existingAuth as any).payment_challenges

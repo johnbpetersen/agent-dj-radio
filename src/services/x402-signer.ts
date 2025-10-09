@@ -31,23 +31,16 @@ export interface PaymentChallenge {
   expiresAtSec?: number  // Unix seconds, optional optimization
 }
 
-export interface SignedPayload {
-  signature: Hex
+export interface X402Authorization {
+  signature: `0x${string}`
   authorization: {
-    from: Address
-    to: Address
+    from: `0x${string}`
+    to: `0x${string}`
     value: string
     validAfter: number
     validBefore: number
-    nonce: Hex
+    nonce: `0x${string}`
   }
-}
-
-export interface X402PaymentPayload {
-  x402Version: number
-  scheme: 'exact'
-  network: 'base' | 'base-sepolia'
-  payload: SignedPayload
 }
 
 /**
@@ -100,7 +93,7 @@ export async function signX402Payment(
   client: WalletClient,
   challenge: PaymentChallenge,
   chainId: number
-): Promise<X402PaymentPayload> {
+): Promise<X402Authorization> {
   if (!client.account) {
     throw new Error('Wallet not connected')
   }
@@ -221,25 +214,28 @@ export async function signX402Payment(
       message: authorization
     })
 
+    // Final typed data debug
+    console.debug('[x402-signer] typed-data sanity', {
+      value: authorization.value.toString(),
+      validAfter: Number(authorization.validAfter),
+      validBefore: Number(authorization.validBefore),
+      nonceLen: authorization.nonce.length
+    })
+
     console.log('[x402-signer] Signature created:', {
       signature: signature.slice(0, 10) + '...',
-      nonce
+      nonce: authorization.nonce.slice(0, 10) + '...'
     })
 
     return {
-      x402Version: 1,
-      scheme: 'exact',
-      network,
-      payload: {
-        signature,
-        authorization: {
-          from: authorization.from,
-          to: authorization.to,
-          value: authorization.value.toString(),
-          validAfter: Number(authorization.validAfter),
-          validBefore: Number(authorization.validBefore),
-          nonce: authorization.nonce
-        }
+      signature: signature as `0x${string}`,
+      authorization: {
+        from: authorization.from as `0x${string}`,
+        to: authorization.to as `0x${string}`,
+        value: authorization.value.toString(),
+        validAfter: Number(authorization.validAfter),
+        validBefore: Number(authorization.validBefore),
+        nonce: authorization.nonce as `0x${string}`
       }
     }
 

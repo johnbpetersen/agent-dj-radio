@@ -297,14 +297,27 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
       })
 
       // Sign ERC-3009 transferWithAuthorization
-      const signedPayload = await signX402Payment(wallet.client, challenge, chainId)
+      const signed = await signX402Payment(wallet.client, challenge, chainId)
+
+      // Debug payload before sending
+      console.debug('[PaymentModal] confirm payload preview', {
+        hasSignature: typeof signed.signature === 'string',
+        sigHead: signed.signature?.slice(0, 10),
+        value: signed.authorization.value,
+        validAfter: signed.authorization.validAfter,
+        validBefore: signed.authorization.validBefore,
+        nonceLen: signed.authorization.nonce.length
+      })
 
       console.log('[PaymentModal] Authorization signed, submitting to confirm...')
 
-      // Submit authorization to confirm endpoint
+      // Submit authorization to confirm endpoint (exact shape backend expects)
       const payload = {
         challengeId: challenge.challengeId,
-        authorization: signedPayload.payload.authorization
+        authorization: {
+          signature: signed.signature,
+          authorization: signed.authorization
+        }
       }
 
       const response = await confirmPayment(payload)
