@@ -8,87 +8,44 @@ interface NowPlayingMetaProps {
 
 function formatDuration(seconds: number): string {
   const mins = Math.floor(seconds / 60)
-  const secs = seconds % 60
+  const secs = Math.floor(seconds % 60) // Use Math.floor to keep it clean
   return `${mins}:${secs.toString().padStart(2, '0')}`
-}
-
-function formatTimeLeft(currentSeconds: number, totalSeconds: number): string {
-  const remaining = Math.max(0, totalSeconds - currentSeconds)
-  return formatDuration(remaining)
 }
 
 export default function NowPlayingMeta({ track, playheadSeconds, className = '' }: NowPlayingMetaProps) {
   if (!track) {
+    // Return a styled placeholder for the ticker
     return (
-      <div className={`text-center ${className}`}>
-        <div className="glass-card p-6">
-          <div className="text-white/60 text-lg">No track playing</div>
-          <div className="text-white/40 text-sm mt-2">Queue a track to get the party started!</div>
-        </div>
+      <div className={`font-digital bg-black/70 border-2 border-black/80 rounded-md p-4 text-center text-2xl text-orange-400/50 shadow-[0_0_15px_rgba(251,146,60,0.5)] ${className}`}>
+        Waiting for next track...
       </div>
     )
   }
 
-  const progressPercent = track.duration_seconds > 0 
+  const progressPercent = track.duration_seconds > 0
     ? Math.min(100, (playheadSeconds / track.duration_seconds) * 100)
     : 0
 
-  // Determine if title is too long for marquee effect
-  const isLongTitle = track.prompt.length > 50
-
   return (
-    <div className={`${className}`}>
-      <div className="text-center mb-4">
-        {/* Track Title */}
-        <div className="relative mb-2">
-          <div 
-            className={`
-              text-2xl md:text-3xl font-bold text-white 
-              ${isLongTitle ? 'overflow-hidden' : ''}
-            `}
-            style={isLongTitle ? { height: '2.5rem' } : {}}
-          >
-            <div className={isLongTitle ? 'marquee whitespace-nowrap' : ''}>
-              {track.prompt}
-            </div>
-          </div>
-        </div>
-        
-        {/* Artist/Submitter */}
-        {track.user && (
-          <div className="text-white/70 text-lg mb-2">
-            by {track.user.display_name}
-          </div>
-        )}
-        
-        {/* Duration and time info */}
-        <div className="flex items-center justify-center gap-4 text-white/60 text-sm">
-          <span>{formatDuration(playheadSeconds)}</span>
-          <span>•</span>
-          <span>{formatDuration(track.duration_seconds)}</span>
-          <span>•</span>
-          <span>{formatTimeLeft(playheadSeconds, track.duration_seconds)} left</span>
-        </div>
+    <div className={`font-digital bg-black/70 border-2 border-black/80 rounded-md p-4 text-orange-400 shadow-[0_0_15px_rgba(251,146,60,0.5)] ${className}`}>
+      {/* Track Title and Artist */}
+      <div className="text-center text-3xl tracking-wider mb-3">
+        {track.prompt}
+        {track.user && <span className="text-white/70"> - by {track.user.display_name}</span>}
       </div>
 
-      {/* Progress Bar */}
+      {/* Progress Bar and Timings */}
       <div className="relative">
-        <div className="w-full h-2 bg-white/20 rounded-full overflow-hidden backdrop-blur-sm">
-          <div 
-            className="h-full bg-gradient-to-r from-blue-400 to-purple-500 rounded-full transition-all duration-1000 ease-linear"
-            style={{ width: `${progressPercent}%` }}
-          />
+        {/* Timing info */}
+        <div className="flex justify-between text-2xl mb-1">
+          <span>{formatDuration(playheadSeconds)}</span>
+          <span>{formatDuration(track.duration_seconds)}</span>
         </div>
-        
-        {/* Rating display */}
-        {track.rating_count > 0 && (
-          <div className="flex items-center justify-center mt-3 text-white/70 text-sm">
-            <span className="flex items-center gap-2">
-              ⭐ {track.rating_score.toFixed(1)} 
-              <span className="text-white/50">({track.rating_count} reactions)</span>
-            </span>
-          </div>
-        )}
+
+        {/* Progress bar styled like the reference image */}
+        <div className="w-full h-4 bg-orange-900/50 border border-black/50 rounded-full flex items-center p-0.5">
+          <div className="h-full bg-orange-400 rounded-full" style={{ width: `${progressPercent}%` }} />
+        </div>
       </div>
     </div>
   )

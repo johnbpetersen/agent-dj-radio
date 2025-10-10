@@ -7,15 +7,15 @@ interface AvatarProps {
 }
 
 const sizeClasses = {
-  sm: 'w-8 h-8 text-xs',
-  md: 'w-12 h-12 text-sm', 
-  lg: 'w-16 h-16 text-lg',
-  xl: 'w-20 h-20 text-xl'
+  sm: 'w-8 h-10 text-xs',
+  md: 'w-12 h-16 text-sm',
+  lg: 'w-16 h-20 text-lg',
+  xl: 'w-24 h-28 text-xl'
 }
 
 const colorVariants = [
   'from-blue-400 to-blue-600',
-  'from-purple-400 to-purple-600', 
+  'from-purple-400 to-purple-600',
   'from-pink-400 to-pink-600',
   'from-green-400 to-green-600',
   'from-yellow-400 to-yellow-600',
@@ -26,7 +26,7 @@ const colorVariants = [
 
 function getInitials(name?: string): string {
   if (!name) return '?'
-  
+
   const words = name.trim().split(' ')
   if (words.length === 1) {
     return words[0].slice(0, 2).toUpperCase()
@@ -36,7 +36,7 @@ function getInitials(name?: string): string {
 
 function getColorForName(name?: string): string {
   if (!name) return colorVariants[0]
-  
+
   let hash = 0
   for (let i = 0; i < name.length; i++) {
     hash = name.charCodeAt(i) + ((hash << 5) - hash)
@@ -44,26 +44,26 @@ function getColorForName(name?: string): string {
   return colorVariants[Math.abs(hash) % colorVariants.length]
 }
 
-export default function Avatar({ 
-  name, 
-  size = 'md', 
-  isOnline = false, 
+export default function Avatar({
+  name,
+  size = 'md',
+  isOnline = false,
   isDJ = false,
   className = ''
 }: AvatarProps) {
   const initials = getInitials(name)
   const colorClass = getColorForName(name)
-  
+
   return (
+    // We add a 'relative' class to the container so we can position the indicators
     <div className={`relative ${className}`}>
-      <div 
+      <div
         className={`
-          ${sizeClasses[size]} 
-          rounded-full 
-          bg-gradient-to-br ${colorClass}
+          ${sizeClasses[size]}
+          rounded-t-full bg-gradient-to-b ${colorClass}
           flex items-center justify-center
           font-bold text-white
-          border-2 border-white/20
+          border-b-4 border-black/30
           shadow-lg
           ${isDJ ? 'dj-avatar' : ''}
           transition-all duration-300
@@ -71,15 +71,15 @@ export default function Avatar({
       >
         {initials}
       </div>
-      
-      {/* Online indicator */}
+
+      {/* Online indicator - This logic is now restored */}
       {isOnline && (
-        <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-400 rounded-full border-2 border-white/20 shadow-sm"></div>
+        <div className="absolute bottom-2 -right-1 w-4 h-4 bg-green-400 rounded-full border-2 border-gray-800 shadow-sm" />
       )}
-      
-      {/* DJ indicator */}
+
+      {/* DJ indicator - This logic is now restored */}
       {isDJ && (
-        <div className="absolute -top-1 -right-1 bg-yellow-400 text-yellow-900 text-xs px-1 py-0.5 rounded-full font-bold shadow-sm">
+        <div className="absolute -top-2 -right-2 bg-yellow-400 text-yellow-900 text-xs px-2 py-1 rounded-full font-bold shadow-sm">
           DJ
         </div>
       )}

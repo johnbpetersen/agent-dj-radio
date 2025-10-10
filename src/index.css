@@ -1,3 +1,6 @@
+/* We are adding this Google Font import for our digital ticker */
+@import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -5,10 +8,11 @@
 body {
   margin: 0;
   min-height: 100vh;
+  /* This gradient will now be covered by our background image, which is intended */
   background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
 }
 
-/* Glass card effect */
+/* Glass card effect (kept for modals, etc.) */
 @layer components {
   .glass-card {
     @apply bg-white/10 backdrop-blur-lg border border-white/20 rounded-xl shadow-2xl;
@@ -19,7 +23,7 @@ body {
   }
 }
 
-/* Turntable animations */
+/* All of your awesome animations are preserved! No changes needed here. */
 @keyframes eq-bounce {
   0%, 100% { height: 0.5rem; }
   50% { height: 1.5rem; }
@@ -68,7 +72,6 @@ body {
   100% { transform: scale(1); }
 }
 
-/* EQ bars */
 .eq-bar {
   @apply w-1.5 bg-gradient-to-t from-blue-500 to-purple-500 rounded-full transition-all duration-75;
   animation-duration: 0.8s;
@@ -83,23 +86,19 @@ body {
 .eq-playing .eq-bar:nth-child(4) { animation-name: eq-bounce; animation-delay: 0.3s; }
 .eq-playing .eq-bar:nth-child(5) { animation-name: eq-bounce-delayed; animation-delay: 0.4s; }
 
-/* On Air pill glow */
 .on-air-pill {
   animation: glow-pulse 2s ease-in-out infinite;
 }
 
-/* Progress ring */
 .progress-ring {
   transform: rotate(-90deg);
   filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.5));
 }
 
-/* Marquee text */
 .marquee {
   animation: marquee 15s linear infinite;
 }
 
-/* Reaction button animations */
 .reaction-btn:active {
   animation: reaction-pop 0.3s ease-out;
 }
@@ -108,18 +107,15 @@ body {
   @apply opacity-50 cursor-not-allowed;
 }
 
-/* Avatar glow for active DJ */
 .dj-avatar {
   box-shadow: 0 0 20px rgba(59, 130, 246, 0.6);
   animation: glow-pulse 3s ease-in-out infinite;
 }
 
-/* Smooth transitions */
 .smooth-appear {
   animation: bounce-in 0.6s ease-out forwards;
 }
 
-/* Mobile responsive */
 @media (max-width: 768px) {
   .marquee {
     animation-duration: 10s;
