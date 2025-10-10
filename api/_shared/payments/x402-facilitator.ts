@@ -34,6 +34,68 @@ function joinFacilitator(base: string, path: string): string {
   return result.toString()
 }
 
+/**
+ * Convert numeric value to decimal string (strip leading zeros)
+ * Facilitators expect uint256 as decimal strings, not JS numbers
+ *
+ * @param x - Value to convert (bigint, number, or string)
+ * @returns Normalized decimal string
+ */
+function asDecString(x: bigint | number | string): string {
+  if (typeof x === 'bigint') {
+    return x.toString()
+  }
+
+  if (typeof x === 'number') {
+    if (!Number.isFinite(x)) {
+      throw new Error(`Non-finite numeric value: ${x}`)
+    }
+    return Math.trunc(x).toString()
+  }
+
+  if (typeof x === 'string') {
+    // Strip leading zeros but preserve "0"
+    return x.replace(/^0+(\d)/, '$1') || '0'
+  }
+
+  throw new Error(`Invalid numeric type: ${typeof x}`)
+}
+
+/**
+ * Normalize ERC-3009 authorization for wire format
+ * All hex values lowercase, all numerics as decimal strings
+ *
+ * @param auth - Raw authorization object
+ * @returns Wire-safe authorization object
+ */
+function normalizeAuthForWire(auth: {
+  from: string
+  to: string
+  value: string | number | bigint
+  validAfter: string | number | bigint
+  validBefore: string | number | bigint
+  nonce: string
+  signature: string
+}): {
+  from: string
+  to: string
+  value: string
+  validAfter: string
+  validBefore: string
+  nonce: string
+  signature: string
+} {
+  return {
+    from: auth.from.toLowerCase(),
+    to: auth.to.toLowerCase(),
+    value: asDecString(auth.value),
+    validAfter: asDecString(auth.validAfter),
+    validBefore: asDecString(auth.validBefore),
+    nonce: auth.nonce.toLowerCase(),
+    signature: auth.signature.toLowerCase()
+  }
+}
+
 export type VerifyOk = {
   ok: true
   amountPaidAtomic: string | number
@@ -238,9 +300,6 @@ export async function facilitatorVerifyAuthorization(params: {
 }): Promise<VerifyResult> {
   const startTime = Date.now()
   const base = serverEnv.X402_FACILITATOR_URL
-
-  // Safe URL joining to ensure correct path (e.g., https://x402.org/facilitator/verify)
-  const url = joinFacilitator(base, 'verify')
   const maskedFrom = maskAddress(params.authorization.from)
 
   console.log('[x402-facilitator] ERC-3009 verification started', {
@@ -251,135 +310,155 @@ export async function facilitatorVerifyAuthorization(params: {
     scheme: 'erc3009'
   })
 
-  // Pre-flight validation: Normalize and validate all values
-  const normalizedAmountAtomic = String(BigInt(String(params.amountAtomic))) // Remove leading zeros
+  // Pre-flight assertions: Ensure no leading zeros and lowercase addresses
+  const normalizedAmountAtomic = asDecString(params.amountAtomic)
   const normalizedPayTo = params.payTo.toLowerCase()
   const normalizedTokenAddress = params.tokenAddress.toLowerCase()
-  const normalizedFrom = params.authorization.from.toLowerCase()
-  const normalizedTo = params.authorization.to.toLowerCase()
-  const normalizedValue = String(BigInt(params.authorization.value)) // Remove leading zeros
-  const normalizedNonce = params.authorization.nonce.toLowerCase()
-  const normalizedSignature = params.authorization.signature.toLowerCase()
+
+  // Normalize authorization using wire format helper
+  const normalizedAuth = normalizeAuthForWire({
+    from: params.authorization.from,
+    to: params.authorization.to,
+    value: params.authorization.value,
+    validAfter: params.authorization.validAfter,
+    validBefore: params.authorization.validBefore,
+    nonce: params.authorization.nonce,
+    signature: params.authorization.signature
+  })
 
   // Pre-flight invariant checks
-  if (normalizedValue !== normalizedAmountAtomic) {
+  if (normalizedAuth.value !== normalizedAmountAtomic) {
     console.error('[x402-facilitator] Pre-flight validation failed: value mismatch', {
-      normalizedValue,
-      normalizedAmountAtomic,
-      rawValue: params.authorization.value,
-      rawAmount: params.amountAtomic
+      authValue: normalizedAuth.value,
+      amountAtomic: normalizedAmountAtomic
     })
     return {
       ok: false,
       code: 'WRONG_AMOUNT',
       message: 'Authorization value must equal amountAtomic',
-      detail: `value=${normalizedValue}, amountAtomic=${normalizedAmountAtomic}`
+      detail: `value=${normalizedAuth.value}, amountAtomic=${normalizedAmountAtomic}`
     }
   }
 
-  if (normalizedTo !== normalizedPayTo) {
+  if (normalizedAuth.to !== normalizedPayTo) {
     console.error('[x402-facilitator] Pre-flight validation failed: payTo mismatch', {
-      normalizedTo,
-      normalizedPayTo
+      authTo: normalizedAuth.to,
+      payTo: normalizedPayTo
     })
     return {
       ok: false,
       code: 'NO_MATCH',
       message: 'Authorization "to" must equal payTo',
-      detail: `to=${normalizedTo}, payTo=${normalizedPayTo}`
+      detail: `to=${normalizedAuth.to}, payTo=${normalizedPayTo}`
     }
   }
 
-  if (!/^0x[a-f0-9]{64}$/.test(normalizedNonce)) {
+  if (!/^0x[a-f0-9]{64}$/.test(normalizedAuth.nonce)) {
     console.error('[x402-facilitator] Pre-flight validation failed: invalid nonce format', {
-      nonce: params.authorization.nonce,
-      normalized: normalizedNonce
+      nonce: normalizedAuth.nonce
     })
     return {
       ok: false,
       code: 'PROVIDER_ERROR',
       message: 'Invalid nonce format (expected 0x + 64 hex chars)',
-      detail: `nonce=${normalizedNonce}`
+      detail: `nonce=${normalizedAuth.nonce}`
     }
   }
 
-  if (!/^0x[a-f0-9]{130}$/.test(normalizedSignature)) {
+  if (!/^0x[a-f0-9]{130}$/.test(normalizedAuth.signature)) {
     console.error('[x402-facilitator] Pre-flight validation failed: invalid signature format', {
-      sigLen: params.authorization.signature?.length,
-      normalizedLen: normalizedSignature?.length
+      sigLen: normalizedAuth.signature?.length
     })
     return {
       ok: false,
       code: 'PROVIDER_ERROR',
       message: 'Invalid signature format (expected 0x + 130 hex chars)',
-      detail: `sigLen=${normalizedSignature?.length}`
+      detail: `sigLen=${normalizedAuth.signature?.length}`
     }
   }
+
+  // Build payload variants for multi-variant retry strategy
+  const baseUrl = joinFacilitator(base, 'verify')
+  const forcedUrl = new URL('/facilitator/verify', new URL(base).origin).toString()
+
+  // Variant A: Canonical (chainId as number, all numerics as strings)
+  const payloadA = {
+    scheme: 'erc3009' as const,
+    chainId: params.chainId, // number
+    tokenAddress: normalizedTokenAddress,
+    payTo: normalizedPayTo,
+    amountAtomic: normalizedAmountAtomic,
+    authorization: normalizedAuth
+  }
+
+  // Variant B: Compat (chainId as string, signature at top level)
+  const payloadB = {
+    scheme: 'erc3009' as const,
+    chainId: String(params.chainId), // string
+    tokenAddress: normalizedTokenAddress,
+    payTo: normalizedPayTo,
+    amountAtomic: normalizedAmountAtomic,
+    signature: normalizedAuth.signature, // duplicate signature at top level
+    authorization: {
+      from: normalizedAuth.from,
+      to: normalizedAuth.to,
+      value: normalizedAuth.value,
+      validAfter: normalizedAuth.validAfter,
+      validBefore: normalizedAuth.validBefore,
+      nonce: normalizedAuth.nonce
+    }
+  }
+
+  // Multi-variant retry strategy
+  const variants: Array<{ url: string; payload: typeof payloadA | typeof payloadB; variantName: string }> = [
+    { url: baseUrl, payload: payloadA, variantName: 'canonical' },
+    { url: baseUrl, payload: payloadB, variantName: 'compat' },
+    { url: forcedUrl, payload: payloadB, variantName: 'forced-path' }
+  ]
 
   let lastError: any
   let lastStatus: number | undefined
 
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    // Add retry delay (skip for first attempt)
-    if (attempt > 0) {
-      const baseDelay = RETRY_DELAYS_MS[attempt - 1]
-      const delayMs = addJitter(baseDelay)
-      console.log(`[x402-facilitator] Retry attempt ${attempt + 1}/${MAX_ATTEMPTS} after ${delayMs}ms`, {
-        from: maskedFrom
-      })
-      await new Promise(resolve => setTimeout(resolve, delayMs))
-    }
+  for (let attempt = 0; attempt < variants.length; attempt++) {
+    const variant = variants[attempt]
+
+    console.log('[x402-facilitator] outgoing verify request', {
+      url: variant.url,
+      method: 'POST',
+      variant: variant.variantName,
+      attempt: attempt + 1,
+      totalVariants: variants.length,
+      payloadLength: JSON.stringify(variant.payload).length,
+      scheme: variant.payload.scheme,
+      chainId: variant.payload.chainId,
+      chainIdType: typeof variant.payload.chainId,
+      tokenAddress: maskAddress(variant.payload.tokenAddress),
+      payTo: maskAddress(variant.payload.payTo),
+      amountAtomic: variant.payload.amountAtomic,
+      authFrom: maskAddress(variant.payload.authorization.from),
+      authTo: maskAddress(variant.payload.authorization.to),
+      authValue: variant.payload.authorization.value,
+      authValidAfter: variant.payload.authorization.validAfter,
+      authValidBefore: variant.payload.authorization.validBefore,
+      authNonceLen: variant.payload.authorization.nonce?.length,
+      authSigLen: variant.payload.authorization.signature?.length || (variant.payload as any).signature?.length,
+      authSigHead: variant.payload.authorization.signature?.slice(0, 10) || (variant.payload as any).signature?.slice(0, 10),
+      authNonceHead: variant.payload.authorization.nonce?.slice(0, 10),
+      hasTopLevelSig: 'signature' in variant.payload
+    })
 
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
     try {
-      // Build exact JSON body as specified by facilitator API
-      const payload = {
-        scheme: 'erc3009',
-        chainId: params.chainId,
-        tokenAddress: normalizedTokenAddress,
-        payTo: normalizedPayTo,
-        amountAtomic: normalizedAmountAtomic,
-        authorization: {
-          from: normalizedFrom,
-          to: normalizedTo,
-          value: normalizedValue,
-          validAfter: params.authorization.validAfter,
-          validBefore: params.authorization.validBefore,
-          nonce: normalizedNonce,
-          signature: normalizedSignature
-        }
-      }
+      const payloadJson = JSON.stringify(variant.payload)
 
-      // Enhanced observability: Log actual JSON being sent (masked)
-      const payloadJson = JSON.stringify(payload)
-      console.log('[x402-facilitator] outgoing verify request', {
-        url,  // Full final URL for debugging (e.g., https://x402.org/facilitator/verify)
-        method: 'POST',
-        payloadLength: payloadJson.length,
-        scheme: payload.scheme,
-        chainId: payload.chainId,
-        tokenAddress: maskAddress(payload.tokenAddress),
-        payTo: maskAddress(payload.payTo),
-        amountAtomic: payload.amountAtomic,
-        authFrom: maskAddress(payload.authorization.from),
-        authTo: maskAddress(payload.authorization.to),
-        authValue: payload.authorization.value,
-        authValidAfter: payload.authorization.validAfter,
-        authValidBefore: payload.authorization.validBefore,
-        authNonceLen: payload.authorization.nonce.length,
-        authSigLen: payload.authorization.signature.length,
-        // Show first 10 chars of signature for debugging
-        authSigHead: payload.authorization.signature.slice(0, 10),
-        authNonceHead: payload.authorization.nonce.slice(0, 10)
-      })
-
-      const res = await fetch(url, {
+      const res = await fetch(variant.url, {
         method: 'POST',
         headers: {
-          'content-type': 'application/json',
-          'accept': 'application/json'
+          'content-type': 'application/json; charset=utf-8',
+          'accept': 'application/json',
+          'user-agent': 'agent-dj-radio/1.0 (+x402)'
         },
         body: payloadJson,
         signal: controller.signal
