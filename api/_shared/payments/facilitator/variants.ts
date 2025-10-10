@@ -2,7 +2,7 @@
 // Payload variant builders for ERC-3009 facilitator verification
 // Generates different payload shapes to handle various facilitator implementations
 
-import { normalizeAuth, assertAuthShape } from './payload.js'
+import { normalizeAuth, assertAuthShape, asDecString } from './payload.js'
 
 /**
  * Common parameters for all payload variants
@@ -40,15 +40,15 @@ export function buildCanonical(params: PayloadParams) {
     chainId: params.chainId,
     tokenAddress: params.tokenAddress.toLowerCase(),
     payTo: params.payTo.toLowerCase(),
-    amountAtomic: params.amountAtomic,
+    amountAtomic: asDecString(params.amountAtomic), // Strip leading zeros
     authorization: normalizedAuth
   }
 }
 
 /**
  * Variant B: Canonical+ payload (compatibility mode)
- * - chainId as string
- * - Signature at top level AND inside authorization
+ * - chainId as number (FIXED: was string, now matches spec)
+ * - Signature at top level AND inside authorization (for facilitators that expect both)
  * - Modern field names
  */
 export function buildCompat(params: PayloadParams) {
@@ -57,27 +57,26 @@ export function buildCompat(params: PayloadParams) {
 
   return {
     scheme: 'erc3009' as const,
-    chainId: String(params.chainId),
+    chainId: params.chainId, // ✅ FIXED: Now number (was String(params.chainId))
     tokenAddress: params.tokenAddress.toLowerCase(),
     payTo: params.payTo.toLowerCase(),
-    amountAtomic: params.amountAtomic,
-    signature: normalizedAuth.signature,
-    authorization: {
-      from: normalizedAuth.from,
-      to: normalizedAuth.to,
-      value: normalizedAuth.value,
-      validAfter: normalizedAuth.validAfter,
-      validBefore: normalizedAuth.validBefore,
-      nonce: normalizedAuth.nonce
-    }
+    amountAtomic: asDecString(params.amountAtomic), // Strip leading zeros
+    signature: normalizedAuth.signature, // Duplicate signature at top level for compatibility
+    authorization: normalizedAuth // ✅ Includes signature inside authorization
   }
 }
 
 /**
- * Variant C: Legacy payload
- * - Legacy field names (chain, asset, token, recipient, amount)
- * - chainId as string
- * - Signature at top level AND inside authorization
+ * Variant C: Legacy payload (DEPRECATED - DO NOT USE)
+ *
+ * ⚠️  WARNING: This variant uses wrong field names that do NOT match the x402 spec:
+ * - Uses `token` instead of `tokenAddress`
+ * - Uses `recipient` instead of `payTo`
+ * - Uses `amount` instead of `amountAtomic`
+ * - Includes extra fields `chain` and `asset` not in spec
+ *
+ * This variant will ALWAYS FAIL with standard facilitators.
+ * Kept only for reference. Use buildCanonical() instead.
  */
 export function buildLegacy(params: PayloadParams) {
   const normalizedAuth = normalizeAuth(params.authorization)
@@ -89,7 +88,7 @@ export function buildLegacy(params: PayloadParams) {
     asset: params.asset,
     token: params.tokenAddress.toLowerCase(),
     recipient: params.payTo.toLowerCase(),
-    amount: params.amountAtomic,
+    amount: asDecString(params.amountAtomic), // Strip leading zeros
     chainId: String(params.chainId),
     signature: normalizedAuth.signature,
     authorization: {

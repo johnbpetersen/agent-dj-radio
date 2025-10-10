@@ -91,10 +91,11 @@ export async function facilitatorVerifyAuthorization(
   }
 
   // Define variants to try (in order)
+  // Note: Legacy variant removed - it uses wrong field names (token/recipient/amount)
+  //       that don't match x402 spec and will always fail with standard facilitators
   const variants = [
-    { name: 'canonical', builder: buildCanonical },
-    { name: 'compat', builder: buildCompat },
-    { name: 'legacy', builder: buildLegacy }
+    { name: 'canonical', builder: buildCanonical },  // ✅ Matches spec exactly
+    { name: 'compat', builder: buildCompat }         // ✅ Matches spec + duplicate signature
   ]
 
   const attemptedVariants: string[] = []
