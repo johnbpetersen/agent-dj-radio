@@ -766,15 +766,51 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
           signature: signature
         }
 
-        vr = await facilitatorVerifyAuthorization({
-          chain: challenge.chain,
-          asset: challenge.asset,
-          amountAtomic: String(challenge.amount_atomic),
-          payTo: challenge.pay_to,
-          chainId: serverEnv.X402_CHAIN_ID!,
-          tokenAddress: serverEnv.X402_TOKEN_ADDRESS!,
-          authorization: flatAuthorization
-        })
+        // Guard: Check facilitator URL configured
+        const facilitatorBaseUrl = serverEnv.X402_FACILITATOR_URL
+        if (!facilitatorBaseUrl) {
+          logger.error('queue/confirm facilitator URL not configured', { requestId, challengeId })
+          res.status(503).json({
+            error: {
+              code: 'PROVIDER_UNAVAILABLE',
+              message: 'Payment verification service not configured'
+            },
+            requestId
+          })
+          return
+        }
+
+        // Call facilitator with explicit baseUrl and catch all errors as 503
+        try {
+          vr = await facilitatorVerifyAuthorization(
+            {
+              chain: challenge.chain,
+              asset: challenge.asset,
+              amountAtomic: String(challenge.amount_atomic),
+              payTo: challenge.pay_to,
+              chainId: serverEnv.X402_CHAIN_ID!,
+              tokenAddress: serverEnv.X402_TOKEN_ADDRESS!,
+              authorization: flatAuthorization
+            },
+            { baseUrl: facilitatorBaseUrl }
+          )
+        } catch (err: any) {
+          // Map all facilitator errors to 503 PROVIDER_UNAVAILABLE
+          logger.warn('queue/confirm facilitator call threw', {
+            requestId,
+            challengeId,
+            error: err?.message,
+            code: err?.code
+          })
+          res.status(503).json({
+            error: {
+              code: 'PROVIDER_UNAVAILABLE',
+              message: 'Payment verification service temporarily unavailable. Please try again in a moment.'
+            },
+            requestId
+          })
+          return
+        }
 
         // Persist authorization to database for audit trail
         if (vr.ok) {

@@ -29,6 +29,13 @@ function shouldStopOnStatus(status: number): boolean {
 }
 
 /**
+ * Options for facilitator verification
+ */
+export interface FacilitatorOptions {
+  baseUrl: string // Required - facilitator base URL (e.g., "https://x402.org/facilitator")
+}
+
+/**
  * Verify ERC-3009 authorization with facilitator using multi-variant strategy
  *
  * Tries 3 payload variants in sequence:
@@ -37,33 +44,40 @@ function shouldStopOnStatus(status: number): boolean {
  * 3. Legacy (old field names)
  *
  * @param params - Verification parameters
+ * @param opts - Facilitator options (baseUrl required)
  * @returns Verification result from facilitator
  * @throws Error if all variants fail
  */
-export async function facilitatorVerifyAuthorization(params: {
-  facilitatorBaseUrl?: string // Optional, uses X402_FACILITATOR_URL from env if not provided
-  chain: string // e.g., "base", "base-sepolia"
-  asset: string // e.g., "usdc"
-  chainId: number
-  tokenAddress: string
-  payTo: string
-  amountAtomic: string
-  authorization: {
-    from: string
-    to: string
-    value: string | number | bigint
-    validAfter: string | number | bigint
-    validBefore: string | number | bigint
-    nonce: string
-    signature: string
+export async function facilitatorVerifyAuthorization(
+  params: {
+    chain: string // e.g., "base", "base-sepolia"
+    asset: string // e.g., "usdc"
+    chainId: number
+    tokenAddress: string
+    payTo: string
+    amountAtomic: string
+    authorization: {
+      from: string
+      to: string
+      value: string | number | bigint
+      validAfter: string | number | bigint
+      validBefore: string | number | bigint
+      nonce: string
+      signature: string
+    }
+  },
+  opts: FacilitatorOptions
+): Promise<FacilitatorSuccess> {
+  // Require explicit baseUrl - no env reading in library
+  const baseUrl = opts?.baseUrl
+  if (!baseUrl) {
+    throw new Error('facilitatorVerifyAuthorization: baseUrl is required in opts')
   }
-}): Promise<FacilitatorSuccess> {
-  // Use provided URL or fall back to env
-  const facilitatorBaseUrl = params.facilitatorBaseUrl || process.env.X402_FACILITATOR_URL
-  if (!facilitatorBaseUrl) {
-    throw new Error('facilitatorBaseUrl not provided and X402_FACILITATOR_URL not set')
-  }
-  const url = joinUrl(facilitatorBaseUrl, 'verify')
+
+  // Log resolved base URL for visibility
+  console.log('[x402-facilitator] using baseUrl', { baseUrl })
+
+  const url = joinUrl(baseUrl, 'verify')
 
   // Common params for all variants
   const payloadParams: PayloadParams = {
@@ -96,7 +110,7 @@ export async function facilitatorVerifyAuthorization(params: {
       // Build payload for this variant
       const payload = variant.builder(payloadParams)
 
-      // Log attempt (one-liner with type debug info)
+      // Log attempt (one-liner with type debug info and exact URL)
       logVerifyAttempt({
         variant: variant.name,
         attempt: attemptNum,
@@ -104,6 +118,7 @@ export async function facilitatorVerifyAuthorization(params: {
         sigLen: payload.authorization.signature.length,
         nonceLen: payload.authorization.nonce.length
       })
+      console.log('[x402-facilitator] POST', url)
 
       // Send request
       const startTime = Date.now()
@@ -172,25 +187,27 @@ export async function facilitatorVerifyAuthorization(params: {
  * Alias for facilitatorVerifyAuthorization
  * Maintained for backward compatibility
  */
-export async function facilitatorVerify(params: {
-  facilitatorBaseUrl?: string
-  chain: string
-  asset: string
-  chainId: number
-  tokenAddress: string
-  payTo: string
-  amountAtomic: string
-  authorization: {
-    from: string
-    to: string
-    value: string | number | bigint
-    validAfter: string | number | bigint
-    validBefore: string | number | bigint
-    nonce: string
-    signature: string
-  }
-}): Promise<FacilitatorSuccess> {
-  return facilitatorVerifyAuthorization(params)
+export async function facilitatorVerify(
+  params: {
+    chain: string
+    asset: string
+    chainId: number
+    tokenAddress: string
+    payTo: string
+    amountAtomic: string
+    authorization: {
+      from: string
+      to: string
+      value: string | number | bigint
+      validAfter: string | number | bigint
+      validBefore: string | number | bigint
+      nonce: string
+      signature: string
+    }
+  },
+  opts: FacilitatorOptions
+): Promise<FacilitatorSuccess> {
+  return facilitatorVerifyAuthorization(params, opts)
 }
 
 // Re-export types for consumers
