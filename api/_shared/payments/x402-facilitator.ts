@@ -6,6 +6,34 @@ import { serverEnv } from '../../../src/config/env.server.js'
 import { maskTxHash, maskAddress, normalizeAddress, normalizeIdentifier } from '../../../src/lib/crypto-utils.js'
 import { incrementCounter, recordLatency } from '../../../src/lib/metrics.js'
 
+/**
+ * Safely join facilitator base URL with path segment
+ * Handles trailing slashes and ensures correct URL construction
+ *
+ * @example
+ * joinFacilitator('https://x402.org/facilitator', 'verify')
+ * // => 'https://x402.org/facilitator/verify'
+ *
+ * joinFacilitator('https://x402.org/facilitator/', 'verify')
+ * // => 'https://x402.org/facilitator/verify'
+ */
+function joinFacilitator(base: string, path: string): string {
+  const baseUrl = new URL(base)
+
+  // Ensure base pathname ends with slash (treat as directory)
+  if (!baseUrl.pathname.endsWith('/')) {
+    baseUrl.pathname += '/'
+  }
+
+  // Remove leading slash from path (use relative resolution)
+  const relativePath = path.replace(/^\//, '')
+
+  // Resolve relative path against base
+  const result = new URL(relativePath, baseUrl)
+
+  return result.toString()
+}
+
 export type VerifyOk = {
   ok: true
   amountPaidAtomic: string | number
@@ -211,8 +239,8 @@ export async function facilitatorVerifyAuthorization(params: {
   const startTime = Date.now()
   const base = serverEnv.X402_FACILITATOR_URL
 
-  // Proper URL joining to avoid double slashes or path issues
-  const url = new URL('/verify', base).toString()
+  // Safe URL joining to ensure correct path (e.g., https://x402.org/facilitator/verify)
+  const url = joinFacilitator(base, 'verify')
   const maskedFrom = maskAddress(params.authorization.from)
 
   console.log('[x402-facilitator] ERC-3009 verification started', {
@@ -326,8 +354,9 @@ export async function facilitatorVerifyAuthorization(params: {
 
       // Enhanced observability: Log actual JSON being sent (masked)
       const payloadJson = JSON.stringify(payload)
-      console.log('[x402-facilitator] outgoing verify body', {
-        url,
+      console.log('[x402-facilitator] outgoing verify request', {
+        url,  // Full final URL for debugging (e.g., https://x402.org/facilitator/verify)
+        method: 'POST',
         payloadLength: payloadJson.length,
         scheme: payload.scheme,
         chainId: payload.chainId,
@@ -348,7 +377,10 @@ export async function facilitatorVerifyAuthorization(params: {
 
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          'accept': 'application/json'
+        },
         body: payloadJson,
         signal: controller.signal
       })
@@ -373,7 +405,116 @@ export async function facilitatorVerifyAuthorization(params: {
           body: truncatedBody
         })
 
-        // Special case: Try compatibility fallback for first 4xx/5xx error
+        // Special case: 404/405 may indicate wrong path - retry with forced absolute path
+        if (attempt === 0 && (res.status === 404 || res.status === 405)) {
+          console.warn('[x402-facilitator] 404/405 detected - URL path may be incorrect', {
+            from: maskedFrom,
+            status: res.status,
+            url
+          })
+
+          // Try with forced absolute path from origin
+          const baseUrl = new URL(serverEnv.X402_FACILITATOR_URL)
+          const forcedUrl = new URL('/facilitator/verify', baseUrl.origin).toString()
+
+          console.log('[x402-facilitator] Retrying with forced absolute path', {
+            from: maskedFrom,
+            originalUrl: url,
+            forcedUrl
+          })
+
+          try {
+            const forcedRes = await fetch(forcedUrl, {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                'accept': 'application/json'
+              },
+              body: payloadJson,
+              signal: controller.signal
+            })
+
+            const forcedText = await forcedRes.text()
+            const forcedTruncated = forcedText.length > 500 ? forcedText.substring(0, 500) + '...[truncated]' : forcedText
+
+            if (forcedRes.ok) {
+              console.log('[x402-facilitator] Forced path retry succeeded', {
+                from: maskedFrom,
+                status: forcedRes.status,
+                forcedUrl
+              })
+
+              // Parse and continue with success flow
+              try { json = forcedText ? JSON.parse(forcedText) : null } catch {}
+              lastStatus = forcedRes.status
+
+              // Continue to success validation below (reuse existing validation logic)
+              if (json?.verified === true) {
+                clearTimeout(timeoutId)
+
+                // Strict field validation
+                const validationError = validateResponse(json, {
+                  chain: params.chain,
+                  asset: params.asset,
+                  payTo: params.payTo,
+                  amountAtomic: typeof params.amountAtomic === 'string'
+                    ? parseInt(params.amountAtomic, 10)
+                    : params.amountAtomic
+                })
+
+                if (validationError) {
+                  const durationMs = Date.now() - startTime
+                  console.warn('[x402-facilitator] Validation failed (ERC-3009, forced path)', {
+                    from: maskedFrom,
+                    code: validationError.code,
+                    detail: validationError.detail
+                  })
+
+                  incrementCounter('x402_verify_total', { mode: 'facilitator', code: validationError.code, scheme: 'erc3009' })
+                  recordLatency('x402_verify_latency_ms', { mode: 'facilitator', scheme: 'erc3009' }, durationMs)
+
+                  return validationError
+                }
+
+                // Success!
+                const durationMs = Date.now() - startTime
+                const amountPaid = json.amountAtomic || json.amount
+
+                console.log('[x402-facilitator] ERC-3009 verification successful (forced path)', {
+                  from: maskedFrom,
+                  amountPaid,
+                  durationMs,
+                  attempts: attempt + 1,
+                  forcedUrl
+                })
+
+                incrementCounter('x402_verify_total', { mode: 'facilitator', code: 'success', scheme: 'erc3009' })
+                recordLatency('x402_verify_latency_ms', { mode: 'facilitator', scheme: 'erc3009' }, durationMs)
+
+                return {
+                  ok: true,
+                  amountPaidAtomic: amountPaid,
+                  tokenFrom: params.authorization.from,
+                  providerRaw: json
+                }
+              }
+            } else {
+              console.warn('[x402-facilitator] Forced path retry also failed', {
+                from: maskedFrom,
+                status: forcedRes.status,
+                body: forcedTruncated,
+                forcedUrl
+              })
+            }
+          } catch (forcedErr: any) {
+            console.warn('[x402-facilitator] Forced path retry error', {
+              from: maskedFrom,
+              error: forcedErr?.message
+            })
+          }
+        }
+
+        // Special case: Try compatibility fallback for first 4xx/5xx error with empty body
         // Some facilitators may expect signature outside authorization object
         if (attempt === 0 && (res.status >= 400) && text.length === 0) {
           console.log('[x402-facilitator] Empty response body detected - trying compatibility fallback', {
@@ -617,7 +758,7 @@ export async function facilitatorVerify(params: {
 }): Promise<VerifyResult> {
   const startTime = Date.now()
   const base = serverEnv.X402_FACILITATOR_URL
-  const url = `${base.replace(/\/$/, '')}/verify`
+  const url = joinFacilitator(base, 'verify')
   const maskedTx = maskTxHash(params.txHash)
 
   console.log('[x402-facilitator] Verification started', {
