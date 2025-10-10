@@ -107,26 +107,40 @@ export async function facilitatorVerifyAuthorization(
     attemptNum++
 
     try {
-      // Build payload for this variant
+      // Build payload for this variant (always returns complete object)
       const payload = variant.builder(payloadParams)
+
+      // Guard: ensure payload has authorization with required fields
+      const sigLen = payload.authorization?.signature?.length ?? 0
+      const nonceLen = payload.authorization?.nonce?.length ?? 0
 
       // Log attempt (one-liner with type debug info and exact URL)
       logVerifyAttempt({
         variant: variant.name,
         attempt: attemptNum,
         chainIdType: typeof payload.chainId,
-        sigLen: payload.authorization.signature.length,
-        nonceLen: payload.authorization.nonce.length
+        sigLen,
+        nonceLen
       })
       console.log('[x402-facilitator] POST', url)
 
-      // Send request
+      // Send request (never throws - returns structured result)
       const startTime = Date.now()
-      const response = await postToFacilitator(url, payload)
-      const durationMs = Date.now() - startTime
+      const httpResult = await postToFacilitator(url, payload)
+      const durationMs = httpResult.durationMs
 
-      // Parse response
-      const result = await parseFacilitatorResponse(response, url)
+      // Log response details for diagnostics
+      console.log('[x402-facilitator] response', {
+        status: httpResult.status ?? '(no response)',
+        ok: httpResult.ok,
+        textLen: httpResult.text?.length ?? 0,
+        textPreview: (httpResult.text ?? '').slice(0, 120),
+        error: httpResult.error,
+        durationMs
+      })
+
+      // Parse response (throws FacilitatorError on failure)
+      const result = parseFacilitatorResponse(httpResult, url)
 
       // Success!
       logVerifySuccess({
@@ -141,46 +155,42 @@ export async function facilitatorVerifyAuthorization(
     } catch (error: any) {
       lastError = error
       const status = error instanceof FacilitatorError ? error.status : undefined
-      const durationMs = Date.now() - Date.now() // Best effort
 
       logVerifyError({
         variant: variant.name,
-        error: error.message,
+        error: error.message ?? String(error),
         status,
-        durationMs
+        durationMs: Date.now() - Date.now() // Approximate
       })
 
       // Check if we should stop trying more variants
       if (status && shouldStopOnStatus(status)) {
         // Hard stop on auth errors (401/403)
+        console.log('[x402-facilitator] hard stop on', status)
         break
       }
 
-      // Continue to next variant for all other errors
+      // Continue to next variant for all other errors (404/405/415/422/5xx)
+      console.log('[x402-facilitator] trying next variant after', status ?? 'error')
       continue
     }
   }
 
-  // All variants failed - map to PROVIDER_UNAVAILABLE if all were 5xx
+  // All variants failed - map to PROVIDER_UNAVAILABLE
   const lastStatus = lastError instanceof FacilitatorError ? lastError.status : undefined
 
   logAllVariantsFailed({
     attemptedVariants,
-    finalError: lastError?.message || 'Unknown error'
+    finalError: lastError?.message ?? 'Unknown error'
   })
 
-  // Map 5xx errors to PROVIDER_UNAVAILABLE
-  if (lastStatus && lastStatus >= 500) {
-    const err = new Error('Payment verification service temporarily unavailable. Please try again in a moment.')
-    ;(err as any).code = 'PROVIDER_UNAVAILABLE'
-    ;(err as any).status = 503
-    throw err
-  }
-
-  // Other errors: return as-is with facilitator error details
-  throw new Error(
-    `Facilitator verification failed (tried ${attemptedVariants.join(', ')}): ${lastError?.message || 'Unknown error'}`
-  )
+  // Always map to PROVIDER_UNAVAILABLE for user-friendly error
+  // (confirm.ts will catch and return 503)
+  const err = new Error('Payment verification service temporarily unavailable. Please try again in a moment.')
+  ;(err as any).code = 'PROVIDER_UNAVAILABLE'
+  ;(err as any).status = lastStatus ?? 503
+  ;(err as any).detail = `Tried ${attemptedVariants.join(', ')}: ${lastError?.message ?? 'Unknown error'}`
+  throw err
 }
 
 /**

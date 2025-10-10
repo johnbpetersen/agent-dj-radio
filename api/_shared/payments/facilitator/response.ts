@@ -36,45 +36,69 @@ export class FacilitatorError extends Error {
 }
 
 /**
- * Parse facilitator response with validation
+ * Parse facilitator HTTP result with validation
+ * Never throws - always returns success or throws FacilitatorError
  *
- * @param response - Fetch Response object
+ * @param httpResult - HTTP result from postToFacilitator
  * @param url - URL that was called (for error logging)
  * @returns Parsed success response or throws FacilitatorError with status
  * @throws FacilitatorError on malformed response, network error, or facilitator error
  */
-export async function parseFacilitatorResponse(
-  response: Response,
+export function parseFacilitatorResponse(
+  httpResult: { ok: boolean; status?: number; text: string; error?: string },
   url: string
-): Promise<FacilitatorSuccess> {
+): FacilitatorSuccess {
+  const status = httpResult.status ?? 0
+  const text = httpResult.text ?? ''
+
+  // Network/timeout error
+  if (httpResult.error) {
+    throw new FacilitatorError(
+      `Network error: ${httpResult.error}`,
+      status || 503
+    )
+  }
+
+  // Empty response with error status
+  if (status >= 400 && text.length === 0) {
+    const codeType = status >= 500 ? 'Server error' : 'Client error'
+    throw new FacilitatorError(
+      `${codeType} (${status}): Empty response from facilitator`,
+      status
+    )
+  }
+
   // Try to parse JSON
   let data: any
   try {
-    data = await response.json()
+    data = JSON.parse(text)
   } catch (error: any) {
+    // Invalid JSON
+    const preview = text.slice(0, 200)
     throw new FacilitatorError(
-      `Facilitator returned invalid JSON (status ${response.status}): ${error.message}`,
-      response.status
+      `Invalid JSON response (status ${status}): ${preview}`,
+      status
     )
   }
 
   // Handle success (2xx status)
-  if (response.ok) {
+  if (httpResult.ok && status >= 200 && status < 300) {
     // Validate success shape
     if (data && typeof data === 'object' && data.ok === true) {
       return data as FacilitatorSuccess
     }
 
     // Success status but unexpected shape
+    const preview = JSON.stringify(data).slice(0, 200)
     throw new FacilitatorError(
-      `Facilitator returned success but invalid shape: ${JSON.stringify(data).slice(0, 200)}`,
-      response.status
+      `Success status but invalid shape: ${preview}`,
+      status
     )
   }
 
   // Handle error (4xx, 5xx status)
-  const errorMessage = extractErrorMessage(data, response.status)
-  throw new FacilitatorError(errorMessage, response.status)
+  const errorMessage = extractErrorMessage(data, status)
+  throw new FacilitatorError(errorMessage, status)
 }
 
 /**

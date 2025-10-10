@@ -3,24 +3,36 @@
 // Handles timeouts, headers, and network errors
 
 /**
+ * Structured result from facilitator HTTP call
+ */
+export interface FacilitatorHttpResult {
+  ok: boolean
+  status?: number
+  text: string
+  error?: string
+  durationMs: number
+}
+
+/**
  * HTTP POST to facilitator endpoint with timeout and standard headers
+ * Always returns a structured result, never throws
  *
  * @param url - Full URL to POST to (including path)
  * @param payload - JSON payload to send
  * @param timeoutMs - Request timeout in milliseconds (default 10s)
- * @returns Response object
- * @throws Error on network failure or timeout
+ * @returns Structured result with status, text, and timing
  */
 export async function postToFacilitator(
   url: string,
   payload: Record<string, any>,
   timeoutMs = 10000
-): Promise<Response> {
+): Promise<FacilitatorHttpResult> {
+  const started = Date.now()
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    const response = await fetch(url, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
         'content-type': 'application/json; charset=utf-8',
@@ -32,20 +44,35 @@ export async function postToFacilitator(
     })
 
     clearTimeout(timeout)
-    return response
+
+    // Read response text (always safe)
+    const text = await res.text()
+
+    return {
+      ok: res.ok,
+      status: res.status,
+      text,
+      durationMs: Date.now() - started
+    }
   } catch (error: any) {
     clearTimeout(timeout)
 
-    // Map network errors to user-friendly messages
+    // Map errors to structured result (no throw)
+    let errorMessage = error?.message ?? String(error)
+
     if (error.name === 'AbortError') {
-      throw new Error(`Facilitator request timeout after ${timeoutMs}ms`)
+      errorMessage = `Request timeout after ${timeoutMs}ms`
+    } else if (error.message?.includes('fetch failed')) {
+      errorMessage = `Network error: ${error.message}`
     }
 
-    if (error.message?.includes('fetch failed')) {
-      throw new Error(`Facilitator network error: ${error.message}`)
+    return {
+      ok: false,
+      status: undefined,
+      text: '',
+      error: errorMessage,
+      durationMs: Date.now() - started
     }
-
-    throw error
   }
 }
 
