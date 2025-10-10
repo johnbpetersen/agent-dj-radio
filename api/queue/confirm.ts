@@ -5,7 +5,20 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { z, ZodError } from 'zod'
 import { supabaseAdmin } from '../_shared/supabase.js'
 import { verifyPayment } from '../_shared/payments/x402-cdp.js'
-import { facilitatorVerify, facilitatorVerifyAuthorization, type ERC3009Authorization } from '../_shared/payments/x402-facilitator.js'
+// Use old facilitator for txHash mode (legacy), new modular facilitator for authorization mode
+import { facilitatorVerify } from '../_shared/payments/x402-facilitator.js'
+import { facilitatorVerifyAuthorization } from '../_shared/payments/facilitator/index.js'
+
+// ERC-3009 authorization type (flattened for facilitator)
+type ERC3009Authorization = {
+  from: string
+  to: string
+  value: string | number | bigint
+  validAfter: string | number | bigint
+  validBefore: string | number | bigint
+  nonce: string
+  signature: string
+}
 import { verifyViaRPC } from '../_shared/payments/x402-rpc.js'
 import { serverEnv } from '../../src/config/env.server.js'
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'

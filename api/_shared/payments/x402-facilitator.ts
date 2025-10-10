@@ -391,7 +391,7 @@ export async function facilitatorVerifyAuthorization(params: {
     authorization: normalizedAuth
   }
 
-  // Variant B: Compat (chainId as string, signature at top level)
+  // Variant B: Canonical+ (chainId as string, signature at top level)
   const payloadB = {
     scheme: 'erc3009' as const,
     chainId: String(params.chainId), // string
@@ -409,11 +409,31 @@ export async function facilitatorVerifyAuthorization(params: {
     }
   }
 
+  // Variant C: Legacy field names (some handlers expect these)
+  const payloadC = {
+    scheme: 'erc3009' as const,
+    chain: params.chain, // 'base' or 'base-sepolia'
+    asset: params.asset, // 'USDC'
+    token: normalizedTokenAddress, // alias of tokenAddress
+    recipient: normalizedPayTo, // alias of payTo
+    amount: normalizedAmountAtomic, // alias of amountAtomic
+    chainId: String(params.chainId), // include for compatibility
+    signature: normalizedAuth.signature,
+    authorization: {
+      from: normalizedAuth.from,
+      to: normalizedAuth.to,
+      value: normalizedAuth.value,
+      validAfter: normalizedAuth.validAfter,
+      validBefore: normalizedAuth.validBefore,
+      nonce: normalizedAuth.nonce
+    }
+  }
+
   // Multi-variant retry strategy
-  const variants: Array<{ url: string; payload: typeof payloadA | typeof payloadB; variantName: string }> = [
+  const variants: Array<{ url: string; payload: typeof payloadA | typeof payloadB | typeof payloadC; variantName: string }> = [
     { url: baseUrl, payload: payloadA, variantName: 'canonical' },
-    { url: baseUrl, payload: payloadB, variantName: 'compat' },
-    { url: forcedUrl, payload: payloadB, variantName: 'forced-path' }
+    { url: baseUrl, payload: payloadB, variantName: 'canonical_plus' },
+    { url: baseUrl, payload: payloadC, variantName: 'legacy' }
   ]
 
   let lastError: any
