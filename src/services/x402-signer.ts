@@ -137,7 +137,9 @@ export async function signX402Payment(
   }
 
   // Convert to BigInt for uint256 (no Number() wrapper)
+  // Normalize value: remove leading zeros by converting to BigInt and back to string
   const value = BigInt(amountAtomicString)
+  const normalizedValue = value.toString()
 
   // Use expiresAtSec if available, otherwise parse ISO string
   const validBefore = challenge.expiresAtSec
@@ -153,8 +155,8 @@ export async function signX402Payment(
     throw new Error(`Invalid chainId: ${chainId}. Must be an integer.`)
   }
 
-  // Generate random nonce
-  const nonce = generateNonce()
+  // Generate random nonce (ensure lowercase)
+  const nonce = generateNonce().toLowerCase() as Hex
 
   // Construct authorization message (using BigInt for uint256 fields)
   const authorization = {
@@ -189,7 +191,7 @@ export async function signX402Payment(
   console.log('[x402-signer] Signing payment:', {
     from: userAddress,
     to: payTo,
-    value: amountAtomicString,
+    value: normalizedValue,
     chainId: chainIdNumber,
     network,
     usdcAddress
@@ -197,11 +199,12 @@ export async function signX402Payment(
 
   // Debug: Typed data sanity check before signing
   console.debug('[x402-signer] typed-data sanity', {
-    value: value.toString(),
+    value: normalizedValue,
     validAfter: validAfter.toString(),
     validBefore: validBefore.toString(),
     chainId: Number(chainId),
-    expiresAtIso: iso
+    expiresAtIso: iso,
+    nonceLen: nonce.length
   })
 
   try {
@@ -215,27 +218,31 @@ export async function signX402Payment(
     })
 
     // Final typed data debug
-    console.debug('[x402-signer] typed-data sanity', {
-      value: authorization.value.toString(),
+    console.debug('[x402-signer] signature complete', {
+      value: normalizedValue,
       validAfter: Number(authorization.validAfter),
       validBefore: Number(authorization.validBefore),
-      nonceLen: authorization.nonce.length
+      nonceLen: authorization.nonce.length,
+      sigLen: signature.length
     })
 
     console.log('[x402-signer] Signature created:', {
       signature: signature.slice(0, 10) + '...',
-      nonce: authorization.nonce.slice(0, 10) + '...'
+      sigLen: signature.length,
+      nonce: authorization.nonce.slice(0, 10) + '...',
+      nonceLen: authorization.nonce.length
     })
 
+    // Return normalized structure (all lowercase addresses, no leading zeros in value)
     return {
-      signature: signature as `0x${string}`,
+      signature: signature.toLowerCase() as `0x${string}`,
       authorization: {
-        from: authorization.from as `0x${string}`,
-        to: authorization.to as `0x${string}`,
-        value: authorization.value.toString(),
+        from: authorization.from.toLowerCase() as `0x${string}`,
+        to: authorization.to.toLowerCase() as `0x${string}`,
+        value: normalizedValue, // Use normalized value (no leading zeros)
         validAfter: Number(authorization.validAfter),
         validBefore: Number(authorization.validBefore),
-        nonce: authorization.nonce as `0x${string}`
+        nonce: authorization.nonce.toLowerCase() as `0x${string}` // Already lowercase, but double-check
       }
     }
 

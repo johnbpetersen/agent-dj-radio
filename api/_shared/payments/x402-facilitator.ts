@@ -210,7 +210,9 @@ export async function facilitatorVerifyAuthorization(params: {
 }): Promise<VerifyResult> {
   const startTime = Date.now()
   const base = serverEnv.X402_FACILITATOR_URL
-  const url = `${base.replace(/\/$/, '')}/verify`
+
+  // Proper URL joining to avoid double slashes or path issues
+  const url = new URL('/verify', base).toString()
   const maskedFrom = maskAddress(params.authorization.from)
 
   console.log('[x402-facilitator] ERC-3009 verification started', {
@@ -220,6 +222,71 @@ export async function facilitatorVerifyAuthorization(params: {
     asset: params.asset,
     scheme: 'erc3009'
   })
+
+  // Pre-flight validation: Normalize and validate all values
+  const normalizedAmountAtomic = String(BigInt(String(params.amountAtomic))) // Remove leading zeros
+  const normalizedPayTo = params.payTo.toLowerCase()
+  const normalizedTokenAddress = params.tokenAddress.toLowerCase()
+  const normalizedFrom = params.authorization.from.toLowerCase()
+  const normalizedTo = params.authorization.to.toLowerCase()
+  const normalizedValue = String(BigInt(params.authorization.value)) // Remove leading zeros
+  const normalizedNonce = params.authorization.nonce.toLowerCase()
+  const normalizedSignature = params.authorization.signature.toLowerCase()
+
+  // Pre-flight invariant checks
+  if (normalizedValue !== normalizedAmountAtomic) {
+    console.error('[x402-facilitator] Pre-flight validation failed: value mismatch', {
+      normalizedValue,
+      normalizedAmountAtomic,
+      rawValue: params.authorization.value,
+      rawAmount: params.amountAtomic
+    })
+    return {
+      ok: false,
+      code: 'WRONG_AMOUNT',
+      message: 'Authorization value must equal amountAtomic',
+      detail: `value=${normalizedValue}, amountAtomic=${normalizedAmountAtomic}`
+    }
+  }
+
+  if (normalizedTo !== normalizedPayTo) {
+    console.error('[x402-facilitator] Pre-flight validation failed: payTo mismatch', {
+      normalizedTo,
+      normalizedPayTo
+    })
+    return {
+      ok: false,
+      code: 'NO_MATCH',
+      message: 'Authorization "to" must equal payTo',
+      detail: `to=${normalizedTo}, payTo=${normalizedPayTo}`
+    }
+  }
+
+  if (!/^0x[a-f0-9]{64}$/.test(normalizedNonce)) {
+    console.error('[x402-facilitator] Pre-flight validation failed: invalid nonce format', {
+      nonce: params.authorization.nonce,
+      normalized: normalizedNonce
+    })
+    return {
+      ok: false,
+      code: 'PROVIDER_ERROR',
+      message: 'Invalid nonce format (expected 0x + 64 hex chars)',
+      detail: `nonce=${normalizedNonce}`
+    }
+  }
+
+  if (!/^0x[a-f0-9]{130}$/.test(normalizedSignature)) {
+    console.error('[x402-facilitator] Pre-flight validation failed: invalid signature format', {
+      sigLen: params.authorization.signature?.length,
+      normalizedLen: normalizedSignature?.length
+    })
+    return {
+      ok: false,
+      code: 'PROVIDER_ERROR',
+      message: 'Invalid signature format (expected 0x + 130 hex chars)',
+      detail: `sigLen=${normalizedSignature?.length}`
+    }
+  }
 
   let lastError: any
   let lastStatus: number | undefined
@@ -239,40 +306,50 @@ export async function facilitatorVerifyAuthorization(params: {
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
     try {
+      // Build exact JSON body as specified by facilitator API
       const payload = {
         scheme: 'erc3009',
-        chain: params.chain,
-        asset: params.asset,
-        amountAtomic: String(params.amountAtomic),
-        payTo: params.payTo,
         chainId: params.chainId,
-        tokenAddress: params.tokenAddress,
-        authorization: params.authorization
+        tokenAddress: normalizedTokenAddress,
+        payTo: normalizedPayTo,
+        amountAtomic: normalizedAmountAtomic,
+        authorization: {
+          from: normalizedFrom,
+          to: normalizedTo,
+          value: normalizedValue,
+          validAfter: params.authorization.validAfter,
+          validBefore: params.authorization.validBefore,
+          nonce: normalizedNonce,
+          signature: normalizedSignature
+        }
       }
 
-      // Debug: Log exact payload being sent
-      console.log('[x402-facilitator] Sending payload to facilitator', {
+      // Enhanced observability: Log actual JSON being sent (masked)
+      const payloadJson = JSON.stringify(payload)
+      console.log('[x402-facilitator] outgoing verify body', {
         url,
+        payloadLength: payloadJson.length,
         scheme: payload.scheme,
-        chain: payload.chain,
-        asset: payload.asset,
-        amountAtomic: payload.amountAtomic,
-        payTo: maskAddress(payload.payTo),
         chainId: payload.chainId,
         tokenAddress: maskAddress(payload.tokenAddress),
+        payTo: maskAddress(payload.payTo),
+        amountAtomic: payload.amountAtomic,
         authFrom: maskAddress(payload.authorization.from),
         authTo: maskAddress(payload.authorization.to),
         authValue: payload.authorization.value,
-        authNonceLen: payload.authorization.nonce?.length,
-        authSigLen: payload.authorization.signature?.length,
         authValidAfter: payload.authorization.validAfter,
-        authValidBefore: payload.authorization.validBefore
+        authValidBefore: payload.authorization.validBefore,
+        authNonceLen: payload.authorization.nonce.length,
+        authSigLen: payload.authorization.signature.length,
+        // Show first 10 chars of signature for debugging
+        authSigHead: payload.authorization.signature.slice(0, 10),
+        authNonceHead: payload.authorization.nonce.slice(0, 10)
       })
 
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: payloadJson,
         signal: controller.signal
       })
 
@@ -295,6 +372,119 @@ export async function facilitatorVerifyAuthorization(params: {
           attempt: attempt + 1,
           body: truncatedBody
         })
+
+        // Special case: Try compatibility fallback for first 4xx/5xx error
+        // Some facilitators may expect signature outside authorization object
+        if (attempt === 0 && (res.status >= 400) && text.length === 0) {
+          console.log('[x402-facilitator] Empty response body detected - trying compatibility fallback', {
+            from: maskedFrom,
+            status: res.status
+          })
+
+          // Build alternative payload structure (signature outside authorization)
+          const compatPayload = {
+            ...payload,
+            signature: payload.authorization.signature,
+            authorization: {
+              from: payload.authorization.from,
+              to: payload.authorization.to,
+              value: payload.authorization.value,
+              validAfter: payload.authorization.validAfter,
+              validBefore: payload.authorization.validBefore,
+              nonce: payload.authorization.nonce
+            }
+          }
+
+          console.log('[x402-facilitator] Retrying with compatibility payload', {
+            from: maskedFrom,
+            hasTopLevelSig: true
+          })
+
+          try {
+            const compatRes = await fetch(url, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(compatPayload),
+              signal: controller.signal
+            })
+
+            const compatText = await compatRes.text()
+            const compatTruncated = compatText.length > 500 ? compatText.substring(0, 500) + '...[truncated]' : compatText
+
+            if (compatRes.ok) {
+              console.log('[x402-facilitator] Compatibility fallback succeeded', {
+                from: maskedFrom,
+                status: compatRes.status
+              })
+
+              // Parse and continue with success flow below
+              try { json = compatText ? JSON.parse(compatText) : null } catch {}
+              lastStatus = compatRes.status
+
+              // Continue to success validation below
+              if (json?.verified === true) {
+                // Jump to success validation (reuse existing code)
+                clearTimeout(timeoutId)
+
+                // Strict field validation
+                const validationError = validateResponse(json, {
+                  chain: params.chain,
+                  asset: params.asset,
+                  payTo: params.payTo,
+                  amountAtomic: typeof params.amountAtomic === 'string'
+                    ? parseInt(params.amountAtomic, 10)
+                    : params.amountAtomic
+                })
+
+                if (validationError) {
+                  const durationMs = Date.now() - startTime
+                  console.warn('[x402-facilitator] Validation failed (ERC-3009, compat)', {
+                    from: maskedFrom,
+                    code: validationError.code,
+                    detail: validationError.detail
+                  })
+
+                  incrementCounter('x402_verify_total', { mode: 'facilitator', code: validationError.code, scheme: 'erc3009' })
+                  recordLatency('x402_verify_latency_ms', { mode: 'facilitator', scheme: 'erc3009' }, durationMs)
+
+                  return validationError
+                }
+
+                // Success!
+                const durationMs = Date.now() - startTime
+                const amountPaid = json.amountAtomic || json.amount
+
+                console.log('[x402-facilitator] ERC-3009 verification successful (compat fallback)', {
+                  from: maskedFrom,
+                  amountPaid,
+                  durationMs,
+                  attempts: attempt + 1
+                })
+
+                incrementCounter('x402_verify_total', { mode: 'facilitator', code: 'success', scheme: 'erc3009' })
+                recordLatency('x402_verify_latency_ms', { mode: 'facilitator', scheme: 'erc3009' }, durationMs)
+
+                return {
+                  ok: true,
+                  amountPaidAtomic: amountPaid,
+                  tokenFrom: params.authorization.from,
+                  providerRaw: json
+                }
+              }
+            } else {
+              console.warn('[x402-facilitator] Compatibility fallback also failed', {
+                from: maskedFrom,
+                status: compatRes.status,
+                body: compatTruncated
+              })
+            }
+          } catch (compatErr: any) {
+            console.warn('[x402-facilitator] Compatibility fallback error', {
+              from: maskedFrom,
+              error: compatErr?.message
+            })
+          }
+        }
 
         // Check if retryable (5xx)
         if (attempt < MAX_ATTEMPTS - 1 && isRetryable(res.status)) {
