@@ -40,7 +40,8 @@ export async function postToFacilitator(
         'user-agent': 'agent-dj-radio/1.0 (+x402)'
       },
       body: JSON.stringify(payload),
-      signal: controller.signal
+      signal: controller.signal,
+      redirect: 'follow' // Follow redirects (e.g., x402.org -> www.x402.org)
     })
 
     clearTimeout(timeout)

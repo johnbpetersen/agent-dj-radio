@@ -125,6 +125,22 @@ export async function facilitatorVerifyAuthorization(
       })
       console.log('[x402-facilitator] POST', url)
 
+      // Debug: Log exact payload being sent (first variant only, to avoid spam)
+      if (attemptNum === 1) {
+        console.log('[x402-facilitator] payload preview:', {
+          scheme: payload.scheme,
+          chainId: payload.chainId,
+          chainIdType: typeof payload.chainId,
+          tokenAddress: payload.tokenAddress?.substring(0, 10) + '...',
+          payTo: payload.payTo?.substring(0, 10) + '...',
+          amountAtomic: payload.amountAtomic,
+          hasAuth: !!payload.authorization,
+          authSigLen: payload.authorization?.signature?.length,
+          authNonceLen: payload.authorization?.nonce?.length,
+          topLevelSigLen: (payload as any).signature?.length || 0
+        })
+      }
+
       // Send request (never throws - returns structured result)
       const startTime = Date.now()
       const httpResult = await postToFacilitator(url, payload)
