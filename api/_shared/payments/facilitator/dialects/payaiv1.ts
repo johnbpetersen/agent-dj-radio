@@ -7,71 +7,88 @@
  * Maps our internal representation to PayAI's nested structure
  */
 export interface PayAiVerifyParams {
-  network: string           // 'base' | 'base-sepolia' etc.
+  network: 'base' | string  // 'base' | 'base-sepolia' etc.
   payTo: string             // recipient (lowercase)
   tokenAddress: string      // ERC20 address (lowercase)
-  amountAtomic: string      // decimal string, no leading zeros
+  amountAtomic: string | number | bigint // Amount in atomic units
   authorization: {
     from: string
     to: string
-    value: string
-    validAfter: string
-    validBefore: string
+    value: string | number | bigint
+    validAfter: string | number | bigint
+    validBefore: string | number | bigint
     nonce: string
     signature: string
   }
   // Optional metadata for analytics / future settle
   resource?: string         // protected URL or descriptor
   description?: string      // human-readable description
-  mimeType?: string         // e.g. 'application/json'
-  maxTimeoutSeconds?: number // e.g. 60
 }
 
 /**
  * Build PayAI v1 verify request body
  *
- * PayAI uses a nested structure with separate paymentPayload and paymentRequirements
- * Reference spec:
- * {
- *   paymentPayload: { x402Version: 1, scheme: 'exact', network, payload: { signature, authorization } },
- *   paymentRequirements: { scheme: 'exact', network, maxAmountRequired, payTo, asset, resource, ... }
- * }
+ * PayAI uses a nested structure with dual x402Version placement:
+ * - Top-level x402Version for parsers that expect it there
+ * - Inside paymentPayload.x402Version for parsers that expect it there
+ *
+ * Payload structure matches Daydreams "exact" variant (untagged union):
+ * - paymentPayload.payload contains { authorization, signature }
+ * - No "type" tag - matched by field presence
  *
  * @param p - PayAI verify parameters
  * @returns PayAI v1 verify request body
  */
 export function buildPayAiVerifyBody(p: PayAiVerifyParams) {
+  // Hard-normalize everything PayAI touches
+  const auth = {
+    from: p.authorization.from.toLowerCase(),
+    to: p.authorization.to.toLowerCase(),
+    value: String(p.authorization.value),
+    validAfter: String(p.authorization.validAfter),
+    validBefore: String(p.authorization.validBefore),
+    nonce: p.authorization.nonce.toLowerCase(),
+    signature: p.authorization.signature.toLowerCase()
+  }
+
+  const network = p.network
+  const payTo = p.payTo.toLowerCase()
+  const asset = p.tokenAddress.toLowerCase()
+  const maxAmountRequired = String(p.amountAtomic)
+
+  // ⚠️ Include x402Version BOTH at top level and inside paymentPayload
+  // ⚠️ Include authorization + signature inside paymentPayload.payload
   return {
+    x402Version: 1, // Top-level for parsers that expect it here
     paymentPayload: {
-      // REQUIRED by Daydreams PayAI v1: must be INSIDE paymentPayload
-      x402Version: 1,
+      x402Version: 1, // Inside paymentPayload for parsers that expect it here
       scheme: 'exact' as const,
-      network: p.network,
+      network,
       payload: {
-        signature: p.authorization.signature,
+        // Untagged ExactPaymentPayload variant for ERC-3009 authorizations
+        // (Daydreams matches by field presence; do NOT add a "type" tag)
         authorization: {
-          from: p.authorization.from,
-          to: p.authorization.to,
-          // Ensure these are decimal strings
-          value: String(p.authorization.value),
-          validAfter: String(p.authorization.validAfter),
-          validBefore: String(p.authorization.validBefore),
-          nonce: p.authorization.nonce
-        }
+          from: auth.from,
+          to: auth.to,
+          value: auth.value,
+          validAfter: auth.validAfter,
+          validBefore: auth.validBefore,
+          nonce: auth.nonce
+        },
+        signature: auth.signature
       }
     },
     paymentRequirements: {
       scheme: 'exact' as const,
-      network: p.network,
-      maxAmountRequired: String(p.amountAtomic), // Ensure string
-      payTo: p.payTo,
-      asset: p.tokenAddress, // Token address as hex
-      resource: p.resource ?? 'https://agent-dj-radio.local/resource',
+      network,
+      maxAmountRequired,
+      payTo,
+      asset,
+      // Use an absolute URL; local dev is fine as a placeholder
+      resource: p.resource ?? 'http://localhost:5173/resource',
       description: p.description ?? 'Agent DJ Radio track submission',
-      mimeType: p.mimeType ?? 'application/json',
-      maxTimeoutSeconds: p.maxTimeoutSeconds ?? 60
-      // extra is optional; can carry token metadata if needed
-      // extra: { name: 'USDC', version: '2' }
+      mimeType: 'application/json' as const,
+      maxTimeoutSeconds: 60
     }
   }
 }

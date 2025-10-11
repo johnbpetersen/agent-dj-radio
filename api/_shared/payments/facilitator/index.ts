@@ -127,6 +127,7 @@ export async function facilitatorVerifyAuthorization(
     const payload = buildPayAiVerifyBody(payAiParams)
 
     console.log('[x402-facilitator] PayAI payload preview:', {
+      x402VersionTopLevel: (payload as any).x402Version,
       x402VersionInPaymentPayload: payload.paymentPayload.x402Version,
       scheme: payload.paymentPayload.scheme,
       network: payload.paymentPayload.network,
@@ -134,6 +135,7 @@ export async function facilitatorVerifyAuthorization(
       payTo: payload.paymentRequirements.payTo.substring(0, 10) + '...',
       asset: payload.paymentRequirements.asset.substring(0, 10) + '...'
     })
+    console.log('[x402-facilitator] FULL PayAI body →\n' + JSON.stringify(payload, null, 2))
     console.log('[x402-facilitator] POST', url)
 
     const startTime = Date.now()
