@@ -60,6 +60,7 @@ const serverSchema = z.object({
   // X402 configuration (required in alpha)
   X402_MODE: z.enum(['facilitator', 'cdp', 'rpc-only', 'none']).default('none'),
   X402_FACILITATOR_URL: urlSchema.optional(),
+  X402_FACILITATOR_DIALECT: z.enum(['flat', 'payai']).default('flat'),
   X402_PROVIDER_URL: urlSchema.optional(),
   CDP_API_KEY_ID: z.string().optional(),
   CDP_API_KEY_SECRET: z.string().optional(),

@@ -1,11 +1,14 @@
 // api/_shared/payments/facilitator/index.ts
 // Public API for x402 facilitator verification
 // Orchestrates multi-variant retry strategy for ERC-3009 authorization verification
+// Supports multiple facilitator dialects (flat canonical, PayAI v1)
 
 import { buildCanonical, buildCompat, buildLegacy, type PayloadParams } from './variants.js'
 import { postToFacilitator, joinUrl } from './transport.js'
 import { parseFacilitatorResponse, FacilitatorError, type FacilitatorSuccess } from './response.js'
 import { DEFAULT_RETRY_POLICY } from './policy.js'
+import { buildPayAiVerifyBody, parsePayAiVerifyResponse, type PayAiVerifyParams } from './dialects/payaiv1.js'
+import { serverEnv } from '../../../../src/config/env.server.js'
 import {
   logVerifyAttempt,
   logVerifySuccess,
@@ -74,8 +77,13 @@ export async function facilitatorVerifyAuthorization(
     throw new Error('facilitatorVerifyAuthorization: baseUrl is required in opts')
   }
 
-  // Log resolved base URL for visibility
-  console.log('[x402-facilitator] using baseUrl', { baseUrl })
+  // Detect facilitator dialect from env (default: 'flat' for backward compatibility)
+  // 'flat' = original canonical/compat variants
+  // 'payai' = PayAI v1 nested structure (Daydreams)
+  const dialect = serverEnv.X402_FACILITATOR_DIALECT || 'flat'
+
+  // Log resolved base URL and dialect for visibility
+  console.log('[x402-facilitator] using baseUrl', { baseUrl, dialect })
 
   const url = joinUrl(baseUrl, 'verify')
 
@@ -90,6 +98,107 @@ export async function facilitatorVerifyAuthorization(
     authorization: params.authorization
   }
 
+  // PayAI dialect: use dedicated builder (no multi-variant retry)
+  if (dialect === 'payai') {
+    console.log('[x402-facilitator] using PayAI v1 dialect')
+
+    // Normalize authorization to ensure all fields are strings
+    const normalizedAuth = {
+      from: String(params.authorization.from).toLowerCase(),
+      to: String(params.authorization.to).toLowerCase(),
+      value: String(params.authorization.value),
+      validAfter: String(params.authorization.validAfter),
+      validBefore: String(params.authorization.validBefore),
+      nonce: String(params.authorization.nonce).toLowerCase(),
+      signature: String(params.authorization.signature).toLowerCase()
+    }
+
+    // Map chain to network identifier for PayAI
+    const network = params.chain === 'base' ? 'base' : params.chain
+
+    const payAiParams: PayAiVerifyParams = {
+      network,
+      payTo: params.payTo.toLowerCase(),
+      tokenAddress: params.tokenAddress.toLowerCase(),
+      amountAtomic: String(params.amountAtomic),
+      authorization: normalizedAuth
+    }
+
+    const payload = buildPayAiVerifyBody(payAiParams)
+
+    console.log('[x402-facilitator] PayAI payload preview:', {
+      paymentPayload: {
+        x402Version: payload.paymentPayload.x402Version,
+        scheme: payload.paymentPayload.scheme,
+        network: payload.paymentPayload.network
+      },
+      paymentRequirements: {
+        scheme: payload.paymentRequirements.scheme,
+        network: payload.paymentRequirements.network,
+        maxAmountRequired: payload.paymentRequirements.maxAmountRequired
+      }
+    })
+    console.log('[x402-facilitator] POST', url)
+
+    const startTime = Date.now()
+    const httpResult = await postToFacilitator(url, payload)
+    const durationMs = httpResult.durationMs
+
+    console.log('[x402-facilitator] response', {
+      status: httpResult.status ?? '(no response)',
+      ok: httpResult.ok,
+      textLen: httpResult.text?.length ?? 0,
+      textPreview: (httpResult.text ?? '').slice(0, 120),
+      error: httpResult.error,
+      durationMs
+    })
+
+    // Parse PayAI response
+    if (!httpResult.ok || !httpResult.status) {
+      const err = new Error('Payment verification service temporarily unavailable. Please try again in a moment.')
+      ;(err as any).code = 'PROVIDER_UNAVAILABLE'
+      ;(err as any).status = httpResult.status ?? 503
+      ;(err as any).detail = httpResult.error || httpResult.text
+      throw err
+    }
+
+    let json: any = null
+    try {
+      json = httpResult.text ? JSON.parse(httpResult.text) : null
+    } catch (parseErr) {
+      const err = new Error('Invalid JSON response from payment service')
+      ;(err as any).code = 'PROVIDER_ERROR'
+      ;(err as any).status = httpResult.status
+      ;(err as any).detail = httpResult.text
+      throw err
+    }
+
+    const result = parsePayAiVerifyResponse(json)
+
+    if (!result.ok) {
+      const err = new Error(result.message)
+      ;(err as any).code = result.code
+      ;(err as any).status = httpResult.status
+      ;(err as any).detail = result.detail
+      throw err
+    }
+
+    logVerifySuccess({
+      variant: 'payai-v1',
+      verified: true,
+      txHash: undefined,
+      durationMs
+    })
+
+    return {
+      verified: true,
+      amountAtomic: result.amountPaidAtomic ?? params.amountAtomic,
+      tokenFrom: result.tokenFrom,
+      providerRaw: result.providerRaw
+    }
+  }
+
+  // Flat dialect (original): Multi-variant retry strategy
   // Define variants to try (in order)
   // Note: Legacy variant removed - it uses wrong field names (token/recipient/amount)
   //       that don't match x402 spec and will always fail with standard facilitators
