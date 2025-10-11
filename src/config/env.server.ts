@@ -95,6 +95,9 @@ const serverSchema = z.object({
 
   // Facilitator settle configuration (optional settlement after verify)
   ENABLE_FACILITATOR_SETTLE: booleanFromString.default(false),
+
+  // X402 RPC fallback configuration (allow RPC paste-tx flow when facilitator is down)
+  X402_FALLBACK_TO_RPC: booleanFromString.default(false),
 }).refine((data) => {
   // Stage-specific validations
   if (data.STAGE === 'alpha') {

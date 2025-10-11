@@ -802,10 +802,29 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
             error: err?.message,
             code: err?.code
           })
+
+          // Check if RPC fallback is enabled
+          if (err?.code === 'PROVIDER_UNAVAILABLE' && serverEnv.X402_FALLBACK_TO_RPC) {
+            logger.info('queue/confirm facilitator unavailable, signaling RPC fallback', {
+              requestId,
+              challengeId
+            })
+            res.status(503).json({
+              error: {
+                code: 'PROVIDER_UNAVAILABLE',
+                message: err?.message || 'Payment verification service temporarily unavailable. Please try again in a moment.',
+                fallback: 'rpc'
+              },
+              requestId
+            })
+            return
+          }
+
+          // No fallback available or different error
           res.status(503).json({
             error: {
               code: 'PROVIDER_UNAVAILABLE',
-              message: 'Payment verification service temporarily unavailable. Please try again in a moment.'
+              message: err?.message || 'Payment verification service temporarily unavailable. Please try again in a moment.'
             },
             requestId
           })

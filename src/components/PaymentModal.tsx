@@ -38,6 +38,11 @@ interface HealthResponse {
         required: boolean
         ttlSeconds: number
       }
+      facilitator?: {
+        baseUrl: string
+        reachable: boolean
+        error: string | null
+      }
     }
   }
 }
@@ -142,6 +147,8 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
   const [bindingRequired, setBindingRequired] = useState(false)
   const [paymentMode, setPaymentMode] = useState<'facilitator' | 'rpc-only' | 'mock' | 'none'>('none')
   const [chainId, setChainId] = useState<number | undefined>()
+  const [facilitatorReachable, setFacilitatorReachable] = useState(true)
+  const [useRpcFallback, setUseRpcFallback] = useState(false)
 
   // WRONG_PAYER error state
   const [wrongPayerDetail, setWrongPayerDetail] = useState<{
@@ -172,14 +179,22 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
         const bindReq = data.features?.x402?.binding?.required ?? false
         const mode = data.features?.x402?.mode ?? 'none'
         const chain = data.features?.x402?.chainId
+        const facReachable = data.features?.x402?.facilitator?.reachable ?? true
 
         setIsLiveMode(x402Enabled)
         setMocksEnabled(mockEnabled)
         setBindingRequired(bindReq)
         setPaymentMode(mode)
         setChainId(chain)
+        setFacilitatorReachable(facReachable)
 
-        console.log('[PaymentModal] Health loaded:', { mode, chainId: chain, bindReq })
+        console.log('[PaymentModal] Health loaded:', {
+          mode,
+          chainId: chain,
+          bindReq,
+          facilitatorReachable: facReachable,
+          facilitatorError: data.features?.x402?.facilitator?.error
+        })
 
         // Debug log challenge after health is loaded
         console.debug('[PaymentModal] Challenge from server', {
@@ -197,6 +212,7 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
         setMocksEnabled(false)
         setBindingRequired(false)
         setPaymentMode('none')
+        setFacilitatorReachable(false)
       })
   }, [challenge])
 
@@ -333,7 +349,12 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
 
       if (err instanceof PaymentError) {
         // Handle special error codes
-        if (err.code === 'AUTH_REUSED') {
+        if (err.code === 'PROVIDER_UNAVAILABLE' && err.data?.fallback === 'rpc') {
+          // Facilitator is down, switch to RPC paste-tx flow
+          console.log('[PaymentModal] Facilitator unavailable, switching to RPC fallback')
+          setUseRpcFallback(true)
+          setError('Payment service temporarily unavailable. Please use the transaction hash method below.')
+        } else if (err.code === 'AUTH_REUSED') {
           const refs = err.getOriginalRefs?.()
           setError(`Authorization already used for payment ${refs?.trackId ? `#${refs.trackId.slice(0, 8)}...` : ''}`)
         } else if (err.status === 429) {
@@ -443,14 +464,16 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
   const chainName = getChainDisplayName(challenge.chain)
   const explorerUrl = txHash && validateTxHash(txHash) ? getBlockExplorerUrl(challenge.chain, txHash) : null
 
-  // Determine UI state based on payment mode
-  const isFacilitatorMode = paymentMode === 'facilitator'
+  // Determine UI state based on payment mode and facilitator health
+  const isFacilitatorMode = paymentMode === 'facilitator' && !useRpcFallback
+  const showSignAndPay = isFacilitatorMode && facilitatorReachable
 
   // In facilitator mode: wallet connection is required, but binding is optional (ERC-3009 binds payer)
   // In RPC mode: binding is required
-  const needsWallet = isFacilitatorMode ? !wallet.isConnected : (bindingRequired && !wallet.isConnected)
-  const needsBinding = !isFacilitatorMode && bindingRequired && wallet.isConnected && !binding.state.isBound
-  const canConfirm = isFacilitatorMode ? wallet.isConnected : (!bindingRequired || binding.state.isBound)
+  // If useRpcFallback is true, force RPC mode even in facilitator mode
+  const needsWallet = (isFacilitatorMode && !useRpcFallback) ? !wallet.isConnected : (bindingRequired && !wallet.isConnected)
+  const needsBinding = (!isFacilitatorMode || useRpcFallback) && bindingRequired && wallet.isConnected && !binding.state.isBound
+  const canConfirm = (isFacilitatorMode && !useRpcFallback) ? wallet.isConnected : (!bindingRequired || binding.state.isBound)
 
   return (
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -507,9 +530,9 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
             {/* Wallet Connection Section */}
             {needsWallet && (
               <div className="binding-section">
-                <h3>{isFacilitatorMode ? 'Step 1: Connect Wallet' : 'Step 1: Connect Wallet'}</h3>
+                <h3>{showSignAndPay ? 'Step 1: Connect Wallet' : 'Step 1: Connect Wallet'}</h3>
                 <p className="binding-description">
-                  {isFacilitatorMode
+                  {showSignAndPay
                     ? 'Connect your wallet to sign the payment authorization.'
                     : 'To prevent payment fraud, you must prove wallet ownership before paying.'}
                 </p>
@@ -572,8 +595,9 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
             {/* Payment Form Section */}
             {canConfirm && (
               <div className="payment-form">
-                {/* Facilitator mode: Show connected wallet and Sign & Pay button */}
-                {isFacilitatorMode ? (
+                {/* Facilitator mode with reachable facilitator: Show Sign & Pay */}
+                {/* If facilitator is down or useRpcFallback is true, show RPC paste-tx flow */}
+                {showSignAndPay ? (
                   <>
                     <div className="wallet-connected">
                       <div className="connected-info">
@@ -606,7 +630,18 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
                   </>
                 ) : (
                   /* RPC mode: Show tx-hash input */
+                  /* Also shown if facilitator is down (fallback) */
                   <>
+                    {/* Facilitator unavailable notice */}
+                    {useRpcFallback && (
+                      <div className="facilitator-unavailable-notice">
+                        <p>⚠️ Payment service temporarily unavailable</p>
+                        <p className="fallback-description">
+                          The gasless payment service is currently down. Please use the manual transaction method below.
+                        </p>
+                      </div>
+                    )}
+
                     {binding.state.isBound && (
                       <div className="bound-status">
                         ✓ Wallet Proven: <code>{binding.state.boundAddress?.slice(0, 6)}...{binding.state.boundAddress?.slice(-4)}</code>
@@ -1420,6 +1455,28 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
         .mock-notice small {
           color: #aaa;
           font-size: 0.85rem;
+        }
+
+        .facilitator-unavailable-notice {
+          background: #3a2a1a;
+          border: 1px solid #f59e0b;
+          border-radius: 6px;
+          padding: 1rem;
+          margin-bottom: 1rem;
+        }
+
+        .facilitator-unavailable-notice p {
+          margin: 0 0 0.5rem 0;
+          color: #fbbf24;
+          font-size: 0.95rem;
+          font-weight: 600;
+        }
+
+        .facilitator-unavailable-notice .fallback-description {
+          color: #fcd34d;
+          font-size: 0.85rem;
+          font-weight: 400;
+          line-height: 1.5;
         }
 
         .error {

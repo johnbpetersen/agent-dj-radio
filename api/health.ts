@@ -11,6 +11,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createClient } from '@supabase/supabase-js'
 import { serverEnv } from '../src/config/env.server.js'
 import { secureHandler, securityConfigs } from './_shared/secure-handler.js'
+import { joinUrl } from './_shared/payments/facilitator/transport.js'
 import crypto from 'crypto'
 
 interface HealthResponse {
@@ -36,6 +37,11 @@ interface HealthResponse {
         required: boolean
         ttlSeconds: number
       }
+      facilitator?: {
+        baseUrl: string
+        reachable: boolean
+        error: string | null
+      }
       rpc?: {
         chain: string
         chainId: number
@@ -45,6 +51,77 @@ interface HealthResponse {
     }
   }
   requestId: string
+}
+
+// Facilitator health cache (60s TTL)
+let facilitatorCache: { ok: boolean; error?: string; ts: number } | null = null
+const FAC_PROBE_TTL_MS = 60_000
+
+/**
+ * Probe facilitator health with intentionally invalid payload
+ * - Expect 400/422 (reachable and rejecting properly)
+ * - 5xx or timeout => down
+ */
+async function probeFacilitator(): Promise<{ ok: boolean; error?: string }> {
+  const now = Date.now()
+
+  // Return cached result if fresh
+  if (facilitatorCache && (now - facilitatorCache.ts) < FAC_PROBE_TTL_MS) {
+    return { ok: facilitatorCache.ok, error: facilitatorCache.error }
+  }
+
+  const base = serverEnv.X402_FACILITATOR_URL
+  if (!base) {
+    facilitatorCache = { ok: false, error: 'no facilitator url', ts: now }
+    return facilitatorCache
+  }
+
+  const url = joinUrl(base, 'verify')
+
+  // Intentionally invalid minimal payload → expect 4xx (400/422)
+  // 5xx/timeout => facilitator down
+  const body = {
+    scheme: 'erc3009',
+    chainId: 8453,
+    tokenAddress: '0x0000000000000000000000000000000000000000',
+    payTo: '0x0000000000000000000000000000000000000000',
+    amountAtomic: '0',
+    authorization: {
+      from: '0x0000000000000000000000000000000000000000',
+      to: '0x0000000000000000000000000000000000000000',
+      value: '0',
+      validAfter: '0',
+      validBefore: '0',
+      nonce: '0x0000000000000000000000000000000000000000000000000000000000000000',
+      signature: '0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000'
+    }
+  }
+
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 2000)
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json; charset=utf-8',
+        'accept': 'application/json',
+        'user-agent': 'agent-dj-radio/1.0 (+x402-health)'
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    })
+
+    clearTimeout(timeoutId)
+
+    // Reachable if responding with 4xx (properly rejecting invalid payload)
+    const ok = res.status >= 400 && res.status < 500
+    facilitatorCache = { ok, ts: now, error: ok ? undefined : `status ${res.status}` }
+  } catch (e: any) {
+    facilitatorCache = { ok: false, ts: now, error: e?.message || 'timeout' }
+  }
+
+  return facilitatorCache
 }
 
 async function healthHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
@@ -177,6 +254,17 @@ async function healthHandler(req: VercelRequest, res: VercelResponse): Promise<v
     }
   }
 
+  // Probe facilitator health if in facilitator mode
+  let facilitatorHealth: { baseUrl: string; reachable: boolean; error: string | null } | undefined
+  if (paymentMode === 'facilitator' && serverEnv.X402_FACILITATOR_URL) {
+    const probe = await probeFacilitator()
+    facilitatorHealth = {
+      baseUrl: serverEnv.X402_FACILITATOR_URL,
+      reachable: probe.ok,
+      error: probe.error || null
+    }
+  }
+
   const response: HealthResponse = {
     ok,
     stage: serverEnv.STAGE,
@@ -196,6 +284,7 @@ async function healthHandler(req: VercelRequest, res: VercelResponse): Promise<v
           required: serverEnv.X402_REQUIRE_BINDING,
           ttlSeconds: serverEnv.BINDING_TTL_SECONDS
         },
+        ...(facilitatorHealth && { facilitator: facilitatorHealth }),
         ...(rpcInfo && { rpc: rpcInfo }),
         // Expose chain and token info for frontend ERC-3009 signing
         ...(paymentMode === 'facilitator' && {
