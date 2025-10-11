@@ -43,6 +43,7 @@ export interface PayAiVerifyParams {
 export function buildPayAiVerifyBody(p: PayAiVerifyParams) {
   return {
     paymentPayload: {
+      // REQUIRED by Daydreams PayAI v1: must be INSIDE paymentPayload
       x402Version: 1,
       scheme: 'exact' as const,
       network: p.network,
@@ -51,9 +52,10 @@ export function buildPayAiVerifyBody(p: PayAiVerifyParams) {
         authorization: {
           from: p.authorization.from,
           to: p.authorization.to,
-          value: p.authorization.value,
-          validAfter: p.authorization.validAfter,
-          validBefore: p.authorization.validBefore,
+          // Ensure these are decimal strings
+          value: String(p.authorization.value),
+          validAfter: String(p.authorization.validAfter),
+          validBefore: String(p.authorization.validBefore),
           nonce: p.authorization.nonce
         }
       }
@@ -61,9 +63,9 @@ export function buildPayAiVerifyBody(p: PayAiVerifyParams) {
     paymentRequirements: {
       scheme: 'exact' as const,
       network: p.network,
-      maxAmountRequired: p.amountAtomic,
+      maxAmountRequired: String(p.amountAtomic), // Ensure string
       payTo: p.payTo,
-      asset: p.tokenAddress,
+      asset: p.tokenAddress, // Token address as hex
       resource: p.resource ?? 'https://agent-dj-radio.local/resource',
       description: p.description ?? 'Agent DJ Radio track submission',
       mimeType: p.mimeType ?? 'application/json',

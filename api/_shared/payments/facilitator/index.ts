@@ -127,16 +127,12 @@ export async function facilitatorVerifyAuthorization(
     const payload = buildPayAiVerifyBody(payAiParams)
 
     console.log('[x402-facilitator] PayAI payload preview:', {
-      paymentPayload: {
-        x402Version: payload.paymentPayload.x402Version,
-        scheme: payload.paymentPayload.scheme,
-        network: payload.paymentPayload.network
-      },
-      paymentRequirements: {
-        scheme: payload.paymentRequirements.scheme,
-        network: payload.paymentRequirements.network,
-        maxAmountRequired: payload.paymentRequirements.maxAmountRequired
-      }
+      x402VersionInPaymentPayload: payload.paymentPayload.x402Version,
+      scheme: payload.paymentPayload.scheme,
+      network: payload.paymentPayload.network,
+      maxAmountRequired: payload.paymentRequirements.maxAmountRequired,
+      payTo: payload.paymentRequirements.payTo.substring(0, 10) + '...',
+      asset: payload.paymentRequirements.asset.substring(0, 10) + '...'
     })
     console.log('[x402-facilitator] POST', url)
 
