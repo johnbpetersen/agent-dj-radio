@@ -26,13 +26,35 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
     throw httpError.internal('Discord authentication not configured')
   }
 
-  // Generate CSRF state token
-  const state = crypto.randomUUID()
+  // Extract session ID from header
+  const sid = req.headers['x-session-id']?.toString() ?? ''
 
-  // Store state in HTTP-only cookie (10 minute expiry)
+  // Validate UUID v4 format
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  if (!sid || !uuidRegex.test(sid)) {
+    logger.error('Invalid or missing X-Session-Id header', { correlationId })
+    throw httpError.badRequest('Invalid session ID')
+  }
+
+  console.log('[discord/start] sid from header?', !!sid, 'setting cookie & state payload')
+
+  // Generate CSRF token
+  const csrf = crypto.randomUUID()
+
+  // Build state payload with CSRF + session ID (belt-and-suspenders)
+  const statePayload = { csrf, sid }
+  const stateJson = JSON.stringify(statePayload)
+  const stateBase64 = Buffer.from(stateJson, 'utf-8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g, '')
+
+  // Store both cookies (CSRF state + session ID) - 10 minute expiry
   const isProduction = process.env.NODE_ENV === 'production'
-  const cookieOptions = [
-    `discord_state=${state}`,
+
+  const stateCookie = [
+    `discord_state=${stateBase64}`,
     'HttpOnly',
     'SameSite=Lax',
     'Path=/',
@@ -40,7 +62,16 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
     isProduction ? 'Secure' : ''
   ].filter(Boolean).join('; ')
 
-  res.setHeader('Set-Cookie', cookieOptions)
+  const sessionCookie = [
+    `x_session_id=${encodeURIComponent(sid)}`,
+    'HttpOnly',
+    'SameSite=Lax',
+    'Path=/',
+    'Max-Age=604800', // 7 days
+    isProduction ? 'Secure' : ''
+  ].filter(Boolean).join('; ')
+
+  res.setHeader('Set-Cookie', [stateCookie, sessionCookie])
 
   // Build Discord OAuth URL
   const authUrl = new URL('https://discord.com/api/oauth2/authorize')
@@ -48,12 +79,12 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
   authUrl.searchParams.set('redirect_uri', redirectUri)
   authUrl.searchParams.set('response_type', 'code')
   authUrl.searchParams.set('scope', 'identify')
-  authUrl.searchParams.set('state', state)
+  authUrl.searchParams.set('state', stateBase64)
 
   logger.info('Returning Discord OAuth URL', {
     correlationId,
     redirectUri,
-    state: state.substring(0, 8) + '...'
+    state: stateBase64.substring(0, 8) + '...'
   })
 
   // Return JSON with redirectUrl (client will navigate)

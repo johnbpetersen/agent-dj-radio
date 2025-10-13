@@ -46,6 +46,28 @@ function parseCookie(cookieHeader: string | undefined, name: string): string | n
   return match ? decodeURIComponent(match[1]) : null
 }
 
+/**
+ * Parse OAuth state parameter (base64url encoded JSON with csrf + sid)
+ */
+function parseStatePayload(state: string): { csrf: string; sid: string } | null {
+  try {
+    // Decode base64url to JSON
+    const base64 = state
+      .replace(/-/g, '+')
+      .replace(/_/g, '/')
+    const padding = '='.repeat((4 - (base64.length % 4)) % 4)
+    const json = Buffer.from(base64 + padding, 'base64').toString('utf-8')
+    const payload = JSON.parse(json)
+
+    if (typeof payload?.csrf === 'string' && typeof payload?.sid === 'string') {
+      return { csrf: payload.csrf, sid: payload.sid }
+    }
+  } catch {
+    // Parsing failed
+  }
+  return null
+}
+
 async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== 'GET') {
     throw httpError.badRequest('Method not allowed', 'Only GET requests are supported')
@@ -83,6 +105,13 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
     throw httpError.badRequest('Invalid callback parameters')
   }
 
+  // Parse state payload (contains csrf + sid)
+  const statePayload = parseStatePayload(state as string)
+  if (!statePayload) {
+    logger.warn('Discord OAuth state payload invalid', { correlationId })
+    throw httpError.badRequest('Invalid state parameter format')
+  }
+
   // Verify CSRF state from cookie
   const cookieState = parseCookie(req.headers.cookie, 'discord_state')
   if (!cookieState || cookieState !== state) {
@@ -94,7 +123,7 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
     throw httpError.badRequest('Invalid state parameter (CSRF check failed)')
   }
 
-  // Clear state cookie
+  // Clear state cookie (but keep x_session_id cookie)
   res.setHeader('Set-Cookie', 'discord_state=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0')
 
   // Environment validation
@@ -169,6 +198,12 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
 
     // Get current session user
     const sessionId = requireSessionId(req)
+
+    // Debug: Log session ID source
+    const fromHeader = req.headers['x-session-id']
+    const fromCookie = parseCookie(req.headers.cookie, 'x_session_id')
+    const sidSource = fromHeader ? 'header' : fromCookie ? 'cookie' : 'state'
+    console.log('[discord/callback] sid source:', sidSource)
 
     const { data: presence, error: presenceError } = await supabaseAdmin
       .from('presence')
