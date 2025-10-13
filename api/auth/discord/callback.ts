@@ -339,7 +339,7 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
 
     // Redirect back to frontend with success indicator
     const siteUrl = process.env.VITE_SITE_URL || 'http://localhost:5173'
-    const redirectTo = `${siteUrl}/?discord_linked=1`
+    const redirectTo = `${siteUrl.replace(/\/+$/, '')}/?discord_linked=1`
 
     console.log('[discord/callback] redirecting to', redirectTo)
     safeRedirect(res, redirectTo)
