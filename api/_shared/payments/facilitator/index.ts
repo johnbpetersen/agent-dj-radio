@@ -181,6 +181,9 @@ export async function facilitatorVerifyAuthorization(
       throw err
     }
 
+    const payer =
+    (json?.payer ?? normalizedAuth.from)?.toLowerCase()
+
     logVerifySuccess({
       variant: 'payai-v1',
       verified: true,
@@ -189,10 +192,12 @@ export async function facilitatorVerifyAuthorization(
     })
 
     return {
+      ok: true,
       verified: true,
-      amountAtomic: result.amountPaidAtomic ?? params.amountAtomic,
-      tokenFrom: result.tokenFrom,
-      providerRaw: result.providerRaw
+      amountPaidAtomic: String(params.amountAtomic),
+      tokenFrom: payer,
+      txHash: normalizedAuth.nonce,
+      providerRaw: json
     }
   }
 
