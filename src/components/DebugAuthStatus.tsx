@@ -31,9 +31,12 @@ export default function DebugAuthStatus() {
   const startDiscord = async () => {
     try {
       const res = await apiFetch('/api/auth/discord/start', { method: 'POST' })
-      const json = await res.json()
-      const redirectUrl = json.redirectUrl || json.url
-      if (redirectUrl) window.location.href = redirectUrl
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.redirectUrl) {
+        console.error('Discord start failed:', json)
+        return
+      }
+      window.location.href = json.redirectUrl
     } catch (e) {
       console.error('Discord start error', e)
     }

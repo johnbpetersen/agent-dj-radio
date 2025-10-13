@@ -179,14 +179,13 @@ export default function RoomScene({ nowPlaying, listeners, djs, onQueueTrack }: 
   const handleDiscordLogin = async () => {
     try {
       const res = await apiFetch('/api/auth/discord/start', { method: 'POST' });
-      const json = await res.json();
-      const redirectUrl = json.redirectUrl || json.url;
-      if (!res.ok || !redirectUrl) {
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.redirectUrl) {
         console.error('Discord start failed:', json);
         alert(json?.message || 'Failed to start Discord login');
         return;
       }
-      window.location.href = redirectUrl;
+      window.location.href = json.redirectUrl;
     } catch (e) {
       console.error('Discord start error', e);
       alert('Could not start Discord login');

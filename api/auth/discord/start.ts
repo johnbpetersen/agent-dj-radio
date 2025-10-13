@@ -50,14 +50,17 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
   authUrl.searchParams.set('scope', 'identify')
   authUrl.searchParams.set('state', state)
 
-  logger.info('Redirecting to Discord OAuth', {
+  logger.info('Returning Discord OAuth URL', {
     correlationId,
     redirectUri,
     state: state.substring(0, 8) + '...'
   })
 
-  // Redirect to Discord
-  res.status(302).setHeader('Location', authUrl.toString()).end()
+  // Return JSON with redirectUrl (client will navigate)
+  // ✅ IMPORTANT: don't chain res.status(...).setHeader(...).end(...)
+  res.statusCode = 200
+  res.setHeader('Content-Type', 'application/json')
+  res.end(JSON.stringify({ redirectUrl: authUrl.toString() }))
 }
 
 export default secureHandler(discordStartHandler, securityConfigs.public)
