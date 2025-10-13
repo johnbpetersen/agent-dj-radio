@@ -57,10 +57,9 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
   })
 
   // Return JSON with redirectUrl (client will navigate)
-  // ✅ IMPORTANT: don't chain res.status(...).setHeader(...).end(...)
-  res.statusCode = 200
-  res.setHeader('Content-Type', 'application/json')
-  res.end(JSON.stringify({ redirectUrl: authUrl.toString() }))
+  // Use the standard response pattern from session/hello and station/state
+  console.log('[discord/start] returning JSON redirectUrl')
+  res.status(200).json({ redirectUrl: authUrl.toString() })
 }
 
 export default secureHandler(discordStartHandler, securityConfigs.public)
