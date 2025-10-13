@@ -2,6 +2,7 @@
 // Public API for x402 facilitator verification
 // Orchestrates multi-variant retry strategy for ERC-3009 authorization verification
 // Supports multiple facilitator dialects (flat canonical, PayAI v1)
+/* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any */
 
 import { buildCanonical, buildCompat, buildLegacy, type PayloadParams } from './variants.js'
 import { postToFacilitator, joinUrl } from './transport.js'

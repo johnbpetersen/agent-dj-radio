@@ -52,7 +52,7 @@ export function applyCorsAndSecurity(
   } = options
 
   // Get origin from request
-  const origin = req.headers.origin || req.headers.referer?.replace(/\/[^\/]*$/, '') || ''
+  const origin = req.headers.origin || req.headers.referer?.replace(/\/[^/]*$/, '') || ''
   
   // Check if origin is allowed
   const isOriginAllowed = ALLOWED_ORIGINS.includes(origin) || 
@@ -100,7 +100,7 @@ export function applyCorsAndSecurity(
  * Validate request origin for sensitive operations
  */
 export function validateOrigin(req: VercelRequest): boolean {
-  const origin = req.headers.origin || req.headers.referer?.replace(/\/[^\/]*$/, '') || ''
+  const origin = req.headers.origin || req.headers.referer?.replace(/\/[^/]*$/, '') || ''
   
   return ALLOWED_ORIGINS.includes(origin) || 
     (process.env.NODE_ENV === 'development' && origin.startsWith('http://localhost'))
@@ -109,7 +109,7 @@ export function validateOrigin(req: VercelRequest): boolean {
 /**
  * Sanitize data before sending to client (remove sensitive fields)
  */
-export function sanitizeForClient<T extends Record<string, any>>(
+export function sanitizeForClient<T extends Record<string, unknown>>(
   data: T,
   sensitiveFields: (keyof T)[] = []
 ): T {

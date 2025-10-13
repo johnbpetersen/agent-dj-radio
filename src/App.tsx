@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'; // FIX: Explicitly import React
+import { useState, useEffect } from 'react'
 import { AdminPanel } from './components/AdminPanel';
 import Layout from './components/ui/turntable/Layout'; // Using your correct path
 
