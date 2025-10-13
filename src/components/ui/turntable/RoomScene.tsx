@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Users, ChevronLeft, ChevronRight, Heart, ThumbsDown, Radio, Mic, MessageCircle } from "lucide-react";
 import { useEphemeralUser } from "../../../hooks/useEphemeralUser";
+import { apiFetch } from "../../../lib/api";
 
 // --- TYPE DEFINITIONS for props ---
 // These define the "shape" of the data our component expects.
@@ -175,8 +176,21 @@ function ChatPanel() {
 export default function RoomScene({ nowPlaying, listeners, djs, onQueueTrack }: RoomSceneProps) {
   const { user } = useEphemeralUser();
 
-  const handleDiscordLogin = () => {
-    window.location.href = '/api/auth/discord/start';
+  const handleDiscordLogin = async () => {
+    try {
+      const res = await apiFetch('/api/auth/discord/start', { method: 'POST' });
+      const json = await res.json();
+      const redirectUrl = json.redirectUrl || json.url;
+      if (!res.ok || !redirectUrl) {
+        console.error('Discord start failed:', json);
+        alert(json?.message || 'Failed to start Discord login');
+        return;
+      }
+      window.location.href = redirectUrl;
+    } catch (e) {
+      console.error('Discord start error', e);
+      alert('Could not start Discord login');
+    }
   };
 
   return (

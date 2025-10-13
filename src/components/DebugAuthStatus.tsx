@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { apiFetch } from '../lib/api'
 
 type SessionHello = {
   isDiscordLinked?: boolean
@@ -14,10 +15,9 @@ export default function DebugAuthStatus() {
     let cancelled = false
     ;(async () => {
       try {
-        const res = await fetch('/api/session/hello', {
+        const res = await apiFetch('/api/session/hello', {
           method: 'POST',
-          credentials: 'include',
-          headers: { 'content-type': 'application/json' }
+          body: JSON.stringify({})
         })
         const json = await res.json()
         if (!cancelled) setData(json)
@@ -28,7 +28,16 @@ export default function DebugAuthStatus() {
     return () => { cancelled = true }
   }, [])
 
-  const startDiscord = () => { window.location.href = '/api/auth/discord/start' }
+  const startDiscord = async () => {
+    try {
+      const res = await apiFetch('/api/auth/discord/start', { method: 'POST' })
+      const json = await res.json()
+      const redirectUrl = json.redirectUrl || json.url
+      if (redirectUrl) window.location.href = redirectUrl
+    } catch (e) {
+      console.error('Discord start error', e)
+    }
+  }
 
   return (
     <div

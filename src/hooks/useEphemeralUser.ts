@@ -3,6 +3,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { generateFunName } from '../lib/name-generator'
+import { apiFetch } from '../lib/api'
 
 interface EphemeralUser {
   id: string
@@ -102,13 +103,9 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
     try {
       // Generate a fun name for new users
       const funName = generateFunName()
-      
-      const response = await fetch('/api/session/hello', {
+
+      const response = await apiFetch('/api/session/hello', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Session-Id': currentSessionId
-        },
         body: JSON.stringify({
           display_name: funName
         })
@@ -120,12 +117,8 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
           const errorData = await response.json()
           if (errorData.suggestions && errorData.suggestions.length > 0) {
             // Retry with first suggestion
-            const retryResponse = await fetch('/api/session/hello', {
+            const retryResponse = await apiFetch('/api/session/hello', {
               method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'X-Session-Id': currentSessionId
-              },
               body: JSON.stringify({
                 display_name: errorData.suggestions[0]
               })
@@ -172,12 +165,8 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
   
   const sendPresencePing = async (currentSessionId: string) => {
     try {
-      const response = await fetch('/api/presence/ping', {
+      const response = await apiFetch('/api/presence/ping', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Session-Id': currentSessionId
-        },
         body: JSON.stringify({})
       })
 
@@ -233,13 +222,9 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
     
     try {
       setError(null)
-      
-      const response = await fetch('/api/users/rename', {
+
+      const response = await apiFetch('/api/users/rename', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Session-Id': sessionId
-        },
         body: JSON.stringify({
           new_name: newName.trim()
         })
@@ -286,13 +271,9 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
     
     try {
       setError(null)
-      
-      const response = await fetch('/api/users/bio', {
+
+      const response = await apiFetch('/api/users/bio', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Session-Id': sessionId
-        },
         body: JSON.stringify({
           bio: bio.trim() || null
         })
