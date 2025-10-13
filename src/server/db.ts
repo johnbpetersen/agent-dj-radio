@@ -56,14 +56,14 @@ export async function updateStationState(
  * Get tracks by status with user information
  */
 export async function getTracksByStatus(
-  supabase: SupabaseClient, 
+  supabase: SupabaseClient,
   statuses: string[]
 ): Promise<Track[]> {
   const { data, error } = await supabase
     .from('tracks')
     .select(`
       *,
-      user:users(*)
+      user:users!tracks_submitter_user_id_fkey (*)
     `)
     .in('status', statuses)
     .order('created_at', { ascending: true })
@@ -122,7 +122,7 @@ export async function updateTrackStatus(
     .eq('id', trackId)
     .select(`
       *,
-      user:users(*)
+      user:users!tracks_submitter_user_id_fkey (*)
     `)
     .single()
 
@@ -146,7 +146,7 @@ export async function createTrack(
     .insert(trackData)
     .select(`
       *,
-      user:users(*)
+      user:users!tracks_submitter_user_id_fkey (*)
     `)
     .single()
 
@@ -169,7 +169,7 @@ export async function getTrackById(
     .from('tracks')
     .select(`
       *,
-      user:users(*)
+      user:users!tracks_submitter_user_id_fkey (*)
     `)
     .eq('id', trackId)
     .single()
@@ -199,7 +199,7 @@ export async function confirmTrackPayment(
     .eq('id', trackId)
     .select(`
       *,
-      user:users(*)
+      user:users!tracks_submitter_user_id_fkey (*)
     `)
     .single()
 
@@ -350,7 +350,7 @@ export async function updateTrackRating(
     .eq('id', trackId)
     .select(`
       *,
-      user:users(*)
+      user:users!tracks_submitter_user_id_fkey (*)
     `)
     .single()
 

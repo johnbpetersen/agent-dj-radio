@@ -50,6 +50,10 @@ async function headOk(url: string): Promise<boolean> {
 }
 
 async function generateHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
+  // Temporarily disabled in dev
+  res.status(501).json({ message: 'generate worker disabled in dev' })
+  return
+
   const correlationId = generateCorrelationId()
   const startTime = Date.now()
   let usedFallback = false
