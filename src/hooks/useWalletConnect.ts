@@ -65,23 +65,12 @@ function getInjectedProvider(prefer: WalletProvider = 'any'): any | undefined {
 
   // Check for Coinbase extension global
   if (cbExtension && !providers.some(p => p === cbExtension)) {
-    console.debug('[useWalletConnect] Found window.coinbaseWalletExtension')
     providers.push(cbExtension)
   }
 
   if (providers.length === 0) {
-    console.debug('[useWalletConnect] No window.ethereum or window.coinbaseWalletExtension found')
     return undefined
   }
-
-  console.debug('[useWalletConnect] Detected providers:', {
-    count: providers.length,
-    providers: providers.map(p => ({
-      isCoinbaseWallet: p?.isCoinbaseWallet,
-      isMetaMask: p?.isMetaMask,
-      isBraveWallet: p?.isBraveWallet
-    }))
-  })
 
   const byFlag = (pred: (p: any) => boolean) => providers.find(pred)
   const coinbase = byFlag(p => p?.isCoinbaseWallet === true)
@@ -89,30 +78,15 @@ function getInjectedProvider(prefer: WalletProvider = 'any'): any | undefined {
 
   // Select based on preference
   if (prefer === 'coinbase') {
-    const selected = coinbase ?? metamask ?? providers[0]
-    console.debug('[useWalletConnect] Selected Coinbase-preferred provider:', {
-      isCoinbaseWallet: selected?.isCoinbaseWallet,
-      isMetaMask: selected?.isMetaMask
-    })
-    return selected
+    return coinbase ?? metamask ?? providers[0]
   }
 
   if (prefer === 'metamask') {
-    const selected = metamask ?? coinbase ?? providers[0]
-    console.debug('[useWalletConnect] Selected MetaMask-preferred provider:', {
-      isCoinbaseWallet: selected?.isCoinbaseWallet,
-      isMetaMask: selected?.isMetaMask
-    })
-    return selected
+    return metamask ?? coinbase ?? providers[0]
   }
 
   // Default: prefer Coinbase, then MetaMask, then first available
-  const selected = coinbase ?? metamask ?? providers[0]
-  console.debug('[useWalletConnect] Selected default provider:', {
-    isCoinbaseWallet: selected?.isCoinbaseWallet,
-    isMetaMask: selected?.isMetaMask
-  })
-  return selected
+  return coinbase ?? metamask ?? providers[0]
 }
 
 /**
@@ -125,17 +99,14 @@ function getInjectedProvider(prefer: WalletProvider = 'any'): any | undefined {
 function ensureRequestPolyfill(provider: any): any {
   if (!provider) return provider
 
-  // Log provider capabilities for debugging
   const capabilities = {
     hasRequest: typeof provider.request === 'function',
     hasSend: typeof provider.send === 'function',
     hasSendAsync: typeof provider.sendAsync === 'function'
   }
-  console.debug('[useWalletConnect] Provider capabilities:', capabilities)
 
   // If request already exists, return as-is
   if (capabilities.hasRequest) {
-    console.debug('[useWalletConnect] Polyfill branch: native (request already exists)')
     return provider
   }
 
@@ -144,7 +115,6 @@ function ensureRequestPolyfill(provider: any): any {
 
   // Branch 1: sendAsync (callback-based, most common for older providers)
   if (capabilities.hasSendAsync) {
-    console.debug('[useWalletConnect] Polyfill branch: sendAsync')
     requestImpl = ({ method, params = [] }) => {
       return new Promise((resolve, reject) => {
         provider.sendAsync(
@@ -164,15 +134,11 @@ function ensureRequestPolyfill(provider: any): any {
   }
   // Branch 2: send (try method/params signature first, then payload signature)
   else if (capabilities.hasSend) {
-    // Detect send signature by trying (method, params) first
     requestImpl = ({ method, params = [] }) => {
       try {
-        // Try send(method, params) signature
         const result = provider.send(method, params)
-        // If it returns a Promise, use it; otherwise wrap in Promise.resolve
         return result && typeof result.then === 'function' ? result : Promise.resolve(result)
       } catch (firstErr) {
-        // Fallback: try send({ method, params }) payload signature
         try {
           const result = provider.send({ method, params, id: Date.now(), jsonrpc: '2.0' })
           return result && typeof result.then === 'function' ? result : Promise.resolve(result)
@@ -183,7 +149,6 @@ function ensureRequestPolyfill(provider: any): any {
         }
       }
     }
-    console.debug('[useWalletConnect] Polyfill branch: send (trying both signatures)')
   }
   // Branch 3: No compatible method found
   else {
@@ -194,7 +159,6 @@ function ensureRequestPolyfill(provider: any): any {
   }
 
   // Return a non-mutating wrapper using Object.create
-  // This preserves all original properties and methods while adding `request`
   const wrapper = Object.create(provider, {
     request: {
       value: requestImpl,
@@ -204,7 +168,6 @@ function ensureRequestPolyfill(provider: any): any {
     }
   })
 
-  console.debug('[useWalletConnect] Created EIP-1193 wrapper (no mutation)')
   return wrapper
 }
 
@@ -214,24 +177,16 @@ function ensureRequestPolyfill(provider: any): any {
 async function ensureBaseChain(provider: any, config: ChainConfig): Promise<void> {
   try {
     const currentChainId = await provider.request({ method: 'eth_chainId' })
-    console.debug('[useWalletConnect] Current chain:', {
-      currentChainId,
-      target: config.chainIdHex,
-      targetLabel: config.chainLabel
-    })
 
     if (currentChainId?.toLowerCase() !== config.chainIdHex.toLowerCase()) {
-      console.debug(`[useWalletConnect] Switching to ${config.chainLabel}...`)
       try {
         await provider.request({
           method: 'wallet_switchEthereumChain',
           params: [{ chainId: config.chainIdHex }]
         })
-        console.debug('[useWalletConnect] Chain switched successfully')
       } catch (switchErr: any) {
         // Error code 4902 means chain not added yet
         if (switchErr?.code === 4902) {
-          console.debug(`[useWalletConnect] Chain not found, adding ${config.chainLabel}...`)
           await provider.request({
             method: 'wallet_addEthereumChain',
             params: [
@@ -248,7 +203,6 @@ async function ensureBaseChain(provider: any, config: ChainConfig): Promise<void
               }
             ]
           })
-          console.debug('[useWalletConnect] Chain added successfully')
         } else {
           throw switchErr
         }
@@ -269,8 +223,6 @@ async function connectInjected(prefer: WalletProvider = 'any'): Promise<{
   chainId: number
   provider: any
 }> {
-  console.debug('[useWalletConnect] Attempting injected connection:', { prefer })
-
   const injected = getInjectedProvider(prefer)
   if (!injected) {
     throw new Error('No wallet extension detected. Please install Coinbase Wallet or MetaMask.')
@@ -281,17 +233,12 @@ async function connectInjected(prefer: WalletProvider = 'any'): Promise<{
     throw new Error('Wallet extension is not EIP-1193 compatible. Please update your wallet.')
   }
 
-  // Request account access
-  console.debug('[useWalletConnect] Requesting accounts...')
   const accounts: string[] = await provider.request({ method: 'eth_requestAccounts' })
   if (!accounts || accounts.length === 0) {
     throw new Error('Wallet did not return any accounts. Please unlock your wallet.')
   }
 
   const address = accounts[0] as Address
-  console.debug('[useWalletConnect] Account connected:', {
-    address: address.slice(0, 6) + '...' + address.slice(-4)
-  })
 
   // Ensure Base chain (mainnet or Sepolia based on env)
   await ensureBaseChain(provider, CHAIN_CONFIG)
@@ -303,8 +250,6 @@ async function connectInjected(prefer: WalletProvider = 'any'): Promise<{
     chain: viemChain,
     transport: custom(provider)
   })
-
-  console.debug('[useWalletConnect] Injected wallet connected successfully')
 
   return {
     address,
@@ -323,8 +268,6 @@ async function connectCoinbaseSdk(): Promise<{
   chainId: number
   provider: any
 }> {
-  console.debug('[useWalletConnect] Attempting Coinbase SDK connection (fallback)...')
-
   const appName = 'Agent DJ Radio'
 
   const sdk = new CoinbaseWalletSDK({ appName })
@@ -336,16 +279,12 @@ async function connectCoinbaseSdk(): Promise<{
     throw new Error('Coinbase SDK provider is not EIP-1193 compatible after polyfill.')
   }
 
-  console.debug('[useWalletConnect] Requesting accounts from SDK...')
   const accounts: string[] = await provider.request({ method: 'eth_requestAccounts' })
   if (!accounts || accounts.length === 0) {
     throw new Error('Coinbase Wallet SDK did not return any accounts.')
   }
 
   const address = accounts[0] as Address
-  console.debug('[useWalletConnect] SDK account connected:', {
-    address: address.slice(0, 6) + '...' + address.slice(-4)
-  })
 
   // Ensure correct Base chain (mainnet or Sepolia based on env)
   await ensureBaseChain(provider, CHAIN_CONFIG)
@@ -357,8 +296,6 @@ async function connectCoinbaseSdk(): Promise<{
     chain: viemChain,
     transport: custom(provider)
   })
-
-  console.debug('[useWalletConnect] Coinbase SDK connected successfully')
 
   return {
     address,
@@ -393,11 +330,8 @@ export function useWalletConnect(): UseWalletConnect {
         // Try injected wallet first (with preference)
         result = await connectInjected(prefer)
       } catch (injectedErr: any) {
-        console.debug('[useWalletConnect] Injected connection failed:', injectedErr.message)
-
         // If no injected provider and prefer coinbase, try SDK
         if (prefer === 'coinbase' && injectedErr.message.includes('No wallet extension')) {
-          console.debug('[useWalletConnect] Falling back to Coinbase SDK...')
           result = await connectCoinbaseSdk()
         } else {
           // Re-throw original error
@@ -417,11 +351,6 @@ export function useWalletConnect(): UseWalletConnect {
       // Save to localStorage for auto-reconnect
       localStorage.setItem('walletProvider', prefer)
       localStorage.setItem('walletAddress', result.address)
-
-      console.debug('[useWalletConnect] Connection complete:', {
-        address: result.address.slice(0, 6) + '...' + result.address.slice(-4),
-        chainId: result.chainId
-      })
     } catch (err: any) {
       console.error('[useWalletConnect] Connection error:', err)
 
@@ -451,8 +380,6 @@ export function useWalletConnect(): UseWalletConnect {
    * Disconnect wallet
    */
   const disconnect = useCallback(() => {
-    console.debug('[useWalletConnect] Disconnecting wallet')
-
     setState({
       isConnected: false,
       address: null,
@@ -479,7 +406,6 @@ export function useWalletConnect(): UseWalletConnect {
 
       try {
         const chainIdHex = `0x${targetChainId.toString(16)}`
-        console.debug('[useWalletConnect] Switching chain:', { targetChainId, chainIdHex })
 
         await state.provider.request({
           method: 'wallet_switchEthereumChain',
@@ -490,8 +416,6 @@ export function useWalletConnect(): UseWalletConnect {
           ...prev,
           chainId: targetChainId
         }))
-
-        console.debug('[useWalletConnect] Chain switched successfully')
       } catch (err: any) {
         console.error('[useWalletConnect] Chain switch error:', err)
 
@@ -513,7 +437,6 @@ export function useWalletConnect(): UseWalletConnect {
     const savedAddress = localStorage.getItem('walletAddress')
 
     if (savedProvider && savedAddress) {
-      console.debug('[useWalletConnect] Auto-reconnecting...', { savedProvider })
       connect(savedProvider).catch(err => {
         console.warn('[useWalletConnect] Auto-reconnect failed:', err)
         // Clear stale data
@@ -530,7 +453,6 @@ export function useWalletConnect(): UseWalletConnect {
     if (!state.provider) return
 
     const handleAccountsChanged = (accounts: string[]) => {
-      console.debug('[useWalletConnect] Accounts changed:', { count: accounts.length })
       if (accounts.length === 0) {
         disconnect()
       } else {
@@ -544,7 +466,6 @@ export function useWalletConnect(): UseWalletConnect {
 
     const handleChainChanged = (chainIdHex: string) => {
       const chainId = parseInt(chainIdHex, 16)
-      console.debug('[useWalletConnect] Chain changed:', { chainId, chainIdHex })
       setState(prev => ({
         ...prev,
         chainId
