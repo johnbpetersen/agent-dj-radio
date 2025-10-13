@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Users, ChevronLeft, ChevronRight, Heart, ThumbsDown, Radio, Mic, MessageCircle } from "lucide-react";
+import { useEphemeralUser } from "../../../hooks/useEphemeralUser";
 
 // --- TYPE DEFINITIONS for props ---
 // These define the "shape" of the data our component expects.
@@ -172,6 +173,12 @@ function ChatPanel() {
 // ----------------------------
 // FIX: This now accepts props and does NOT call useRoomState
 export default function RoomScene({ nowPlaying, listeners, djs, onQueueTrack }: RoomSceneProps) {
+  const { user } = useEphemeralUser();
+
+  const handleDiscordLogin = () => {
+    window.location.href = '/api/auth/discord/start';
+  };
+
   return (
     <div
       className="h-screen w-screen bg-cover bg-center flex flex-col overflow-hidden"
@@ -184,7 +191,16 @@ export default function RoomScene({ nowPlaying, listeners, djs, onQueueTrack }: 
       <CollapsiblePanel listeners={listeners} />
       <ChatPanel />
 
-      <div className="absolute top-4 right-4 z-30">
+      <div className="absolute top-4 right-4 z-30 flex items-center gap-3">
+        {(!user || !user.isDiscordLinked) && (
+          <button
+            onClick={handleDiscordLogin}
+            className="bg-[#5865F2] hover:brightness-110 text-white font-bold px-4 py-2.5 rounded-lg shadow-lg border border-white/20 transition-all duration-200 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white/50"
+            title="Sign in with Discord"
+          >
+            Sign in with Discord
+          </button>
+        )}
         <button
           onClick={onQueueTrack}
           className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-bold px-5 py-3 rounded-lg shadow-lg border border-white/20 transition-all duration-200 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white/50 group flex items-center gap-2"
