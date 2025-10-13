@@ -12,6 +12,7 @@ import { requireSessionId } from '../../_shared/session.js'
 import { secureHandler, securityConfigs } from '../../_shared/secure-handler.js'
 import { logger, generateCorrelationId } from '../../../src/lib/logger.js'
 import { httpError } from '../../_shared/errors.js'
+import { safeRedirect } from '../../_shared/http.js'
 
 interface DiscordTokenResponse {
   access_token: string
@@ -95,7 +96,8 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
       errorUrl.searchParams.set('discord_error_description', error_description as string)
     }
 
-    res.status(302).setHeader('Location', errorUrl.toString()).end()
+    console.log('[discord/callback] redirecting to error URL', errorUrl.toString())
+    safeRedirect(res, errorUrl.toString())
     return
   }
 
@@ -336,10 +338,12 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
     }
 
     // Redirect back to frontend with success indicator
-    const successUrl = new URL(process.env.VITE_SITE_URL || 'http://localhost:5173')
-    successUrl.searchParams.set('discord_linked', 'true')
+    const siteUrl = process.env.VITE_SITE_URL || 'http://localhost:5173'
+    const redirectTo = `${siteUrl}/?discord_linked=1`
 
-    res.status(302).setHeader('Location', successUrl.toString()).end()
+    console.log('[discord/callback] redirecting to', redirectTo)
+    safeRedirect(res, redirectTo)
+    return
 
   } catch (error) {
     // If error is already an HTTP error, let it bubble up
