@@ -21,6 +21,9 @@ interface SessionHelloResponse {
     display_name: string
     bio: string | null
     is_agent: boolean
+    kind: string
+    isDiscordLinked: boolean
+    isWalletLinked: boolean
   }
   session_id: string
 }
@@ -53,7 +56,7 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
       .from('presence')
       .select(`
         *,
-        user:users(id, display_name, bio, is_agent, banned)
+        user:users(id, display_name, bio, is_agent, banned, kind)
       `)
       .eq('session_id', sessionId)
       .single()
@@ -71,15 +74,30 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
           .eq('id', existingPresence.user.id)
       ])
 
+      // Check for linked accounts (Discord, wallet)
+      const { data: userAccounts } = await supabaseAdmin
+        .from('user_accounts')
+        .select('provider')
+        .eq('user_id', existingPresence.user.id)
+
+      const isDiscordLinked = userAccounts?.some(acc => acc.provider === 'discord') ?? false
+      const isWalletLinked = userAccounts?.some(acc => acc.provider === 'wallet') ?? false
+
       const response: SessionHelloResponse = {
-        user: sanitizeForClient(existingPresence.user, []),
+        user: {
+          ...sanitizeForClient(existingPresence.user, []),
+          isDiscordLinked,
+          isWalletLinked
+        },
         session_id: sessionId
       }
 
       logger.requestComplete('/api/session/hello', Date.now() - startTime, {
         correlationId,
         userId: existingPresence.user.id,
-        action: 'existing_session'
+        action: 'existing_session',
+        isDiscordLinked,
+        isWalletLinked
       })
 
       res.status(200).json(response)
@@ -196,8 +214,13 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
       // Continue anyway - user creation succeeded
     }
 
+    // New users don't have linked accounts yet
     const response: SessionHelloResponse = {
-      user: sanitizeForClient(user, []),
+      user: {
+        ...sanitizeForClient(user, []),
+        isDiscordLinked: false,
+        isWalletLinked: false
+      },
       session_id: sessionId
     }
 

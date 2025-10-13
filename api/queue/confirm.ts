@@ -1105,11 +1105,38 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       provider = 'mock'
     }
 
+    // Resolve payer_user_id from wallet address (if linked)
+    const payerAddress = tokenFrom || txSender || (authorization?.from)
+    let payerUserId: string | null = null
+
+    if (payerAddress) {
+      const normalizedPayerAddress = normalizeEvmAddress(payerAddress)
+
+      const { data: walletAccount } = await supabaseAdmin
+        .from('user_accounts')
+        .select('user_id')
+        .eq('provider', 'wallet')
+        .eq('provider_user_id', normalizedPayerAddress)
+        .single()
+
+      if (walletAccount) {
+        payerUserId = walletAccount.user_id
+        logger.info('queue/confirm payer resolved to user', {
+          requestId,
+          challengeId,
+          payerAddress: maskAddress(normalizedPayerAddress),
+          payerUserId
+        })
+      }
+    }
+
     const { data: confirmation, error: confirmInsertErr} = await supabaseAdmin
       .from('payment_confirmations')
       .insert({
         challenge_id: challengeId,
         tx_hash: txHash,
+        payer_user_id: payerUserId,
+        payer_address: payerAddress ? normalizeEvmAddress(payerAddress) : null,
         token_from_address: tokenFrom,
         tx_from_address: txSender,
         provider,
@@ -1258,11 +1285,13 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       .update({ confirmed_at: new Date().toISOString() })
       .eq('challenge_id', challengeId)
 
-    // 8. Transition track to PAID status
+    // 8. Transition track to AUGMENTING status and set payer
     const { data: paidTrack, error: trackUpdateErr } = await supabaseAdmin
       .from('tracks')
       .update({
-        status: 'PAID',
+        status: 'AUGMENTING',
+        payer_user_id: payerUserId,
+        payment_confirmation_id: confirmation.id,
         x402_payment_tx: {
           tx_hash: txHash,
           confirmed_at: new Date().toISOString(),
@@ -1288,6 +1317,29 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
         requestId
       })
       return
+    }
+
+    // 8b. Enqueue augmentation job
+    const { error: jobInsertErr } = await supabaseAdmin
+      .from('jobs')
+      .insert({
+        track_id: challenge.track_id,
+        kind: 'augment',
+        status: 'queued'
+      })
+
+    if (jobInsertErr) {
+      logger.error('queue/confirm failed to create augment job', {
+        requestId,
+        trackId: challenge.track_id,
+        error: jobInsertErr
+      })
+      // Non-fatal - continue
+    } else {
+      logger.info('queue/confirm augment job created', {
+        requestId,
+        trackId: challenge.track_id
+      })
     }
 
     logger.info('queue/confirm payment confirmed', {
@@ -1329,10 +1381,10 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       trackId: paidTrack.id
     })
 
-    // 10. Enqueue generation (fire-and-forget, non-blocking)
+    // 10. Trigger augmentation worker (fire-and-forget, non-blocking)
     try {
       const baseUrl = process.env.VITE_SITE_URL || 'http://localhost:5173'
-      const workerUrl = `${baseUrl}/api/worker/generate?track_id=${encodeURIComponent(paidTrack.id)}`
+      const workerUrl = `${baseUrl}/api/worker/augment`
       fetch(workerUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
@@ -1353,7 +1405,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
     res.status(200).json({
       ok: true,
       trackId: paidTrack.id,
-      status: 'PAID',
+      status: 'AUGMENTING',
       requestId
     })
   } catch (error) {

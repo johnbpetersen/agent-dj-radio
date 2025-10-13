@@ -47,27 +47,32 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
       messageLength: message?.length
     })
 
-    // Check rate limiting: 10 messages per minute per session
-    const rateLimitResult = checkSessionRateLimit(sessionId, 'chat-post', {
-      windowMs: 60 * 1000, // 1 minute
-      maxRequests: 10
-    })
-
-    if (!rateLimitResult.allowed) {
-      logger.warn('Chat post rate limit exceeded', { correlationId, sessionId })
-      res.status(429).json({
-        error: 'Too many messages',
-        retry_after_seconds: Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000),
-        correlationId
-      })
-      return
-    }
-
-    // Validate message
+    // Validate message first (before rate limit check - cheaper)
     const validationError = validateChatMessage(message)
     if (validationError) {
       logger.warn('Invalid chat message', { correlationId, validationError })
-      res.status(400).json({ error: validationError, correlationId })
+      res.status(422).json({ error: validationError, correlationId }) // 422 for validation errors
+      return
+    }
+
+    // Check rate limiting: 1 message per 2 seconds per user (stricter than before)
+    const rateLimitResult = checkSessionRateLimit(presence.user_id, 'chat-post', {
+      windowMs: 2 * 1000, // 2 seconds
+      maxRequests: 1
+    })
+
+    if (!rateLimitResult.allowed) {
+      logger.warn('Chat post rate limit exceeded', {
+        correlationId,
+        sessionId,
+        userId: presence.user_id
+      })
+      res.status(429).json({
+        error: 'Too many messages',
+        message: 'Please wait 2 seconds between messages',
+        retry_after_seconds: Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000),
+        correlationId
+      })
       return
     }
 
@@ -92,12 +97,44 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
     }
 
     if (presence.user.banned) {
-      logger.warn('Banned user attempted chat post', { 
-        correlationId, 
-        sessionId, 
-        userId: presence.user.id 
+      logger.warn('Banned user attempted chat post', {
+        correlationId,
+        sessionId,
+        userId: presence.user.id
       })
       res.status(403).json({ error: 'User is banned', correlationId })
+      return
+    }
+
+    // Check if user has Discord linked (chat requires Discord)
+    const { data: discordAccount, error: discordError } = await supabaseAdmin
+      .from('user_accounts')
+      .select('id')
+      .eq('user_id', presence.user_id)
+      .eq('provider', 'discord')
+      .single()
+
+    if (discordError && discordError.code !== 'PGRST116') {
+      // PGRST116 = no rows found, which is expected for guests
+      logger.error('Error checking Discord account', { correlationId }, discordError)
+      res.status(500).json({
+        error: 'Internal server error',
+        correlationId
+      })
+      return
+    }
+
+    if (!discordAccount) {
+      logger.warn('Guest attempted chat post without Discord', {
+        correlationId,
+        sessionId,
+        userId: presence.user_id
+      })
+      res.status(403).json({
+        error: 'Discord account required',
+        message: 'Please sign in with Discord to use chat',
+        correlationId
+      })
       return
     }
 

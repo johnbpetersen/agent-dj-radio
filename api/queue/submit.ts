@@ -78,6 +78,8 @@ async function submitHandler(req: VercelRequest, res: VercelResponse): Promise<v
       // Sprint 1 behavior: create PAID track immediately
       const track = await createTrack(supabaseAdmin, {
         user_id,
+        submitter_user_id: user_id,
+        payer_user_id: null, // No payment, no payer
         prompt: prompt.trim(),
         duration_seconds,
         source: 'GENERATED',
@@ -130,6 +132,8 @@ async function submitHandler(req: VercelRequest, res: VercelResponse): Promise<v
     // x402 flow: create PENDING_PAYMENT track and return a payment challenge
     const track = await createTrack(supabaseAdmin, {
       user_id,
+      submitter_user_id: user_id,
+      payer_user_id: null, // Will be set on payment confirm
       prompt: prompt.trim(),
       duration_seconds,
       source: 'GENERATED',

@@ -9,6 +9,8 @@ interface EphemeralUser {
   display_name: string
   bio: string | null
   is_agent: boolean
+  isDiscordLinked?: boolean
+  isWalletLinked?: boolean
 }
 
 interface UseEphemeralUserReturn {
@@ -18,6 +20,7 @@ interface UseEphemeralUserReturn {
   error: string | null
   rename: (newName: string) => Promise<boolean>
   setBio: (bio: string) => Promise<boolean>
+  linkDiscord: () => void
   reset: () => void
 }
 
@@ -299,21 +302,26 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
     }
   }, [sessionId, featureEnabled])
   
+  const linkDiscord = useCallback(() => {
+    // Redirect to Discord OAuth start endpoint
+    window.location.href = '/api/auth/discord/start'
+  }, [])
+
   const reset = useCallback(() => {
     // Development helper to reset session
     if (process.env.NODE_ENV === 'development') {
       sessionStorage.removeItem(STORAGE_KEY)
       sessionStorage.removeItem(SESSION_STORAGE_KEY)
-      
+
       if (pingIntervalRef.current) {
         clearInterval(pingIntervalRef.current)
       }
-      
+
       // Reload page to restart session
       window.location.reload()
     }
   }, [])
-  
+
   // If feature is not enabled, return null user but not loading
   if (!featureEnabled && !loading) {
     return {
@@ -323,10 +331,11 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
       error: null,
       rename: async () => false,
       setBio: async () => false,
+      linkDiscord,
       reset
     }
   }
-  
+
   return {
     user,
     sessionId,
@@ -334,6 +343,7 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
     error,
     rename,
     setBio,
+    linkDiscord,
     reset
   }
 }
