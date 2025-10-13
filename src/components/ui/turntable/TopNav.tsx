@@ -10,6 +10,9 @@ interface TopNavProps {
 export default function TopNav({ onQueueTrack, className = '' }: TopNavProps) {
   const { user } = useEphemeralUser()
 
+  // Temporary instrumentation
+  console.log('[TopNav] user from useEphemeralUser →', user)
+
   return (
     <nav className={className}>
       <div className="flex items-center gap-3">
@@ -31,7 +34,7 @@ export default function TopNav({ onQueueTrack, className = '' }: TopNavProps) {
           </div>
         </button>
 
-        {user && !user.isDiscordLinked && <DiscordLoginButton />}
+        {(!user || !user.isDiscordLinked) && <DiscordLoginButton />}
       </div>
     </nav>
   )

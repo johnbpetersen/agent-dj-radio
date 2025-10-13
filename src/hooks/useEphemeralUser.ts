@@ -133,8 +133,13 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
             
             if (retryResponse.ok) {
               const retryData = await retryResponse.json()
-              setUser(retryData.user)
-              sessionStorage.setItem(STORAGE_KEY, JSON.stringify(retryData.user))
+              const userData = {
+                ...retryData.user,
+                isDiscordLinked: retryData.user.isDiscordLinked ?? false,
+                isWalletLinked: retryData.user.isWalletLinked ?? false
+              }
+              setUser(userData)
+              sessionStorage.setItem(STORAGE_KEY, JSON.stringify(userData))
               startPresencePing(currentSessionId)
               return
             }
@@ -144,9 +149,18 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
       }
       
       const data = await response.json()
-      setUser(data.user)
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data.user))
-      
+
+      // Map response structure: { user: {...}, session_id: "..." }
+      // The user object from API includes isDiscordLinked and isWalletLinked
+      const userData = {
+        ...data.user,
+        isDiscordLinked: data.user.isDiscordLinked ?? false,
+        isWalletLinked: data.user.isWalletLinked ?? false
+      }
+
+      setUser(userData)
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(userData))
+
       // Start presence ping
       startPresencePing(currentSessionId)
       
@@ -246,11 +260,16 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
           return false
         }
       }
-      
+
       const data = await response.json()
-      setUser(data.user)
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data.user))
-      
+      const userData = {
+        ...data.user,
+        isDiscordLinked: data.user.isDiscordLinked ?? false,
+        isWalletLinked: data.user.isWalletLinked ?? false
+      }
+      setUser(userData)
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(userData))
+
       return true
     } catch (err) {
       console.error('Rename failed:', err)
@@ -289,11 +308,16 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
           return false
         }
       }
-      
+
       const data = await response.json()
-      setUser(data.user)
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data.user))
-      
+      const userData = {
+        ...data.user,
+        isDiscordLinked: data.user.isDiscordLinked ?? false,
+        isWalletLinked: data.user.isWalletLinked ?? false
+      }
+      setUser(userData)
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(userData))
+
       return true
     } catch (err) {
       console.error('Bio update failed:', err)
