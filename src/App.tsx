@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { AdminPanel } from './components/AdminPanel';
 import Layout from './components/ui/turntable/Layout'; // Using your correct path
-import DebugAuthStatus from './components/DebugAuthStatus';
 
 function App() {
   const [showAdminPanel, setShowAdminPanel] = useState(false);
@@ -40,12 +39,7 @@ function App() {
   }
 
   // New turntable UI
-  return (
-    <>
-      <Layout />
-      <DebugAuthStatus />
-    </>
-  );
+  return <Layout />;
 }
 
 export default App;

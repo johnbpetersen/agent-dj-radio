@@ -55,30 +55,9 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
       return
     }
 
-    // Check rate limiting: 1 message per 2 seconds per user (stricter than before)
-    const rateLimitResult = checkSessionRateLimit(presence.user_id, 'chat-post', {
-      windowMs: 2 * 1000, // 2 seconds
-      maxRequests: 1
-    })
-
-    if (!rateLimitResult.allowed) {
-      logger.warn('Chat post rate limit exceeded', {
-        correlationId,
-        sessionId,
-        userId: presence.user_id
-      })
-      res.status(429).json({
-        error: 'Too many messages',
-        message: 'Please wait 2 seconds between messages',
-        retry_after_seconds: Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000),
-        correlationId
-      })
-      return
-    }
-
     const trimmedMessage = message.trim()
 
-    // Get current user and presence via session
+    // Get current user and presence via session (MUST be before rate limit check)
     const { data: presence, error: presenceError } = await supabaseAdmin
       .from('presence')
       .select(`
@@ -106,7 +85,7 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
       return
     }
 
-    // Check if user has Discord linked (chat requires Discord)
+    // Check if user has Discord linked (chat requires Discord) - MUST be before rate limit
     const { data: discordAccount, error: discordError } = await supabaseAdmin
       .from('user_accounts')
       .select('id')
@@ -131,8 +110,29 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
         userId: presence.user_id
       })
       res.status(403).json({
-        error: 'Discord account required',
+        error: 'discord_required',
         message: 'Please sign in with Discord to use chat',
+        correlationId
+      })
+      return
+    }
+
+    // Check rate limiting: 1 message per 2 seconds per user (after Discord check passes)
+    const rateLimitResult = checkSessionRateLimit(presence.user_id, 'chat-post', {
+      windowMs: 2 * 1000, // 2 seconds
+      maxRequests: 1
+    })
+
+    if (!rateLimitResult.allowed) {
+      logger.warn('Chat post rate limit exceeded', {
+        correlationId,
+        sessionId,
+        userId: presence.user_id
+      })
+      res.status(429).json({
+        error: 'Too many messages',
+        message: 'Please wait 2 seconds between messages',
+        retry_after_seconds: Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000),
         correlationId
       })
       return

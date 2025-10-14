@@ -277,9 +277,17 @@ curl -X POST http://localhost:3001/api/queue/confirm \
 
 ### 👤 User Management
 - Persistent identity via localStorage + database
-- Case-insensitive unique display names  
+- Case-insensitive unique display names
 - No authentication required (pseudo-accounts)
 - React hook for user state management
+
+### 🔐 Discord OAuth & Chat Gating
+- Optional Discord authentication for chat features
+- Pure HTTP 302 redirects for OAuth callback (no HTML interstitial pages)
+- Hydration-safe UI gating with loading states
+- Session refresh on OAuth completion via `?discord_linked=1` parameter
+- Early 403 guards prevent guests from posting chat messages
+- Structured error responses: `{ error: "discord_required" }` for unauthorized chat access
 
 ### 🔄 Real-time Updates
 - Supabase Realtime for queue updates

@@ -24,9 +24,10 @@ export default function ChatPanel() {
   const [error, setError] = useState<string | null>(null)
   const [isChatEnabled, setIsChatEnabled] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const { user } = useEphemeralUser()
+  const { user, loading } = useEphemeralUser()
 
-  const isDiscordLinked = user?.isDiscordLinked ?? false
+  // Hydration-safe: only determine Discord status after session loads
+  const isDiscordLinked = !loading && (user?.isDiscordLinked ?? false)
 
   // Check if chat feature is enabled
   useEffect(() => {
@@ -191,7 +192,15 @@ export default function ChatPanel() {
 
             {/* Input area or Discord CTA */}
             <div className="p-3 border-t border-white/10">
-              {isDiscordLinked ? (
+              {loading ? (
+                // Loading state - hydration-safe
+                <div className="bg-black/30 border border-white/20 rounded-lg p-3 text-center">
+                  <div className="animate-pulse text-sm text-white/60">
+                    Loading session...
+                  </div>
+                </div>
+              ) : isDiscordLinked ? (
+                // Discord user - full input
                 <>
                   {error && (
                     <div className="mb-2 text-xs text-red-300 bg-red-500/20 px-2 py-1 rounded">
@@ -218,6 +227,7 @@ export default function ChatPanel() {
                   </div>
                 </>
               ) : (
+                // Guest - CTA to sign in
                 <div className="bg-[#5865F2]/20 border border-[#5865F2]/30 rounded-lg p-3 text-center">
                   <p className="text-sm text-white/80 mb-2">
                     Sign in with Discord to chat

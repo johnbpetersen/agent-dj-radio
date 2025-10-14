@@ -9,7 +9,50 @@ function htmlEscape(s: string) {
     .replaceAll("'", '&#39;');
 }
 
-export function safeRedirect(res: any, to: string) {
+interface SafeRedirectOptions {
+  force302?: boolean // If true, prioritize 302 over HTML
+}
+
+export function safeRedirect(res: any, to: string, options: SafeRedirectOptions = {}) {
+  const { force302 = true } = options // Default to 302 for OAuth flows
+
+  // Strategy 1: Pure 302 redirect (preferred for OAuth)
+  if (force302) {
+    // Try writeHead first (Node.js standard)
+    try {
+      if (typeof res.writeHead === 'function' && typeof res.end === 'function') {
+        console.log('[safeRedirect] 302 via writeHead to', to);
+        res.writeHead(302, { Location: to });
+        return res.end();
+      }
+    } catch (e) {
+      console.warn('[safeRedirect] writeHead(302) failed', e);
+    }
+
+    // Try statusCode + setHeader (alternative Node.js style)
+    try {
+      if (typeof res.setHeader === 'function' && typeof res.end === 'function') {
+        console.log('[safeRedirect] 302 via setHeader to', to);
+        res.statusCode = 302;
+        res.setHeader('Location', to);
+        return res.end();
+      }
+    } catch (e) {
+      console.warn('[safeRedirect] setHeader(302) failed', e);
+    }
+
+    // Try status().redirect() (Express-style)
+    try {
+      if (typeof res.redirect === 'function') {
+        console.log('[safeRedirect] 302 via res.redirect to', to);
+        return res.redirect(302, to);
+      }
+    } catch (e) {
+      console.warn('[safeRedirect] res.redirect(302) failed', e);
+    }
+  }
+
+  // Strategy 2: HTML interstitial (fallback or when force302=false)
   const escaped = htmlEscape(to);
   const html = `<!doctype html>
 <title>Redirecting…</title>
@@ -17,14 +60,13 @@ export function safeRedirect(res: any, to: string) {
 <p>Redirecting to <a href="${escaped}">${escaped}</a>…</p>
 <script>
   try {
-    // Prefer replace() so back button doesn't land on the callback.
     window.location.replace(${JSON.stringify(to)});
   } catch (e) {
     window.location.href = ${JSON.stringify(to)};
   }
 </script>`;
 
-  // ✅ Preferred in this dev runtime: express-style status().send(HTML)
+  // Try status().send() (Express/Vercel style)
   try {
     if (typeof res.status === 'function' && typeof res.send === 'function') {
       console.log('[safeRedirect] HTML via res.status().send to', to);
@@ -34,7 +76,7 @@ export function safeRedirect(res: any, to: string) {
     console.warn('[safeRedirect] status().send HTML failed', e);
   }
 
-  // Fallback: set header + end (node http style)
+  // Try setHeader + end (Node.js http style)
   try {
     if (typeof res.setHeader === 'function' && typeof res.end === 'function') {
       console.log('[safeRedirect] HTML via setHeader+end to', to);
@@ -44,17 +86,6 @@ export function safeRedirect(res: any, to: string) {
     }
   } catch (e) {
     console.warn('[safeRedirect] setHeader+end HTML failed', e);
-  }
-
-  // Fallback: 302 writeHead
-  try {
-    if (typeof res.writeHead === 'function' && typeof res.end === 'function') {
-      console.log('[safeRedirect] writeHead(302) to', to);
-      res.writeHead(302, { Location: to });
-      return res.end();
-    }
-  } catch (e) {
-    console.warn('[safeRedirect] writeHead(302) failed', e);
   }
 
   // Last resort: JSON (client can handle)

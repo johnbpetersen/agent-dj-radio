@@ -341,6 +341,14 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
     const siteUrl = process.env.VITE_SITE_URL || 'http://localhost:5173'
     const redirectTo = `${siteUrl.replace(/\/+$/, '')}/?discord_linked=1`
 
+    logger.info('OAuth callback success', {
+      correlationId,
+      userId: currentUser.id,
+      discordUserId,
+      durationMs: Date.now() - startTime,
+      event: 'oauth_callback_success'
+    })
+
     console.log('[discord/callback] redirecting to', redirectTo)
     safeRedirect(res, redirectTo)
     return
