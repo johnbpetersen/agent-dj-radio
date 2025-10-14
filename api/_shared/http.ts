@@ -1,86 +1,71 @@
-// HTTP response helpers
-// Safe redirect that works across different Node.js-like runtimes
+// api/_shared/http.ts
 
-/**
- * HTML-escape a string for safe use in HTML attributes and content
- */
-function htmlEscape(s: string): string {
+function htmlEscape(s: string) {
   return s
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;')
+    .replaceAll("'", '&#39;');
 }
 
-/**
- * Safely redirect to a URL, trying multiple methods to ensure compatibility
- * Prefers HTML+JS redirect (200) over 302 for better compatibility with OAuth flows
- * @param res - Response object (VercelResponse or similar)
- * @param to - Target URL to redirect to
- */
-export function safeRedirect(res: any, to: string): void {
-  try {
-    // Preferred in this dev runtime: force a 200 HTML with JS redirect.
-    const escaped = htmlEscape(to)
-    const html = `<!doctype html>
+export function safeRedirect(res: any, to: string) {
+  const escaped = htmlEscape(to);
+  const html = `<!doctype html>
 <title>Redirecting…</title>
 <meta http-equiv="refresh" content="0;url=${escaped}">
 <p>Redirecting to <a href="${escaped}">${escaped}</a>…</p>
 <script>
   try {
-    // Use replace so back button doesn't return to the OAuth callback.
+    // Prefer replace() so back button doesn't land on the callback.
     window.location.replace(${JSON.stringify(to)});
   } catch (e) {
     window.location.href = ${JSON.stringify(to)};
   }
-</script>`
+</script>`;
 
-    if (typeof res.setHeader === 'function') {
-      res.statusCode = 200
-      res.setHeader('Content-Type', 'text/html; charset=utf-8')
-      if (typeof res.end === 'function') {
-        console.log('[safeRedirect] sent HTML redirect 200 to', to)
-        return res.end(html)
-      }
-    }
-  } catch (e) {
-    console.warn('[safeRedirect] HTML redirect failed, will try alternatives', e)
-  }
-
-  // Fallback 1: Node-style 302
+  // ✅ Preferred in this dev runtime: express-style status().send(HTML)
   try {
-    if (typeof res.writeHead === 'function' && typeof res.end === 'function') {
-      console.log('[safeRedirect] fallback writeHead(302) to', to)
-      res.writeHead(302, { Location: to })
-      return res.end()
+    if (typeof res.status === 'function' && typeof res.send === 'function') {
+      console.log('[safeRedirect] HTML via res.status().send to', to);
+      return res.status(200).send(html);
     }
   } catch (e) {
-    console.warn('[safeRedirect] writeHead fallback failed', e)
+    console.warn('[safeRedirect] status().send HTML failed', e);
   }
 
-  // Fallback 2: Non-chained header set
+  // Fallback: set header + end (node http style)
   try {
     if (typeof res.setHeader === 'function' && typeof res.end === 'function') {
-      console.log('[safeRedirect] fallback setHeader(302) to', to)
-      res.statusCode = 302
-      res.setHeader('Location', to)
-      return res.end()
+      console.log('[safeRedirect] HTML via setHeader+end to', to);
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.end(html);
     }
   } catch (e) {
-    console.warn('[safeRedirect] setHeader fallback failed', e)
+    console.warn('[safeRedirect] setHeader+end HTML failed', e);
   }
 
-  // Final fallback: JSON so the client can decide what to do.
+  // Fallback: 302 writeHead
+  try {
+    if (typeof res.writeHead === 'function' && typeof res.end === 'function') {
+      console.log('[safeRedirect] writeHead(302) to', to);
+      res.writeHead(302, { Location: to });
+      return res.end();
+    }
+  } catch (e) {
+    console.warn('[safeRedirect] writeHead(302) failed', e);
+  }
+
+  // Last resort: JSON (client can handle)
   try {
     if (typeof res.status === 'function' && typeof res.json === 'function') {
-      console.log('[safeRedirect] final JSON fallback to', to)
-      return res.status(200).json({ ok: true, redirectUrl: to })
+      console.log('[safeRedirect] JSON fallback to', to);
+      return res.status(200).json({ ok: true, redirectUrl: to });
     }
   } catch (e) {
-    console.warn('[safeRedirect] JSON fallback failed', e)
+    console.warn('[safeRedirect] JSON fallback failed', e);
   }
 
-  // Absolute last resort: do nothing (avoid throwing).
-  console.warn('[safeRedirect] all strategies failed; response may hang')
+  console.warn('[safeRedirect] all strategies failed; response may hang');
 }

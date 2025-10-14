@@ -57,7 +57,7 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
       try {
         // Assume ephemeral users are enabled, let actual usage determine availability
         setFeatureEnabled(true)
-        
+
         // Get or generate session ID
         let currentSessionId = sessionStorage.getItem(SESSION_STORAGE_KEY)
         if (!currentSessionId) {
@@ -65,7 +65,7 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
           sessionStorage.setItem(SESSION_STORAGE_KEY, currentSessionId)
         }
         setSessionId(currentSessionId)
-        
+
         // Try to restore user from session storage
         const storedUser = sessionStorage.getItem(STORAGE_KEY)
         if (storedUser) {
@@ -77,10 +77,27 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
             sessionStorage.removeItem(STORAGE_KEY)
           }
         }
-        
+
+        // Check if we just linked Discord and need to refresh session
+        if (typeof window !== 'undefined') {
+          const params = new URLSearchParams(window.location.search)
+          if (params.get('discord_linked') === '1') {
+            try {
+              // Re-fetch session to pick up isDiscordLinked: true
+              await initializeWithServer(currentSessionId)
+            } finally {
+              // Clean the URL
+              params.delete('discord_linked')
+              const newUrl = window.location.pathname + (params.toString() ? `?${params}` : '')
+              window.history.replaceState({}, '', newUrl)
+            }
+            return // Skip normal initialization since we already refreshed
+          }
+        }
+
         // Initialize session with server
         await initializeWithServer(currentSessionId)
-        
+
       } catch (err) {
         console.error('Failed to initialize ephemeral user session:', err)
         setError('Failed to initialize session')
@@ -88,9 +105,9 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
         setLoading(false)
       }
     }
-    
+
     initializeSession()
-    
+
     // Cleanup on unmount
     return () => {
       if (pingIntervalRef.current) {
