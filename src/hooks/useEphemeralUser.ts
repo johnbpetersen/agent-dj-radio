@@ -355,16 +355,26 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
       })
 
       if (!response.ok) {
-        if (response.status === 429) {
-          const errorData = await response.json()
-          setError(errorData.message || 'Too many unlink attempts. Please try again later.')
+        if (response.status === 401) {
+          // Not signed in - show friendly message
+          const errorData = await response.json().catch(() => ({}))
+          const message = errorData.error?.hint || "You're not signed in. Please reconnect Discord and try again."
+          setError(message)
+          // Show toast notification
+          if (typeof window !== 'undefined' && window.alert) {
+            window.alert(message)
+          }
+          return false
+        } else if (response.status === 429) {
+          const errorData = await response.json().catch(() => ({}))
+          setError(errorData.error?.hint || 'Too many unlink attempts. Please try again later.')
           return false
         } else if (response.status === 403) {
           setError('Discord already unlinked')
           return false
         } else {
-          const errorData = await response.json()
-          setError(errorData.error || 'Failed to unlink Discord')
+          const errorData = await response.json().catch(() => ({}))
+          setError(errorData.error?.message || 'Failed to unlink Discord')
           return false
         }
       }
