@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, ChevronLeft, ChevronRight, Heart, ThumbsDown, Radio, Mic, MessageCircle } from "lucide-react";
+import { Users, ChevronLeft, ChevronRight, Heart, ThumbsDown, Radio, Mic } from "lucide-react";
 import { useEphemeralUser } from "../../../hooks/useEphemeralUser";
 import { apiFetch } from "../../../lib/api";
+import ChatPanel from "./ChatPanel";
+import UserIdentityPill from "../UserIdentityPill";
 
 // --- TYPE DEFINITIONS for props ---
 // These define the "shape" of the data our component expects.
@@ -146,29 +148,6 @@ function DJBooth({ nowPlaying, djs }: { nowPlaying: NowPlayingData | null, djs: 
     );
 }
 
-function ChatPanel() {
-  const [isOpen, setIsOpen] = useState(true);
-  return (
-    <div className="absolute top-1/2 -translate-y-1/2 right-0 z-20">
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ duration: 0.3, ease: "easeInOut" }} className="w-72 h-[50vh] bg-black/40 backdrop-blur-sm rounded-l-lg shadow-2xl flex flex-col">
-            <h3 className="text-sm font-semibold text-white/80 p-4 border-b border-white/10 flex items-center"><MessageCircle className="w-4 h-4 mr-2" /> Chat</h3>
-            <div className="flex-1 p-4 text-center text-white/40">Chat messages will go here.</div>
-            <div className="p-2 border-t border-white/10">
-              <input type="text" placeholder="Type to chat..." className="w-full bg-black/30 border border-white/20 rounded-lg px-3 py-2 text-sm text-white placeholder-white/40 focus:outline-none focus:ring-1 focus:ring-blue-400" />
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      <button onClick={() => setIsOpen(!isOpen)} className="absolute top-1/2 -translate-y-1/2 -left-8 w-8 h-16 bg-black/40 backdrop-blur-sm rounded-l-lg text-white/50 hover:bg-black/60 hover:text-white flex items-center justify-center">
-        {isOpen ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-      </button>
-    </div>
-  );
-}
-
-
 // ----------------------------
 // Main Scene Component
 // ----------------------------
@@ -205,6 +184,7 @@ export default function RoomScene({ nowPlaying, listeners, djs, onQueueTrack }: 
       <ChatPanel />
 
       <div className="absolute top-4 right-4 z-30 flex items-center gap-3">
+        <UserIdentityPill />
         {(!user || !user.isDiscordLinked) && (
           <button
             onClick={handleDiscordLogin}

@@ -8,6 +8,7 @@ import { logger, generateCorrelationId } from '../../src/lib/logger.js'
 
 interface ChatMessage {
   id: string
+  user_id: string
   display_name: string
   message: string
   created_at: string
@@ -59,6 +60,7 @@ async function chatRecentHandler(req: VercelRequest, res: VercelResponse): Promi
       .from('chat_messages')
       .select(`
         id,
+        user_id,
         display_name,
         message,
         created_at
