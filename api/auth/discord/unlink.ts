@@ -41,7 +41,7 @@ async function discordUnlinkHandler(req: VercelRequest, res: VercelResponse): Pr
   let sessionId: string
   try {
     sessionId = requireSessionId(req)
-  } catch (error) {
+  } catch {
     // Session missing or invalid - return 401
     logger.warn('Unlink attempted without valid session', { correlationId })
     throw httpError.unauthorized('You are not signed in', 'Please reconnect Discord and try again')
@@ -52,7 +52,8 @@ async function discordUnlinkHandler(req: VercelRequest, res: VercelResponse): Pr
     sessionId
   })
 
-  // Get current user from session
+  // Get current user from presence (cookie-based session via session_id)
+  // Return 401 (not 500) if session not found - user needs to refresh
   const { data: presence, error: presenceError } = await supabaseAdmin
     .from('presence')
     .select('user_id, users!inner(id, display_name, ephemeral_display_name, ephemeral)')
@@ -60,10 +61,17 @@ async function discordUnlinkHandler(req: VercelRequest, res: VercelResponse): Pr
     .single()
 
   if (presenceError || !presence) {
-    logger.warn('Session not found in presence table for Discord unlink', { correlationId, sessionId })
+    // Session not found in presence - return 401, NOT 500
+    // This is expected if presence expired or user never initialized session
+    logger.warn('Session not found in presence for Discord unlink', {
+      correlationId,
+      sessionId,
+      error: presenceError?.code
+    })
     throw httpError.unauthorized('Session expired', 'Please refresh the page and try again')
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const currentUser = presence.users as any
   const userId = currentUser.id
 

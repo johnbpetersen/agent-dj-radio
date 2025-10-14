@@ -26,6 +26,7 @@ interface UseEphemeralUserReturn {
   setBio: (bio: string) => Promise<boolean>
   linkDiscord: () => void
   unlinkDiscord: () => Promise<boolean>
+  refreshSession: () => Promise<boolean>
   reset: () => void
 }
 
@@ -53,9 +54,117 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
   
   // Presence ping interval with adaptive backoff
   const pingIntervalRef = useRef<NodeJS.Timeout | null>(null)
-  const [pingInterval, setPingInterval] = useState(30000) // Start at 30s
   const pingIntervalValueRef = useRef(30000) // Keep track of current interval
-  
+
+  const sendPresencePing = useCallback(async () => {
+    try {
+      const response = await apiFetch('/api/presence/ping', {
+        method: 'POST',
+        body: JSON.stringify({})
+      })
+
+      if (response.status === 429) {
+        // Rate limited - back off: double interval (max 120s)
+        const newInterval = Math.min(pingIntervalValueRef.current * 2, 120000)
+        pingIntervalValueRef.current = newInterval
+        console.warn(`Presence ping rate limited, backing off to ${newInterval / 1000}s`)
+      } else if (response.ok) {
+        // Success - slowly reduce interval back to baseline (30s)
+        const newInterval = Math.max(pingIntervalValueRef.current * 0.9, 30000)
+        if (newInterval !== pingIntervalValueRef.current) {
+          pingIntervalValueRef.current = newInterval
+        }
+      }
+    } catch (err) {
+      console.warn('Presence ping failed:', err)
+      // Continue trying - don't stop the interval
+    }
+  }, [])
+
+  const startPresencePing = useCallback(() => {
+    // Clear any existing interval
+    if (pingIntervalRef.current) {
+      clearInterval(pingIntervalRef.current)
+    }
+
+    // Function to schedule next ping
+    const schedulePing = () => {
+      pingIntervalRef.current = setTimeout(async () => {
+        await sendPresencePing()
+        // Schedule next ping with potentially updated interval
+        schedulePing()
+      }, pingIntervalValueRef.current)
+    }
+
+    // Start pinging
+    schedulePing()
+  }, [sendPresencePing])
+
+  const initializeWithServer = useCallback(async () => {
+    try {
+      // Generate a fun name for new users
+      const funName = generateFunName()
+
+      const response = await apiFetch('/api/session/hello', {
+        method: 'POST',
+        body: JSON.stringify({
+          display_name: funName
+        })
+      })
+
+      if (!response.ok) {
+        if (response.status === 409) {
+          // Name conflict - try again with a different name
+          const errorData = await response.json()
+          if (errorData.suggestions && errorData.suggestions.length > 0) {
+            // Retry with first suggestion
+            const retryResponse = await apiFetch('/api/session/hello', {
+              method: 'POST',
+              body: JSON.stringify({
+                display_name: errorData.suggestions[0]
+              })
+            })
+
+            if (retryResponse.ok) {
+              const retryData = await retryResponse.json()
+              const userData = {
+                ...retryData.user,
+                isDiscordLinked: retryData.user.isDiscordLinked ?? false,
+                isWalletLinked: retryData.user.isWalletLinked ?? false
+              }
+              setUser(userData)
+              sessionStorage.setItem(STORAGE_KEY, JSON.stringify(userData))
+              startPresencePing()
+              return
+            }
+          }
+        }
+        throw new Error(`Server error: ${response.status}`)
+      }
+
+      const data = await response.json()
+
+      // Map response structure: { user: {...}, identity: {...}, session_id: "..." }
+      // The user object from API includes isDiscordLinked and isWalletLinked
+      const userData = {
+        ...data.user,
+        isDiscordLinked: data.user.isDiscordLinked ?? false,
+        isWalletLinked: data.user.isWalletLinked ?? false
+      }
+
+      setUser(userData)
+      setIdentity(data.identity || null)
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(userData))
+
+      // Start presence ping
+      startPresencePing()
+
+    } catch (err) {
+      console.error('Failed to initialize with server:', err)
+      setError('Failed to connect to server')
+    }
+  }, [startPresencePing])
+
   // Check feature flag and initialize session
   useEffect(() => {
     const initializeSession = async () => {
@@ -77,7 +186,7 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
           try {
             const parsed = JSON.parse(storedUser) as EphemeralUser
             setUser(parsed)
-          } catch (err) {
+          } catch {
             console.warn('Failed to parse stored user, will create new session')
             sessionStorage.removeItem(STORAGE_KEY)
           }
@@ -89,7 +198,7 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
           if (params.get('discord_linked') === '1') {
             try {
               // Re-fetch session to pick up isDiscordLinked: true
-              await initializeWithServer(currentSessionId)
+              await initializeWithServer()
             } finally {
               // Clean the URL
               params.delete('discord_linked')
@@ -101,10 +210,9 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
         }
 
         // Initialize session with server
-        await initializeWithServer(currentSessionId)
+        await initializeWithServer()
 
-      } catch (err) {
-        console.error('Failed to initialize ephemeral user session:', err)
+      } catch {
         setError('Failed to initialize session')
       } finally {
         setLoading(false)
@@ -119,119 +227,8 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
         clearInterval(pingIntervalRef.current)
       }
     }
-  }, [])
-  
-  const initializeWithServer = async (currentSessionId: string) => {
-    try {
-      // Generate a fun name for new users
-      const funName = generateFunName()
+  }, [initializeWithServer])
 
-      const response = await apiFetch('/api/session/hello', {
-        method: 'POST',
-        body: JSON.stringify({
-          display_name: funName
-        })
-      })
-      
-      if (!response.ok) {
-        if (response.status === 409) {
-          // Name conflict - try again with a different name
-          const errorData = await response.json()
-          if (errorData.suggestions && errorData.suggestions.length > 0) {
-            // Retry with first suggestion
-            const retryResponse = await apiFetch('/api/session/hello', {
-              method: 'POST',
-              body: JSON.stringify({
-                display_name: errorData.suggestions[0]
-              })
-            })
-            
-            if (retryResponse.ok) {
-              const retryData = await retryResponse.json()
-              const userData = {
-                ...retryData.user,
-                isDiscordLinked: retryData.user.isDiscordLinked ?? false,
-                isWalletLinked: retryData.user.isWalletLinked ?? false
-              }
-              setUser(userData)
-              sessionStorage.setItem(STORAGE_KEY, JSON.stringify(userData))
-              startPresencePing(currentSessionId)
-              return
-            }
-          }
-        }
-        throw new Error(`Server error: ${response.status}`)
-      }
-      
-      const data = await response.json()
-
-      // Map response structure: { user: {...}, identity: {...}, session_id: "..." }
-      // The user object from API includes isDiscordLinked and isWalletLinked
-      const userData = {
-        ...data.user,
-        isDiscordLinked: data.user.isDiscordLinked ?? false,
-        isWalletLinked: data.user.isWalletLinked ?? false
-      }
-
-      setUser(userData)
-      setIdentity(data.identity || null)
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(userData))
-
-      // Start presence ping
-      startPresencePing(currentSessionId)
-      
-    } catch (err) {
-      console.error('Failed to initialize with server:', err)
-      setError('Failed to connect to server')
-    }
-  }
-  
-  const sendPresencePing = async (currentSessionId: string) => {
-    try {
-      const response = await apiFetch('/api/presence/ping', {
-        method: 'POST',
-        body: JSON.stringify({})
-      })
-
-      if (response.status === 429) {
-        // Rate limited - back off: double interval (max 120s)
-        const newInterval = Math.min(pingIntervalValueRef.current * 2, 120000)
-        pingIntervalValueRef.current = newInterval
-        setPingInterval(newInterval)
-        console.warn(`Presence ping rate limited, backing off to ${newInterval / 1000}s`)
-      } else if (response.ok) {
-        // Success - slowly reduce interval back to baseline (30s)
-        const newInterval = Math.max(pingIntervalValueRef.current * 0.9, 30000)
-        if (newInterval !== pingIntervalValueRef.current) {
-          pingIntervalValueRef.current = newInterval
-          setPingInterval(newInterval)
-        }
-      }
-    } catch (err) {
-      console.warn('Presence ping failed:', err)
-      // Continue trying - don't stop the interval
-    }
-  }
-
-  const startPresencePing = (currentSessionId: string) => {
-    // Clear any existing interval
-    if (pingIntervalRef.current) {
-      clearInterval(pingIntervalRef.current)
-    }
-
-    // Function to schedule next ping
-    const schedulePing = () => {
-      pingIntervalRef.current = setTimeout(async () => {
-        await sendPresencePing(currentSessionId)
-        // Schedule next ping with potentially updated interval
-        schedulePing()
-      }, pingIntervalValueRef.current)
-    }
-
-    // Start pinging
-    schedulePing()
-  }
-  
   const rename = useCallback(async (newName: string): Promise<boolean> => {
     if (!sessionId || !featureEnabled) {
       setError('Session not initialized')
@@ -259,7 +256,7 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
           setError(`Name "${newName.trim()}" is already taken. Try: ${errorData.suggestions?.join(', ')}`)
           return false
         } else if (response.status === 429) {
-          const errorData = await response.json()
+          await response.json()
           setError('Too many rename attempts. Please try again later.')
           return false
         } else {
@@ -335,6 +332,22 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
     window.location.href = '/api/auth/discord/start'
   }, [])
 
+  const refreshSession = useCallback(async (): Promise<boolean> => {
+    if (!sessionId) {
+      console.warn('Cannot refresh session: no session ID')
+      return false
+    }
+
+    try {
+      // Re-initialize with server to get updated session state
+      await initializeWithServer()
+      return true
+    } catch (err) {
+      console.error('Session refresh failed:', err)
+      return false
+    }
+  }, [sessionId, initializeWithServer])
+
   const unlinkDiscord = useCallback(async (): Promise<boolean> => {
     if (!sessionId || !featureEnabled) {
       setError('Session not initialized')
@@ -356,45 +369,51 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
 
       if (!response.ok) {
         if (response.status === 401) {
-          // Not signed in - show friendly message
+          // Session expired - refresh and show toast
           const errorData = await response.json().catch(() => ({}))
-          const message = errorData.error?.hint || "You're not signed in. Please reconnect Discord and try again."
+          const message = errorData.error || 'Session expired. Refreshing...'
           setError(message)
+
           // Show toast notification
           if (typeof window !== 'undefined' && window.alert) {
-            window.alert(message)
+            window.alert('Session expired. Reloading page...')
           }
+
+          // Attempt session refresh
+          const refreshed = await refreshSession()
+          if (!refreshed) {
+            // Hard reload as fallback
+            window.location.reload()
+          }
+
           return false
         } else if (response.status === 429) {
           const errorData = await response.json().catch(() => ({}))
-          setError(errorData.error?.hint || 'Too many unlink attempts. Please try again later.')
+          setError(errorData.error || 'Too many unlink attempts. Please try again later.')
           return false
         } else if (response.status === 403) {
           setError('Discord already unlinked')
           return false
         } else {
           const errorData = await response.json().catch(() => ({}))
-          setError(errorData.error?.message || 'Failed to unlink Discord')
+          setError(errorData.error || 'Failed to unlink Discord')
           return false
         }
       }
 
-      const data = await response.json()
-
-      // Update user and identity state
-      const updatedUser = {
-        ...user,
-        isDiscordLinked: false,
-        display_name: data.identity.ephemeralName
-      }
-
-      setUser(updatedUser)
-      setIdentity(data.identity)
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(updatedUser))
+      await response.json()
 
       // Clear avatar cache for this user (Discord avatar no longer valid)
       if (user?.id) {
         clearAvatarCache(user.id)
+      }
+
+      // Refresh session to get updated identity
+      await refreshSession()
+
+      // Clean URL if we have any Discord params
+      if (typeof window !== 'undefined') {
+        window.history.replaceState({}, '', '/')
       }
 
       return true
@@ -403,7 +422,7 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
       setError('Network error during unlink')
       return false
     }
-  }, [sessionId, featureEnabled, user])
+  }, [sessionId, featureEnabled, user, refreshSession])
 
   const reset = useCallback(() => {
     // Development helper to reset session
@@ -446,6 +465,7 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
     setBio,
     linkDiscord,
     unlinkDiscord,
+    refreshSession,
     reset
   }
 }

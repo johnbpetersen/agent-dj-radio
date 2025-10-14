@@ -11,6 +11,9 @@ interface AvatarCacheEntry {
 // In-memory cache: Map<userId, AvatarCacheEntry>
 const avatarCache = new Map<string, AvatarCacheEntry>()
 
+// Track users we've already logged errors for (to avoid spam)
+const loggedErrors = new Set<string>()
+
 // Cache TTL matches API Cache-Control (5 minutes)
 // Use VITE_ prefix for client-side env vars
 const MAX_AGE_SEC = Number(import.meta.env.VITE_AVATAR_CACHE_MAX_AGE_SEC ?? 300) || 300
@@ -73,7 +76,11 @@ export async function resolveAvatar(
 
       // API always returns 200 with { avatar_url: string | null }
       if (!response.ok) {
-        console.warn(`Avatar fetch unexpected status for ${userId}: ${response.status}`)
+        // Log once per userId to avoid spam
+        if (!loggedErrors.has(userId)) {
+          console.warn(`Avatar fetch unexpected status for ${userId}: ${response.status}`)
+          loggedErrors.add(userId)
+        }
         const entry: AvatarCacheEntry = { url: null, expiresAt: now + AVATAR_CACHE_TTL_MS }
         avatarCache.set(userId, entry)
         return null
@@ -91,7 +98,11 @@ export async function resolveAvatar(
 
       return avatarUrl
     } catch (error) {
-      console.warn(`Avatar fetch error for ${userId}:`, error)
+      // Log once per userId to avoid spam
+      if (!loggedErrors.has(userId)) {
+        console.warn(`Avatar fetch error for ${userId}:`, error)
+        loggedErrors.add(userId)
+      }
       const entry: AvatarCacheEntry = { url: null, expiresAt: now + AVATAR_CACHE_TTL_MS }
       avatarCache.set(userId, entry)
       return null
