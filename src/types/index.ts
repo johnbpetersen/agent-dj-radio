@@ -40,6 +40,10 @@ export interface Track {
   started_at: string | null
   finished_at: string | null
 
+  // Attribution fields (who submitted and who paid)
+  submitter_user_id: string | null
+  payer_user_id: string | null
+
   // x402 challenge columns (optional; added by migration)
   x402_challenge_nonce?: string | null
   x402_challenge_amount?: string | null

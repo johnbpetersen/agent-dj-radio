@@ -41,23 +41,23 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
     const sessionId = requireSessionId(req)
     const { message }: ChatPostRequest = req.body || {}
 
-    logger.request('/api/chat/post', { 
-      correlationId, 
+    logger.request('/api/chat/post', {
+      correlationId,
       sessionId,
       messageLength: message?.length
     })
 
-    // Validate message first (before rate limit check - cheaper)
+    // Validate message first (before any DB access - cheapest check)
     const validationError = validateChatMessage(message)
     if (validationError) {
       logger.warn('Invalid chat message', { correlationId, validationError })
-      res.status(422).json({ error: validationError, correlationId }) // 422 for validation errors
+      res.status(422).json({ error: validationError, correlationId })
       return
     }
 
     const trimmedMessage = message.trim()
 
-    // Get current user and presence via session (MUST be before rate limit check)
+    // Get current user via session - but check Discord FIRST before presence/rate limit
     const { data: presence, error: presenceError } = await supabaseAdmin
       .from('presence')
       .select(`
@@ -75,17 +75,8 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
       return
     }
 
-    if (presence.user.banned) {
-      logger.warn('Banned user attempted chat post', {
-        correlationId,
-        sessionId,
-        userId: presence.user.id
-      })
-      res.status(403).json({ error: 'User is banned', correlationId })
-      return
-    }
-
-    // Check if user has Discord linked (chat requires Discord) - MUST be before rate limit
+    // Check if user has Discord linked BEFORE checking ban/rate limits
+    // This prevents guests from hitting any further logic
     const { data: discordAccount, error: discordError } = await supabaseAdmin
       .from('user_accounts')
       .select('id')
@@ -103,6 +94,7 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
       return
     }
 
+    // Early return for guests - 403 without hitting any other checks
     if (!discordAccount) {
       logger.warn('Guest attempted chat post without Discord', {
         correlationId,
@@ -117,7 +109,18 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
       return
     }
 
-    // Check rate limiting: 1 message per 2 seconds per user (after Discord check passes)
+    // Now check ban status (only for Discord-linked users)
+    if (presence.user.banned) {
+      logger.warn('Banned user attempted chat post', {
+        correlationId,
+        sessionId,
+        userId: presence.user.id
+      })
+      res.status(403).json({ error: 'User is banned', correlationId })
+      return
+    }
+
+    // Check rate limiting: 1 message per 2 seconds per user (after Discord + ban checks)
     const rateLimitResult = checkSessionRateLimit(presence.user_id, 'chat-post', {
       windowMs: 2 * 1000, // 2 seconds
       maxRequests: 1
@@ -139,7 +142,7 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
     }
 
     // Insert chat message with denormalized data
-    const { error: insertError } = await supabaseAdmin
+    const { data: insertedMessage, error: insertError } = await supabaseAdmin
       .from('chat_messages')
       .insert({
         session_id: sessionId,
@@ -147,14 +150,16 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
         display_name: presence.display_name, // Use presence display name (most current)
         message: trimmedMessage
       })
+      .select('id')
+      .single()
 
-    if (insertError) {
-      logger.error('Failed to insert chat message', { 
-        correlationId, 
-        sessionId, 
-        userId: presence.user_id 
+    if (insertError || !insertedMessage) {
+      logger.error('Failed to insert chat message', {
+        correlationId,
+        sessionId,
+        userId: presence.user_id
       }, insertError)
-      
+
       res.status(500).json({
         error: 'Failed to post message',
         correlationId
@@ -177,6 +182,14 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
     const response: ChatPostResponse = {
       ok: true
     }
+
+    // Structured success log (no message content for privacy)
+    logger.info('Chat message posted', {
+      event: 'chat_posted',
+      userId: presence.user_id,
+      messageId: insertedMessage.id,
+      correlationId
+    })
 
     logger.requestComplete('/api/chat/post', Date.now() - startTime, {
       correlationId,

@@ -1,4 +1,5 @@
 import type { Track } from '../../../types'
+import UserChip from '../UserChip'
 
 interface NowPlayingMetaProps {
   track: Track | null
@@ -32,6 +33,31 @@ export default function NowPlayingMeta({ track, playheadSeconds, className = '' 
       <div className="text-center text-3xl tracking-wider mb-3">
         {track.prompt}
         {track.user && <span className="text-white/70"> - by {track.user.display_name}</span>}
+      </div>
+
+      {/* Attribution line - who requested and who paid */}
+      <div className="flex items-center justify-center gap-3 text-sm text-white/70 mb-3">
+        <span className="flex items-center gap-1">
+          <span>Requested by</span>
+          <UserChip
+            userId={track.submitter_user_id}
+            fallbackName={track.user?.display_name}
+            className="text-white/90"
+          />
+        </span>
+        {track.payer_user_id && track.payer_user_id !== track.submitter_user_id && (
+          <>
+            <span>•</span>
+            <span className="flex items-center gap-1">
+              <span>Paid by</span>
+              <UserChip
+                userId={track.payer_user_id}
+                fallbackName={null}
+                className="text-white/90"
+              />
+            </span>
+          </>
+        )}
       </div>
 
       {/* Progress Bar and Timings */}

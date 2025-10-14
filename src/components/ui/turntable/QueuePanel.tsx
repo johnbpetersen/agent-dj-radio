@@ -1,5 +1,6 @@
 import type { Track } from '../../../types'
 import Avatar from './Avatar'
+import UserChip from '../UserChip'
 
 // This is a sub-component for a single track in the new list style.
 function QueueTrack({ track, position, isNext }: { track: Track, position: number, isNext: boolean }) {
@@ -16,7 +17,25 @@ function QueueTrack({ track, position, isNext }: { track: Track, position: numbe
         />
         <div className="flex-1 min-w-0">
           <div className="text-white font-medium text-sm truncate">{track.prompt}</div>
-          <div className="text-white/60 text-xs mt-1">{track.user?.display_name || 'Unknown'}</div>
+          {/* Attribution line - compact */}
+          <div className="flex items-center gap-2 text-white/60 text-xs mt-1">
+            <UserChip
+              userId={track.submitter_user_id}
+              fallbackName={track.user?.display_name}
+              className="text-white/70"
+            />
+            {track.payer_user_id && track.payer_user_id !== track.submitter_user_id && (
+              <>
+                <span>→</span>
+                <span className="text-[10px]">💰</span>
+                <UserChip
+                  userId={track.payer_user_id}
+                  fallbackName={null}
+                  className="text-white/70"
+                />
+              </>
+            )}
+          </div>
         </div>
         {isNext && (
           <div className="flex-shrink-0">

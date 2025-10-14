@@ -46,6 +46,7 @@ async function userAvatarHandler(req: VercelRequest, res: VercelResponse): Promi
       logger.error('Failed to get Discord avatar URL', { correlationId, userId }, error)
       // Return null instead of error - this is expected for guests
       const response: AvatarResponse = { avatar_url: null }
+      res.setHeader('Cache-Control', 'public, max-age=300')
       res.status(200).json(response)
       return
     }
@@ -60,6 +61,8 @@ async function userAvatarHandler(req: VercelRequest, res: VercelResponse): Promi
       hasAvatar: !!data
     })
 
+    // Cache avatar responses for 5 minutes to reduce refetch storms
+    res.setHeader('Cache-Control', 'public, max-age=300')
     res.status(200).json(response)
 
   } catch (error) {
@@ -68,6 +71,7 @@ async function userAvatarHandler(req: VercelRequest, res: VercelResponse): Promi
 
     // Graceful degradation - return null avatar
     const response: AvatarResponse = { avatar_url: null }
+    res.setHeader('Cache-Control', 'public, max-age=300')
     res.status(200).json(response)
   }
 }
