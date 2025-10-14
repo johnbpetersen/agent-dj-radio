@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { generateFunName } from '../lib/name-generator'
 import { apiFetch } from '../lib/api'
 import type { Identity } from '../types'
+import { clearAvatarCache } from '../lib/avatar'
 
 interface EphemeralUser {
   id: string
@@ -380,6 +381,11 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
       setUser(updatedUser)
       setIdentity(data.identity)
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(updatedUser))
+
+      // Clear avatar cache for this user (Discord avatar no longer valid)
+      if (user?.id) {
+        clearAvatarCache(user.id)
+      }
 
       return true
     } catch (err) {

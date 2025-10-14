@@ -36,10 +36,10 @@ export default function UserIdentityPill() {
           onClick={() => setShowMenu(!showMenu)}
           className="flex items-center gap-2 bg-black/40 backdrop-blur-sm border border-white/20 rounded-full px-3 py-1.5 shadow-lg hover:bg-black/50 transition-colors"
         >
-          {/* Discord badge (only when linked) */}
-          {identity.isDiscordLinked && identity.discord?.avatarUrl && (
+          {/* Discord avatar (only when linked and avatar URL available) */}
+          {identity.isDiscordLinked && identity.avatarUrl && (
             <img
-              src={identity.discord.avatarUrl}
+              src={identity.avatarUrl}
               alt="Discord avatar"
               className="w-6 h-6 rounded-full"
             />

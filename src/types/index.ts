@@ -13,6 +13,8 @@ export interface Identity {
   isWalletLinked: boolean
   displayLabel: string
   ephemeralName: string
+  avatarUrl: string | null
+  userId: string
   discord: DiscordMetadata | null
 }
 

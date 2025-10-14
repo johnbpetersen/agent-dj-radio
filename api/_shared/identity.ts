@@ -12,6 +12,8 @@ export interface Identity {
   isWalletLinked: boolean
   displayLabel: string
   ephemeralName: string
+  avatarUrl: string | null
+  userId: string
   discord: DiscordMetadata | null
 }
 
@@ -105,13 +107,15 @@ export async function computeIdentityPayload(
   let displayLabel: string
   let discord: DiscordMetadata | null = null
 
+  let avatarUrl: string | null = null
+
   if (isDiscordLinked && discordAccount) {
     // Discord linked: use @username format (current display_name has suffix)
     displayLabel = `@${user.display_name}`
 
     // Extract Discord metadata
     const username = discordAccount.meta?.username || user.display_name
-    const avatarUrl = discordAccount.meta?.avatar_url || null
+    avatarUrl = discordAccount.meta?.avatar_url || null
 
     discord = {
       username,
@@ -127,6 +131,8 @@ export async function computeIdentityPayload(
     isWalletLinked,
     displayLabel,
     ephemeralName,
+    avatarUrl,
+    userId: user.id,
     discord
   }
 }
