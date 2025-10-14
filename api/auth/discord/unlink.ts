@@ -9,7 +9,6 @@ import { checkSessionRateLimit } from '../../../src/server/rate-limit.js'
 import { logger, generateCorrelationId } from '../../../src/lib/logger.js'
 import { httpError } from '../../_shared/errors.js'
 import { computeIdentityPayload } from '../../_shared/identity.js'
-import { clearAvatarCache } from '../../../src/hooks/useUserAvatar.js'
 
 interface UnlinkResponse {
   ok: boolean

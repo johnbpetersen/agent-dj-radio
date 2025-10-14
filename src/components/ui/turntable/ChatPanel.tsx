@@ -24,7 +24,7 @@ export default function ChatPanel() {
   const [error, setError] = useState<string | null>(null)
   const [isChatEnabled, setIsChatEnabled] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const { user, loading } = useEphemeralUser()
+  const { user, identity, loading } = useEphemeralUser()
 
   // Hydration-safe: only determine Discord status after session loads
   const isDiscordLinked = !loading && (user?.isDiscordLinked ?? false)
@@ -168,24 +168,31 @@ export default function ChatPanel() {
                   No messages yet. Be the first to chat!
                 </div>
               ) : (
-                messages.map((msg) => (
-                  <div key={msg.id} className="flex items-start gap-2">
-                    <Avatar
-                      userId={msg.user_id}
-                      displayName={msg.display_name}
-                      size={32}
-                      className="flex-shrink-0"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs text-white/60 font-medium">
-                        {msg.display_name}
-                      </div>
-                      <div className="text-sm text-white/90 break-words">
-                        {msg.message}
+                messages.map((msg) => {
+                  // Use session avatar for self messages (no network call)
+                  const isSelf = identity?.userId === msg.user_id
+                  const hintedAvatar = isSelf ? identity?.avatarUrl : undefined
+
+                  return (
+                    <div key={msg.id} className="flex items-start gap-2">
+                      <Avatar
+                        userId={msg.user_id}
+                        displayName={msg.display_name}
+                        size={32}
+                        className="flex-shrink-0"
+                        hintedUrl={hintedAvatar}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs text-white/60 font-medium">
+                          {msg.display_name}
+                        </div>
+                        <div className="text-sm text-white/90 break-words">
+                          {msg.message}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))
+                  )
+                })
               )}
               <div ref={messagesEndRef} />
             </div>

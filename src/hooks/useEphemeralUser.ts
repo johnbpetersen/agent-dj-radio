@@ -397,7 +397,7 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
 
   const reset = useCallback(() => {
     // Development helper to reset session
-    if (process.env.NODE_ENV === 'development') {
+    if (import.meta.env.DEV) {
       sessionStorage.removeItem(STORAGE_KEY)
       sessionStorage.removeItem(SESSION_STORAGE_KEY)
 

@@ -1,19 +1,20 @@
 // Avatar resolution utility with caching
 // Unifies avatar fetching across the app and prevents 404 spam
+// Pure browser module - no Node.js globals
 
 interface AvatarCacheEntry {
   url: string | null
-  timestamp: number
+  expiresAt: number
+  inflight?: Promise<string | null>
 }
 
 // In-memory cache: Map<userId, AvatarCacheEntry>
 const avatarCache = new Map<string, AvatarCacheEntry>()
 
 // Cache TTL matches API Cache-Control (5 minutes)
-const AVATAR_CACHE_TTL_MS = parseInt(process.env.AVATAR_CACHE_MAX_AGE_SEC || '300', 10) * 1000
-
-// Track in-flight requests to prevent duplicate fetches
-const inflightRequests = new Map<string, Promise<string | null>>()
+// Use VITE_ prefix for client-side env vars
+const MAX_AGE_SEC = Number(import.meta.env.VITE_AVATAR_CACHE_MAX_AGE_SEC ?? 300) || 300
+const AVATAR_CACHE_TTL_MS = MAX_AGE_SEC * 1000
 
 /**
  * Resolve avatar URL for a user
@@ -31,27 +32,33 @@ export async function resolveAvatar(
 ): Promise<string | null> {
   // No user ID = guest
   if (!userId) {
-    return null
+    return hintedUrl ?? null
   }
 
-  // If hinted URL provided, cache it and return
-  if (hintedUrl !== undefined) {
+  // If hinted URL provided, cache it and return immediately
+  if (hintedUrl !== undefined && hintedUrl !== null) {
+    const now = Date.now()
     avatarCache.set(userId, {
       url: hintedUrl,
-      timestamp: Date.now()
+      expiresAt: now + AVATAR_CACHE_TTL_MS
     })
     return hintedUrl
   }
 
+  const now = Date.now()
+
   // Check cache
   const cached = avatarCache.get(userId)
-  if (cached && Date.now() - cached.timestamp < AVATAR_CACHE_TTL_MS) {
-    return cached.url
-  }
+  if (cached) {
+    // If not expired, return cached value
+    if (cached.expiresAt > now) {
+      return cached.url
+    }
 
-  // Check if request is already in-flight
-  if (inflightRequests.has(userId)) {
-    return inflightRequests.get(userId)!
+    // If inflight request exists, await it
+    if (cached.inflight) {
+      return cached.inflight
+    }
   }
 
   // Start new fetch
@@ -67,31 +74,37 @@ export async function resolveAvatar(
       // API always returns 200 with { avatar_url: string | null }
       if (!response.ok) {
         console.warn(`Avatar fetch unexpected status for ${userId}: ${response.status}`)
-        avatarCache.set(userId, { url: null, timestamp: Date.now() })
+        const entry: AvatarCacheEntry = { url: null, expiresAt: now + AVATAR_CACHE_TTL_MS }
+        avatarCache.set(userId, entry)
         return null
       }
 
-      const data: { avatar_url: string | null } = await response.json()
-      const avatarUrl = data.avatar_url
+      const data: { avatar_url: string | null } = await response.json().catch(() => ({ avatar_url: null }))
+      const avatarUrl = typeof data?.avatar_url === 'string' ? data.avatar_url : null
 
       // Cache result
-      avatarCache.set(userId, {
+      const entry: AvatarCacheEntry = {
         url: avatarUrl,
-        timestamp: Date.now()
-      })
+        expiresAt: now + AVATAR_CACHE_TTL_MS
+      }
+      avatarCache.set(userId, entry)
 
       return avatarUrl
     } catch (error) {
       console.warn(`Avatar fetch error for ${userId}:`, error)
-      avatarCache.set(userId, { url: null, timestamp: Date.now() })
+      const entry: AvatarCacheEntry = { url: null, expiresAt: now + AVATAR_CACHE_TTL_MS }
+      avatarCache.set(userId, entry)
       return null
-    } finally {
-      // Clean up in-flight tracking
-      inflightRequests.delete(userId)
     }
   })()
 
-  inflightRequests.set(userId, fetchPromise)
+  // Store inflight promise in cache
+  avatarCache.set(userId, {
+    url: cached?.url ?? null,
+    expiresAt: now + AVATAR_CACHE_TTL_MS,
+    inflight: fetchPromise
+  })
+
   return fetchPromise
 }
 
@@ -113,8 +126,9 @@ export function clearAvatarCache(userId?: string): void {
  * @param avatarUrl - Avatar URL to cache
  */
 export function preloadAvatar(userId: string, avatarUrl: string | null): void {
+  const now = Date.now()
   avatarCache.set(userId, {
     url: avatarUrl,
-    timestamp: Date.now()
+    expiresAt: now + AVATAR_CACHE_TTL_MS
   })
 }
