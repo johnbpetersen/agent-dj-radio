@@ -4,6 +4,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { generateFunName } from '../lib/name-generator'
 import { apiFetch } from '../lib/api'
+import type { Identity } from '../types'
 
 interface EphemeralUser {
   id: string
@@ -16,12 +17,14 @@ interface EphemeralUser {
 
 interface UseEphemeralUserReturn {
   user: EphemeralUser | null
+  identity: Identity | null
   sessionId: string | null
   loading: boolean
   error: string | null
   rename: (newName: string) => Promise<boolean>
   setBio: (bio: string) => Promise<boolean>
   linkDiscord: () => void
+  unlinkDiscord: () => Promise<boolean>
   reset: () => void
 }
 
@@ -39,10 +42,11 @@ function generateUUID(): string {
 
 export function useEphemeralUser(): UseEphemeralUserReturn {
   const [user, setUser] = useState<EphemeralUser | null>(null)
+  const [identity, setIdentity] = useState<Identity | null>(null)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  
+
   // Track if ephemeral users are enabled
   const [featureEnabled, setFeatureEnabled] = useState(false)
   
@@ -160,7 +164,7 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
       
       const data = await response.json()
 
-      // Map response structure: { user: {...}, session_id: "..." }
+      // Map response structure: { user: {...}, identity: {...}, session_id: "..." }
       // The user object from API includes isDiscordLinked and isWalletLinked
       const userData = {
         ...data.user,
@@ -169,6 +173,7 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
       }
 
       setUser(userData)
+      setIdentity(data.identity || null)
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(userData))
 
       // Start presence ping
@@ -329,6 +334,61 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
     window.location.href = '/api/auth/discord/start'
   }, [])
 
+  const unlinkDiscord = useCallback(async (): Promise<boolean> => {
+    if (!sessionId || !featureEnabled) {
+      setError('Session not initialized')
+      return false
+    }
+
+    if (!user?.isDiscordLinked) {
+      setError('Discord not linked')
+      return false
+    }
+
+    try {
+      setError(null)
+
+      const response = await apiFetch('/api/auth/discord/unlink', {
+        method: 'POST',
+        body: JSON.stringify({})
+      })
+
+      if (!response.ok) {
+        if (response.status === 429) {
+          const errorData = await response.json()
+          setError(errorData.message || 'Too many unlink attempts. Please try again later.')
+          return false
+        } else if (response.status === 403) {
+          setError('Discord already unlinked')
+          return false
+        } else {
+          const errorData = await response.json()
+          setError(errorData.error || 'Failed to unlink Discord')
+          return false
+        }
+      }
+
+      const data = await response.json()
+
+      // Update user and identity state
+      const updatedUser = {
+        ...user,
+        isDiscordLinked: false,
+        display_name: data.identity.ephemeralName
+      }
+
+      setUser(updatedUser)
+      setIdentity(data.identity)
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(updatedUser))
+
+      return true
+    } catch (err) {
+      console.error('Unlink Discord failed:', err)
+      setError('Network error during unlink')
+      return false
+    }
+  }, [sessionId, featureEnabled, user])
+
   const reset = useCallback(() => {
     // Development helper to reset session
     if (process.env.NODE_ENV === 'development') {
@@ -348,24 +408,28 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
   if (!featureEnabled && !loading) {
     return {
       user: null,
+      identity: null,
       sessionId: null,
       loading: false,
       error: null,
       rename: async () => false,
       setBio: async () => false,
       linkDiscord,
+      unlinkDiscord: async () => false,
       reset
     }
   }
 
   return {
     user,
+    identity,
     sessionId,
     loading,
     error,
     rename,
     setBio,
     linkDiscord,
+    unlinkDiscord,
     reset
   }
 }

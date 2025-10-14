@@ -13,6 +13,7 @@ import { secureHandler, securityConfigs } from '../../_shared/secure-handler.js'
 import { logger, generateCorrelationId } from '../../../src/lib/logger.js'
 import { httpError } from '../../_shared/errors.js'
 import { safeRedirect } from '../../_shared/http.js'
+import { resolveDisplayNameWithSuffix } from '../../_shared/identity.js'
 
 interface DiscordTokenResponse {
   access_token: string
@@ -308,31 +309,38 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
         throw httpError.dbError('Failed to link Discord account')
       }
 
-      // Update user display name if they still have generated name (contains underscore)
-      if (currentUser.display_name.includes('_')) {
-        const newDisplayName = global_name || username
+      // Update user display name with Discord username (with suffix resolution)
+      const baseDisplayName = global_name || username
+      const resolvedDisplayName = await resolveDisplayNameWithSuffix(baseDisplayName, currentUser.id)
 
-        const { error: updateError } = await supabaseAdmin
-          .from('users')
-          .update({ display_name: newDisplayName })
-          .eq('id', currentUser.id)
+      // Store original ephemeral name if not already stored
+      const ephemeralDisplayName = currentUser.ephemeral_display_name || currentUser.display_name
 
-        if (updateError) {
-          logger.warn('Failed to update display name (non-fatal)', { correlationId }, updateError)
-          // Continue - not critical
-        }
+      const { error: updateError } = await supabaseAdmin
+        .from('users')
+        .update({
+          display_name: resolvedDisplayName,
+          ephemeral_display_name: ephemeralDisplayName
+        })
+        .eq('id', currentUser.id)
 
-        // Also update presence display name for immediate UI update
-        await supabaseAdmin
-          .from('presence')
-          .update({ display_name: newDisplayName })
-          .eq('session_id', sessionId)
+      if (updateError) {
+        logger.warn('Failed to update display name (non-fatal)', { correlationId }, updateError)
+        // Continue - not critical
       }
 
+      // Also update presence display name for immediate UI update
+      await supabaseAdmin
+        .from('presence')
+        .update({ display_name: resolvedDisplayName })
+        .eq('session_id', sessionId)
+
+      // Structured logging for link success
       logger.info('Discord linked successfully', {
-        correlationId,
+        event: 'oauth_link_success',
         userId: currentUser.id,
         discordUserId,
+        correlationId,
         durationMs: Date.now() - startTime
       })
     }

@@ -10,6 +10,7 @@ import { logger, generateCorrelationId } from '../../src/lib/logger.js'
 import { generateFunName, generateNameVariants } from '../../src/lib/name-generator.js'
 import { validateDisplayName } from '../../src/lib/profanity.js'
 import { httpError, type ErrorMeta } from '../_shared/errors.js'
+import { computeIdentityPayload, type Identity } from '../_shared/identity.js'
 
 interface SessionHelloRequest {
   display_name?: string
@@ -25,6 +26,7 @@ interface SessionHelloResponse {
     isDiscordLinked: boolean
     isWalletLinked: boolean
   }
+  identity: Identity
   session_id: string
 }
 
@@ -77,11 +79,14 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
       // Check for linked accounts (Discord, wallet)
       const { data: userAccounts } = await supabaseAdmin
         .from('user_accounts')
-        .select('provider')
+        .select('provider, meta')
         .eq('user_id', existingPresence.user.id)
 
       const isDiscordLinked = userAccounts?.some(acc => acc.provider === 'discord') ?? false
       const isWalletLinked = userAccounts?.some(acc => acc.provider === 'wallet') ?? false
+
+      // Compute identity payload
+      const identity = await computeIdentityPayload(existingPresence.user, userAccounts || [])
 
       const response: SessionHelloResponse = {
         user: {
@@ -89,6 +94,7 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
           isDiscordLinked,
           isWalletLinked
         },
+        identity,
         session_id: sessionId
       }
 
@@ -215,12 +221,16 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
     }
 
     // New users don't have linked accounts yet
+    // Compute identity payload for new user
+    const identity = await computeIdentityPayload(user as any, [])
+
     const response: SessionHelloResponse = {
       user: {
         ...sanitizeForClient(user, []),
         isDiscordLinked: false,
         isWalletLinked: false
       },
+      identity,
       session_id: sessionId
     }
 
