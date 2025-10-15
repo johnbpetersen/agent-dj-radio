@@ -1,9 +1,24 @@
 {
   "functions": {
     "api/**/*.ts": {
-      "runtime": "nodejs20.x"
+      "runtime": "nodejs20.x",
+      "memory": 1024,
+      "maxDuration": 15,
+      "regions": ["iad1"]
     }
   },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/((?!api).*)", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)\\.(js|css|svg|woff2|png|jpg|jpeg|webp)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    }
+  ],
   "crons": [
     { "path": "/api/worker/generate", "schedule": "*/1 * * * *" },
     { "path": "/api/station/advance", "schedule": "*/1 * * * *" }
