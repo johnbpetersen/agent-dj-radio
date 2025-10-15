@@ -36,8 +36,14 @@ async function discordUnlinkHandler(req: VercelRequest, res: VercelResponse): Pr
 
   if (userError || !user) {
     // User record not found - session references deleted user
+    // Return 409 (not 401) to indicate data inconsistency
     logger.warn('Unlink attempted for non-existent user', { correlationId, userId })
-    throw httpError.unauthorized('Session expired', 'Please refresh the page and try again')
+    res.status(409).json({
+      error: 'user_not_found',
+      message: 'User account not found',
+      hint: 'Please refresh the page to reset your session'
+    })
+    return
   }
 
   logger.debug('Discord unlink request', {
@@ -74,10 +80,13 @@ async function discordUnlinkHandler(req: VercelRequest, res: VercelResponse): Pr
     throw httpError.dbError('Failed to unlink Discord account')
   }
 
-  // 2. Update presence table: sync display_name for immediate UI reflection
+  // 2. Update presence table: sync display_name + touch timestamp for session refresh
   await supabaseAdmin
     .from('presence')
-    .update({ display_name: ephemeralName })
+    .update({
+      display_name: ephemeralName,
+      last_seen: new Date().toISOString()
+    })
     .eq('session_id', sessionId)
 
   // Structured success log

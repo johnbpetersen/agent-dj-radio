@@ -387,6 +387,15 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
           }
 
           return false
+        } else if (response.status === 409) {
+          // User account missing - data inconsistency
+          const errorData = await response.json().catch(() => ({}))
+          setError(errorData.error || 'Account not found. Refreshing...')
+
+          // Attempt session refresh to reset identity
+          await refreshSession()
+
+          return false
         } else if (response.status === 429) {
           const errorData = await response.json().catch(() => ({}))
           setError(errorData.error || 'Too many unlink attempts. Please try again later.')
