@@ -11,11 +11,13 @@ import { logger, generateCorrelationId } from '../../src/lib/logger.js'
 interface WhoamiResponse {
   userId: string
   displayName: string
+  ephemeralDisplayName: string | null
   isDiscordLinked: boolean
   isWalletLinked: boolean
+  discordUsername: string | null
   sessionId: string
   presenceExists: boolean
-  ephemeralDisplayName: string | null
+  presenceDisplayName: string | null
 }
 
 async function whoamiHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
@@ -54,10 +56,10 @@ async function whoamiHandler(req: VercelRequest, res: VercelResponse): Promise<v
       return
     }
 
-    // Get user data
+    // Get user data with Discord fields
     const { data: user } = await supabaseAdmin
       .from('users')
-      .select('id, display_name, ephemeral_display_name')
+      .select('id, display_name, ephemeral_display_name, discord_user_id, discord_username')
       .eq('id', presence.user_id)
       .single()
 
@@ -71,14 +73,6 @@ async function whoamiHandler(req: VercelRequest, res: VercelResponse): Promise<v
       return
     }
 
-    // Check Discord link
-    const { data: discordAccount } = await supabaseAdmin
-      .from('user_accounts')
-      .select('id')
-      .eq('user_id', user.id)
-      .eq('provider', 'discord')
-      .single()
-
     // Check wallet binding
     const { data: walletAccount } = await supabaseAdmin
       .from('user_accounts')
@@ -90,11 +84,13 @@ async function whoamiHandler(req: VercelRequest, res: VercelResponse): Promise<v
     const response: WhoamiResponse = {
       userId: user.id,
       displayName: user.display_name,
-      isDiscordLinked: !!discordAccount,
+      ephemeralDisplayName: user.ephemeral_display_name,
+      isDiscordLinked: !!user.discord_user_id,
       isWalletLinked: !!walletAccount,
+      discordUsername: user.discord_username,
       sessionId,
       presenceExists: true,
-      ephemeralDisplayName: user.ephemeral_display_name
+      presenceDisplayName: presence.display_name
     }
 
     res.status(200).json(response)

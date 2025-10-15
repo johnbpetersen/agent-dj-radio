@@ -1,26 +1,16 @@
 // POST /api/auth/discord/unlink - Disconnect Discord and revert to ephemeral identity
-// Allows users to unlink their Discord account and go back to ephemeral guest mode
+// Cookie-based session auth (no presence dependency for authorization)
+// Returns 401 if unauthorized, 200 on success (idempotent)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { supabaseAdmin } from '../../_shared/supabase.js'
-import { secureHandler, securityConfigs } from '../../_shared/secure-handler.js'
-import { requireSessionId } from '../../_shared/session.js'
-import { checkSessionRateLimit } from '../../../src/server/rate-limit.js'
-import { logger, generateCorrelationId } from '../../../src/lib/logger.js'
-import { httpError } from '../../_shared/errors.js'
-import { computeIdentityPayload } from '../../_shared/identity.js'
+import { supabaseAdmin } from '../_shared/supabase.js'
+import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
+import { requireSession } from '../_shared/session.js'
+import { logger, generateCorrelationId } from '../../src/lib/logger.js'
+import { httpError } from '../_shared/errors.js'
 
 interface UnlinkResponse {
   ok: boolean
-  identity: {
-    isDiscordLinked: boolean
-    isWalletLinked: boolean
-    displayLabel: string
-    ephemeralName: string
-    avatarUrl: string | null
-    userId: string
-    discord: null
-  }
 }
 
 async function discordUnlinkHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
@@ -28,181 +18,83 @@ async function discordUnlinkHandler(req: VercelRequest, res: VercelResponse): Pr
     throw httpError.badRequest('Method not allowed', 'Only POST requests are supported')
   }
 
-  // Check feature flag
-  const allowUnlink = process.env.ALLOW_DISCORD_UNLINK !== 'false' // Default true
-  if (!allowUnlink) {
-    throw httpError.notFound('Feature not available', 'Discord unlink is currently disabled')
-  }
-
   const correlationId = generateCorrelationId()
   const startTime = Date.now()
 
-  // Get session ID from cookie - throws if missing
-  let sessionId: string
-  try {
-    sessionId = requireSessionId(req)
-  } catch {
-    // Session missing or invalid - return 401
-    logger.warn('Unlink attempted without valid session', { correlationId })
-    throw httpError.unauthorized('You are not signed in', 'Please reconnect Discord and try again')
-  }
+  // Get session using cookie-based auth (throws 401 if missing/invalid)
+  const session = await requireSession(req)
+  const { userId, sessionId } = session
 
-  logger.request('/api/auth/discord/unlink', {
-    correlationId,
-    sessionId
-  })
+  logger.request('/api/auth/discord/unlink', { correlationId, userId, sessionId })
 
-  // Get current user from presence (cookie-based session via session_id)
-  // Return 401 (not 500) if session not found - user needs to refresh
-  const { data: presence, error: presenceError } = await supabaseAdmin
-    .from('presence')
-    .select('user_id, users!inner(id, display_name, ephemeral_display_name, ephemeral)')
-    .eq('session_id', sessionId)
+  // Fetch current user record
+  const { data: user, error: userError } = await supabaseAdmin
+    .from('users')
+    .select('id, display_name, ephemeral_display_name, discord_user_id, discord_username')
+    .eq('id', userId)
     .single()
 
-  if (presenceError || !presence) {
-    // Session not found in presence - return 401, NOT 500
-    // This is expected if presence expired or user never initialized session
-    logger.warn('Session not found in presence for Discord unlink', {
-      correlationId,
-      sessionId,
-      error: presenceError?.code
-    })
+  if (userError || !user) {
+    // User record not found - session references deleted user
+    logger.warn('Unlink attempted for non-existent user', { correlationId, userId })
     throw httpError.unauthorized('Session expired', 'Please refresh the page and try again')
   }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const currentUser = presence.users as any
-  const userId = currentUser.id
 
   logger.debug('Discord unlink request', {
     correlationId,
     userId,
-    displayName: currentUser.display_name
+    displayName: user.display_name,
+    isDiscordLinked: !!user.discord_user_id
   })
 
-  // Rate limit: max 5 unlinks per hour per user
-  const unlinkRateLimit = parseInt(process.env.UNLINK_RATE_LIMIT_PER_HOUR || '5', 10)
-  const rateLimitResult = checkSessionRateLimit(userId, 'discord-unlink', {
-    windowMs: 60 * 60 * 1000, // 1 hour
-    maxRequests: unlinkRateLimit
-  })
-
-  if (!rateLimitResult.allowed) {
-    logger.warn('Discord unlink rate limit exceeded', {
-      correlationId,
-      sessionId,
-      userId
-    })
-    throw httpError.tooManyRequests(
-      'Too many unlink attempts',
-      `Please wait ${Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000 / 60)} minutes before trying again`
-    )
-  }
-
-  // Check if Discord is actually linked
-  const { data: discordAccount } = await supabaseAdmin
-    .from('user_accounts')
-    .select('id, provider')
-    .eq('user_id', userId)
-    .eq('provider', 'discord')
-    .single()
-
-  // Idempotent: if already unlinked, return success
-  if (!discordAccount) {
-    logger.info('Discord already unlinked (idempotent)', {
-      correlationId,
-      userId
-    })
-
-    // Fetch current accounts to build identity
-    const { data: accounts } = await supabaseAdmin
-      .from('user_accounts')
-      .select('provider, meta')
-      .eq('user_id', userId)
-
-    const identity = await computeIdentityPayload(currentUser, accounts || [])
-
-    const response: UnlinkResponse = {
-      ok: true,
-      identity: {
-        ...identity,
-        discord: null
-      }
-    }
-
-    res.status(200).json(response)
+  // Idempotent: if already unlinked, return success immediately
+  if (!user.discord_user_id) {
+    logger.info('Discord already unlinked (idempotent)', { correlationId, userId })
+    res.status(200).json({ ok: true } satisfies UnlinkResponse)
     return
   }
 
-  // Perform unlink in transaction-like sequence
-  // 1. Delete Discord account link
-  const { error: deleteError } = await supabaseAdmin
-    .from('user_accounts')
-    .delete()
-    .eq('user_id', userId)
-    .eq('provider', 'discord')
+  // Perform unlink in atomic transaction
+  // 1. Update users table: clear Discord fields, restore ephemeral name
+  const ephemeralName = user.ephemeral_display_name || user.display_name
+  const { error: updateUserError } = await supabaseAdmin
+    .from('users')
+    .update({
+      display_name: ephemeralName,
+      discord_user_id: null,
+      discord_username: null,
+      discord_avatar_hash: null,
+      discord_discriminator: null
+    })
+    .eq('id', userId)
+    .not('discord_user_id', 'is', null) // Prevent race: only update if still linked
 
-  if (deleteError) {
-    logger.error('Failed to delete Discord account link', { correlationId, userId }, deleteError)
+  if (updateUserError) {
+    logger.error('Failed to update user record during unlink', { correlationId, userId }, updateUserError)
     throw httpError.dbError('Failed to unlink Discord account')
   }
 
-  // 2. Restore display_name to ephemeral_display_name
-  const ephemeralName = currentUser.ephemeral_display_name || currentUser.display_name
-  const { error: updateError } = await supabaseAdmin
-    .from('users')
-    .update({
-      display_name: ephemeralName
-    })
-    .eq('id', userId)
-
-  if (updateError) {
-    logger.error('Failed to restore ephemeral display name', { correlationId, userId }, updateError)
-    // Non-fatal - continue
-  }
-
-  // 3. Update presence display_name for immediate UI update
+  // 2. Update presence table: sync display_name for immediate UI reflection
   await supabaseAdmin
     .from('presence')
     .update({ display_name: ephemeralName })
     .eq('session_id', sessionId)
 
-  // Fetch updated accounts (should only have wallet if any)
-  const { data: remainingAccounts } = await supabaseAdmin
-    .from('user_accounts')
-    .select('provider, meta')
-    .eq('user_id', userId)
-
-  const updatedUser = {
-    ...currentUser,
-    display_name: ephemeralName
-  }
-
-  const identity = await computeIdentityPayload(updatedUser, remainingAccounts || [])
-
   // Structured success log
   logger.info('Discord unlinked successfully', {
     event: 'oauth_unlink_success',
     userId,
-    correlationId
+    correlationId,
+    restoredName: ephemeralName
   })
 
   logger.requestComplete('/api/auth/discord/unlink', Date.now() - startTime, {
     correlationId,
-    sessionId,
-    userId
+    userId,
+    sessionId
   })
 
-  const response: UnlinkResponse = {
-    ok: true,
-    identity: {
-      ...identity,
-      discord: null
-    }
-  }
-
-  res.status(200).json(response)
+  res.status(200).json({ ok: true } satisfies UnlinkResponse)
 }
 
 export default secureHandler(discordUnlinkHandler, securityConfigs.user)

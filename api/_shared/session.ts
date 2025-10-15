@@ -95,3 +95,37 @@ export function requireSessionId(req: VercelRequest): string {
   // All sources failed
   throw new Error('Missing X-Session-Id header')
 }
+
+/**
+ * Require authenticated session and return userId + sessionId
+ * Uses presence table to map session_id → user_id
+ * Throws AppError.UNAUTHORIZED if session not found or invalid
+ */
+export async function requireSession(req: VercelRequest): Promise<{ userId: string; sessionId: string }> {
+  const { supabaseAdmin } = await import('./supabase.js')
+  const { httpError } = await import('./errors.js')
+
+  // Extract session ID from cookie/header
+  let sessionId: string
+  try {
+    sessionId = requireSessionId(req)
+  } catch {
+    throw httpError.unauthorized('You are not signed in', 'Please sign in and try again')
+  }
+
+  // Query presence to get userId
+  const { data: presence, error } = await supabaseAdmin
+    .from('presence')
+    .select('user_id')
+    .eq('session_id', sessionId)
+    .single()
+
+  if (error || !presence) {
+    throw httpError.unauthorized('Session expired', 'Please refresh the page and try again')
+  }
+
+  return {
+    userId: presence.user_id,
+    sessionId
+  }
+}
