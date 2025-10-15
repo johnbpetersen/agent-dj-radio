@@ -3,11 +3,11 @@
 // Returns 401 if unauthorized, 200 on success (idempotent)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { supabaseAdmin } from '../_shared/supabase.js'
-import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
-import { requireSession } from '../_shared/session.js'
-import { logger, generateCorrelationId } from '../../src/lib/logger.js'
-import { httpError } from '../_shared/errors.js'
+import { supabaseAdmin } from '../../_shared/supabase.js'
+import { secureHandler, securityConfigs } from '../../_shared/secure-handler.js'
+import { requireSession } from '../../_shared/session.js'
+import { logger, generateCorrelationId } from '../../../src/lib/logger.js'
+import { httpError } from '../../_shared/errors.js'
 
 interface UnlinkResponse {
   ok: boolean
