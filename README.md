@@ -4,10 +4,37 @@ Real-time AI music generation platform with integrated crypto payments.
 
 ## Current Status: Sprint 7 Complete ✅
 
-**Payment Flow:** HTTP 402 challenges with X-PAYMENT headers  
-**Audio Generation:** ElevenLabs integration with mock fallbacks  
-**User System:** Persistent identity with localStorage + database  
-**Queue Management:** Real-time updates and station playback  
+**Payment Flow:** HTTP 402 challenges with X-PAYMENT headers
+**Audio Generation:** ElevenLabs integration with mock fallbacks
+**User System:** Persistent identity with localStorage + database
+**Queue Management:** Real-time updates and station playback
+
+### ⚠️ Vercel Hobby Plan Architecture
+
+**Single-Function Router:** Due to Vercel Hobby plan's 12-function limit, all API endpoints are served through a single catch-all function at `/api/[...all].ts` that internally routes to appropriate handlers.
+
+**Architecture:**
+- **1 Vercel Function:** `/api/[...all].ts` (catch-all router)
+- **42 Handler Modules:** `/api_handlers/**/*.ts` (imported, not deployed as functions)
+- **Zero-dependency Router:** Minimal path matching with dynamic params support
+
+**All Endpoints Active (via router):**
+- Health & monitoring, session, auth, chat, station, users, presence
+- Queue (submit, confirm, price-quote), reactions, admin, legal
+- Debug, audio-proxy, worker, wallet, x402
+
+**Adding New Endpoints:**
+1. Create handler file in `/api_handlers/your-feature/endpoint.ts`
+2. Import handler in `/api/[...all].ts`
+3. Add route to `routes` array with method, pattern, and handler
+4. Deploy - still only 1 Vercel Function!
+
+**Benefits:**
+- ✅ Unlimited endpoints (within single function limits)
+- ✅ All existing security, logging, and rate limiting preserved
+- ✅ Same response contracts and status codes
+- ✅ Dynamic params supported (e.g., `/users/:id/avatar`)
+- ✅ Method-specific routing with proper 405 responses
 
 ## Quick Start
 
