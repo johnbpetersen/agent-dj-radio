@@ -362,9 +362,16 @@ npm test
 # Run tests with UI
 npm run test:ui
 
-# Type checking
+# Type checking (optional - not required for deployment)
 npm run typecheck
 ```
+
+**Note on TypeScript Checking:**
+- `npm run build` uses **Vite only** (no type-checking) for fast deployments
+- `npm run typecheck` runs `tsc -b` separately for optional type validation
+- Vercel compiles API functions (`/api/**`) per-file independently
+- Type errors won't block production builds - monitor runtime logs instead
+- Run `npm run typecheck` locally or in CI for incremental type safety improvements
 
 ## 🏥 Health & Doctor
 
