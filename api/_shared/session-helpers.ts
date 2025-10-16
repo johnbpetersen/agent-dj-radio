@@ -4,6 +4,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from './supabase.js'
 import { generateCorrelationId } from '../../src/lib/logger.js'
+import { httpError } from './errors.js'
+import * as crypto from 'crypto'
 
 /**
  * Debug OAuth logging helper
@@ -147,6 +149,100 @@ export function clearOAuthStateCookie(
 }
 
 /**
+ * Generate cryptographically random suffix for display names
+ * Uses crypto.randomBytes for stronger randomness than Math.random()
+ *
+ * @param length - Length of suffix (default 5)
+ * @returns base36 string (e.g., "a7f3k")
+ */
+function generateRandomSuffix(length = 5): string {
+  const bytes = crypto.randomBytes(Math.ceil(length * 0.75)) // ~4 bytes for 5 chars
+  const num = parseInt(bytes.toString('hex'), 16)
+  return num.toString(36).slice(0, length).padEnd(length, '0')
+}
+
+/**
+ * Create guest user with collision-safe retry logic
+ * Retries with randomized suffix on 23505 unique constraint violations
+ *
+ * Strategy:
+ * - First attempt: clean {adjective}_{animal} name
+ * - Subsequent attempts: {adjective}_{animal}_{cryptoRandom5}
+ * - Max 6 attempts (8×8 base names × 36^5 suffixes = massive namespace)
+ *
+ * @param maxAttempts - Maximum retry attempts (default 6)
+ * @returns Created user { id, display_name }
+ * @throws httpError.internal() if all retries exhausted or non-collision DB error
+ */
+async function createGuestUserWithUniqueName(
+  maxAttempts = 6
+): Promise<{ id: string; display_name: string }> {
+  const adjectives = ['purple', 'dancing', 'happy', 'cosmic', 'electric', 'quantum', 'stellar', 'lunar']
+  const animals = ['raccoon', 'penguin', 'dolphin', 'falcon', 'phoenix', 'dragon', 'octopus', 'panda']
+  const adjective = adjectives[Math.floor(Math.random() * adjectives.length)]
+  const animal = animals[Math.floor(Math.random() * animals.length)]
+  const baseName = `${adjective}_${animal}`
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const userId = generateCorrelationId()
+    const displayName = attempt === 0
+      ? baseName
+      : `${baseName}_${generateRandomSuffix()}`
+
+    const { data, error } = await supabaseAdmin
+      .from('users')
+      .insert({
+        id: userId,
+        display_name: displayName,
+        ephemeral: true,
+        banned: false
+      })
+      .select('id, display_name')
+      .single()
+
+    if (!error) {
+      debugOAuth('guest-user-created', {
+        attempt: attempt + 1,
+        hadCollision: attempt > 0
+      })
+      return data
+    }
+
+    // Unique constraint violation (Postgres 23505) - retry with suffix
+    if (error.code === '23505') {
+      debugOAuth('guest-name-collision', {
+        attempt: attempt + 1,
+        baseName,
+        willRetry: attempt < maxAttempts - 1
+      })
+      continue
+    }
+
+    // Any other DB error - fail immediately with wrapped error
+    throw httpError.internal('Failed to create guest user', {
+      meta: {
+        db: {
+          type: 'QUERY',
+          operation: 'insert_user',
+          table: 'users'
+        }
+      }
+    })
+  }
+
+  // Exhausted all retries
+  throw httpError.internal('Failed to create guest user after retries', {
+    meta: {
+      db: {
+        type: 'QUERY',
+        operation: 'insert_user',
+        table: 'users'
+      }
+    }
+  })
+}
+
+/**
  * Load or create ephemeral session, ensuring sid cookie is set
  * Always sets cookie if missing (idempotent)
  *
@@ -193,27 +289,11 @@ export async function ensureSession(
 
   // Create new session
   sid = generateCorrelationId() // UUID v4
-  const userId = generateCorrelationId()
 
-  // Generate fun display name for ephemeral user
-  const adjectives = ['purple', 'dancing', 'happy', 'cosmic', 'electric', 'quantum', 'stellar', 'lunar']
-  const animals = ['raccoon', 'penguin', 'dolphin', 'falcon', 'phoenix', 'dragon', 'octopus', 'panda']
-  const adjective = adjectives[Math.floor(Math.random() * adjectives.length)]
-  const animal = animals[Math.floor(Math.random() * animals.length)]
-  const displayName = `${adjective}_${animal}`
-
-  // Create user first
-  const { error: userError } = await supabaseAdmin.from('users').insert({
-    id: userId,
-    display_name: displayName,
-    ephemeral: true,
-    banned: false
-  })
-
-  if (userError) {
-    debugOAuth('Failed to create user in ensureSession', { error: userError.message })
-    throw new Error(`Failed to create user: ${userError.message}`)
-  }
+  // Create user with collision-safe retry (handles 23505 unique constraint violations)
+  const user = await createGuestUserWithUniqueName()
+  const userId = user.id
+  const displayName = user.display_name
 
   // Create presence row (not ephemeral_sessions - that table doesn't exist)
   const { error: presenceError } = await supabaseAdmin.from('presence').insert({
@@ -225,10 +305,18 @@ export async function ensureSession(
 
   if (presenceError) {
     debugOAuth('Failed to create presence in ensureSession', { error: presenceError.message })
-    throw new Error(`Failed to create presence: ${presenceError.message}`)
+    throw httpError.internal('Failed to create presence', {
+      meta: {
+        db: {
+          type: 'QUERY',
+          operation: 'insert_presence',
+          table: 'presence'
+        }
+      }
+    })
   }
 
-  // Always set cookie for new sessions
+  // Set cookie ONLY after both user and presence inserts succeed
   setSessionCookie(res, sid, req)
   created = true
 
