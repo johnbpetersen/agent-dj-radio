@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
+import { secureHandler, securityConfigs } from '../_shared/secure-handler'
 
 async function termsOfServiceHandler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {

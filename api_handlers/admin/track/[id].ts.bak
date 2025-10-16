@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { requireAdminAuth } from '../../_shared/admin-auth.js'
-import { supabaseAdmin } from '../../_shared/supabase.js'
-import { getTrackById, updateTrackStatus, getStationState } from '../../../src/server/db.js'
-import { broadcastQueueUpdate, broadcastStationUpdate } from '../../../src/server/realtime.js'
+import { requireAdminAuth } from '../../_shared/admin-auth'
+import { supabaseAdmin } from '../../_shared/supabase'
+import { getTrackById, updateTrackStatus, getStationState } from '../../../src/server/db'
+import { broadcastQueueUpdate, broadcastStationUpdate } from '../../../src/server/realtime'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST' && req.method !== 'DELETE') {

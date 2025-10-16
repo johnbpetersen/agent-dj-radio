@@ -1,10 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { requireAdminAuth } from '../_shared/admin-auth.js'
+import { requireAdminAuth } from '../_shared/admin-auth'
 import { supabaseAdmin } from '../_shared/supabase.js'
-import { claimNextPaidTrack, updateTrackStatus } from '../../src/server/db.js'
-import { createTrack, pollTrackWithTimeout, fetchToBuffer } from '../../src/server/eleven.js'
-import { uploadAudioBuffer, ensureTracksBucket } from '../../src/server/storage.js'
-import { broadcastQueueUpdate } from '../../src/server/realtime.js'
+import { claimNextPaidTrack, updateTrackStatus } from '../../src/server/db'
+import { createTrack, pollTrackWithTimeout, fetchToBuffer } from '../../src/server/eleven'
+import { uploadAudioBuffer, ensureTracksBucket } from '../../src/server/storage'
+import { broadcastQueueUpdate } from '../../src/server/realtime'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {

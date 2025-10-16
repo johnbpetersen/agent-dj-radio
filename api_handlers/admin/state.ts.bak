@@ -1,10 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { requireAdminAuth } from '../_shared/admin-auth.js'
+import { requireAdminAuth } from '../_shared/admin-auth'
 import { supabaseAdmin } from '../_shared/supabase.js'
-import { getStationState, getTracksByStatus } from '../../src/server/db.js'
-import { calculatePlayhead } from '../../src/server/station.js'
-import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
-import type { StationStateResponse } from '../../src/types.js'
+import { getStationState, getTracksByStatus } from '../../src/server/db'
+import { calculatePlayhead } from '../../src/server/station'
+import { secureHandler, securityConfigs } from '../_shared/secure-handler'
+import type { StationStateResponse } from '../../src/types'
 
 async function adminStateHandler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {

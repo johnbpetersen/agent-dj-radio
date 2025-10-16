@@ -1,9 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { supabaseAdmin } from './_shared/supabase.js'
-import { upsertReaction, updateTrackRating } from '../src/server/db.js'
-import { secureHandler, securityConfigs } from './_shared/secure-handler.js'
-import { sanitizeForClient } from './_shared/security.js'
-import type { ReactionRequest, ReactionResponse, ReactionKind } from '../src/types.js'
+import { supabaseAdmin } from './_shared/supabase'
+import { upsertReaction, updateTrackRating } from '../src/server/db'
+import { secureHandler, securityConfigs } from './_shared/secure-handler'
+import { sanitizeForClient } from './_shared/security'
+import type { ReactionRequest, ReactionResponse, ReactionKind } from '../src/types'
 
 const VALID_REACTION_KINDS: ReactionKind[] = ['LOVE', 'FIRE', 'SKIP']
 

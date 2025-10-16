@@ -608,8 +608,10 @@ npm test pricing    # Run specific test file
 - Station state persists across development restarts
 
 **ESM Import Notes:**
-- In development with `tsx`, use bare imports: `from '../_shared/supabase'`
-- For production/Vercel, imports need `.js` extension: `from '../_shared/supabase.js'`
+- **ALL relative imports** in `api_handlers/` and `api/_shared/` **MUST** use `.js` extensions for Vercel ESM compatibility
+- Example: `from '../_shared/supabase.js'` (NOT `from '../_shared/supabase'`)
+- This applies to both development and production - Node ESM runtime requires explicit extensions
+- Package imports (e.g., `@supabase/supabase-js`) do NOT need `.js` extensions
 
 ### Database Schema
 Key tables: `users`, `tracks`, `reactions`, `station_state`
