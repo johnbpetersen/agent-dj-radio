@@ -9,6 +9,7 @@ import { ensureSession, setOAuthStateCookie, debugOAuth } from '../../_shared/se
 import { computeRedirectUri } from '../../_shared/url-helpers.js'
 import { logger, generateCorrelationId } from '../../../src/lib/logger.js'
 import { httpError } from '../../_shared/errors.js'
+import { supabaseAdmin } from '../../_shared/supabase.js'
 import * as crypto from 'crypto'
 
 async function discordStartHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
@@ -29,22 +30,47 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
   }
 
   // Ensure session exists and get/set cookie
-  const { sid } = await ensureSession(req, res)
+  const host = req.headers.host || 'unknown'
+  const { sid, created } = await ensureSession(req, res)
+
+  // Verify session was created/found in database
+  const { data: verifySession, error: verifyError } = await supabaseAdmin
+    .from('presence')
+    .select('session_id, user_id')
+    .eq('session_id', sid)
+    .single()
 
   debugOAuth('Discord OAuth start', {
     correlationId,
+    host,
     sidSuffix: sid.slice(-6),
-    method: req.method
+    sessionCreated: created,
+    sessionVerified: !!verifySession,
+    verifyError: verifyError?.code,
+    method: req.method,
+    supabaseProjectHost: new URL(process.env.SUPABASE_URL || '').hostname
   })
+
+  if (!verifySession) {
+    logger.error('Session creation/lookup failed in start handler', {
+      correlationId,
+      sidSuffix: sid.slice(-6),
+      created,
+      errorCode: verifyError?.code,
+      errorMessage: verifyError?.message
+    })
+    throw httpError.internal('Failed to create session')
+  }
 
   logger.info('Discord OAuth start', {
     correlationId,
+    host,
     sidSuffix: sid.slice(-6),
+    sessionCreated: created,
     method: req.method
   })
 
   // Optional: validate host against allowlist
-  const host = req.headers.host
   const allowedHosts = process.env.ALLOWED_REDIRECT_HOSTS?.split(',').map(h => h.trim())
   if (allowedHosts && allowedHosts.length > 0 && host) {
     const isAllowed = allowedHosts.some(allowed => {

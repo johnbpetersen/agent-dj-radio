@@ -159,12 +159,12 @@ export async function ensureSession(
   let sid = getSessionId(req)
   let created = false
 
-  // If session exists, verify it in database
+  // If session exists, verify it in database (use presence table)
   if (sid) {
     const { data: existingSession } = await supabaseAdmin
-      .from('ephemeral_sessions')
-      .select('id, user_id')
-      .eq('id', sid)
+      .from('presence')
+      .select('session_id, user_id')
+      .eq('session_id', sid)
       .single()
 
     if (existingSession) {
@@ -174,12 +174,21 @@ export async function ensureSession(
         setSessionCookie(res, sid, req)
       }
 
+      debugOAuth('Existing session found in ensureSession', {
+        sidSuffix: sid.slice(-6),
+        userId: existingSession.user_id
+      })
+
       return {
-        sid: existingSession.id,
+        sid: existingSession.session_id,
         userId: existingSession.user_id,
         created: false
       }
     }
+
+    debugOAuth('Session ID present but not found in presence table', {
+      sidSuffix: sid.slice(-6)
+    })
   }
 
   // Create new session
@@ -193,23 +202,41 @@ export async function ensureSession(
   const animal = animals[Math.floor(Math.random() * animals.length)]
   const displayName = `${adjective}_${animal}`
 
-  // Create user and session
-  await supabaseAdmin.from('users').insert({
+  // Create user first
+  const { error: userError } = await supabaseAdmin.from('users').insert({
     id: userId,
     display_name: displayName,
     ephemeral: true,
     banned: false
   })
 
-  await supabaseAdmin.from('ephemeral_sessions').insert({
-    id: sid,
+  if (userError) {
+    debugOAuth('Failed to create user in ensureSession', { error: userError.message })
+    throw new Error(`Failed to create user: ${userError.message}`)
+  }
+
+  // Create presence row (not ephemeral_sessions - that table doesn't exist)
+  const { error: presenceError } = await supabaseAdmin.from('presence').insert({
+    session_id: sid,
     user_id: userId,
+    display_name: displayName,
     last_seen_at: new Date().toISOString()
   })
+
+  if (presenceError) {
+    debugOAuth('Failed to create presence in ensureSession', { error: presenceError.message })
+    throw new Error(`Failed to create presence: ${presenceError.message}`)
+  }
 
   // Always set cookie for new sessions
   setSessionCookie(res, sid, req)
   created = true
+
+  debugOAuth('Created new session in ensureSession', {
+    sidSuffix: sid.slice(-6),
+    userId,
+    displayName
+  })
 
   return { sid, userId, created }
 }

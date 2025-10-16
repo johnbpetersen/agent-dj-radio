@@ -79,8 +79,14 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
 
   const correlationId = generateCorrelationId()
   const startTime = Date.now()
+  const host = req.headers.host || 'unknown'
 
-  logger.info('Discord OAuth callback', { correlationId })
+  debugOAuth('Discord OAuth callback initiated', {
+    correlationId,
+    host
+  })
+
+  logger.info('Discord OAuth callback', { correlationId, host })
 
   // Parse query params
   const { code, state, error, error_description } = req.query
@@ -112,20 +118,30 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
 
   // Parse state payload (contains csrf + sid)
   const statePayload = parseStatePayload(state as string)
+
+  // Verify CSRF state from cookie (use oauth_state)
+  const cookies = parseCookies(req)
+  const cookieState = cookies.oauth_state
+  const hasSidCookie = !!cookies.sid
+
+  debugOAuth('OAuth state verification', {
+    correlationId,
+    host,
+    hasStateQuery: !!state,
+    hasStateCookie: !!cookieState,
+    hasSidCookie,
+    stateMatch: cookieState === state,
+    stateHasSid: !!statePayload?.sid
+  })
+
   if (!statePayload) {
     logger.warn('Discord OAuth state payload invalid', { correlationId })
     throw httpError.badRequest('Invalid state parameter format')
   }
 
-  // Verify CSRF state from cookie (use oauth_state)
-  const cookies = parseCookies(req)
-  const cookieState = cookies.oauth_state
-
-  debugOAuth('Verifying OAuth state', {
+  debugOAuth('State payload parsed successfully', {
     correlationId,
-    hasState: !!state,
-    hasCookie: !!cookieState,
-    stateMatch: cookieState === state
+    stateSidSuffix: statePayload.sid.slice(-6)
   })
 
   if (!cookieState || cookieState !== state) {
@@ -293,18 +309,35 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
       hasAvatar: !!avatar
     })
 
-    // Get current session ID from header or cookie (MUST NOT create new session)
-    const sessionId = getSessionId(req)
+    // Get current session ID from header, cookie, or state fallback
+    let sessionId = getSessionId(req)
+    let sidSource: 'cookie' | 'header' | 'state' | 'none' = 'none'
+
+    if (sessionId) {
+      // Determine if it came from header or cookie
+      const headerSid = req.headers['x-session-id'] as string
+      sidSource = headerSid ? 'header' : 'cookie'
+    } else {
+      // Fallback to state.sid if cookie/header missing
+      sessionId = statePayload.sid
+      sidSource = sessionId ? 'state' : 'none'
+    }
+
+    debugOAuth('Discord callback session resolution', {
+      correlationId,
+      sidSource,
+      hasSidCookie: !!parseCookies(req).sid,
+      hasSidHeader: !!req.headers['x-session-id'],
+      hasStateSid: !!statePayload.sid,
+      sidSuffix: sessionId ? sessionId.slice(-6) : 'none',
+      discordUserId
+    })
 
     if (!sessionId) {
-      debugOAuth('Discord callback missing session ID', {
+      logger.warn('Discord callback missing session ID (all sources)', {
         correlationId,
-        discordUserId
-      })
-
-      logger.warn('Discord callback missing session ID', {
-        correlationId,
-        discordUserId
+        discordUserId,
+        sidSource
       })
 
       // Return 401 per CTO review
@@ -314,14 +347,9 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
       )
     }
 
-    debugOAuth('Discord callback session check', {
-      correlationId,
-      sidSuffix: sessionId.slice(-6),
-      discordUserId
-    })
-
     logger.debug('Discord callback session check', {
       correlationId,
+      sidSource,
       sidSuffix: sessionId.slice(-6),
       discordUserId
     })
@@ -332,8 +360,22 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
       .eq('session_id', sessionId)
       .single()
 
+    debugOAuth('Presence lookup result', {
+      correlationId,
+      sessionFound: !!presence,
+      errorCode: presenceError?.code,
+      errorMessage: presenceError?.message,
+      sidSuffix: sessionId.slice(-6)
+    })
+
     if (presenceError || !presence) {
-      logger.warn('Session not found for Discord callback', { correlationId, sessionId })
+      logger.warn('Session not found for Discord callback', {
+        correlationId,
+        sidSuffix: sessionId.slice(-6),
+        sidSource,
+        errorCode: presenceError?.code,
+        errorMessage: presenceError?.message
+      })
       throw httpError.badRequest('Session not found', 'Please refresh the page and try again')
     }
 
