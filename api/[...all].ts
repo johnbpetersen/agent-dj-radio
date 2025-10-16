@@ -69,6 +69,7 @@ const routes: Route[] = [
   // Station
   { method: 'GET', pattern: '/station/state', handler: stationStateHandler },
   { method: 'GET', pattern: '/station/advance', handler: stationAdvanceHandler },
+  { method: 'POST', pattern: '/station/advance', handler: stationAdvanceHandler },
 
   // Users - specific routes BEFORE dynamic param routes
   { method: 'GET', pattern: '/users/active', handler: usersActiveHandler },

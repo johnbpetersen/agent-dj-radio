@@ -12,7 +12,8 @@ async function advanceHandler(req: VercelRequest, res: VercelResponse): Promise<
   const correlationId = generateCorrelationId()
   const startTime = Date.now()
 
-  if (req.method !== 'POST') {
+  // Accept both GET and POST (idempotent operation)
+  if (req.method !== 'GET' && req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' })
     return
   }

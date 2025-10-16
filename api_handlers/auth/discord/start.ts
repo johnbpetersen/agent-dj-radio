@@ -1,4 +1,4 @@
-// POST /api/auth/discord/start
+// GET /api/auth/discord/start
 // Initiates Discord OAuth flow with 'identify' scope
 // Redirects user to Discord authorization page
 
@@ -6,10 +6,11 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { secureHandler, securityConfigs } from '../../_shared/secure-handler.js'
 import { logger, generateCorrelationId } from '../../../src/lib/logger.js'
 import { httpError } from '../../_shared/errors.js'
+import crypto from 'crypto'
 
 async function discordStartHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
-  if (req.method !== 'POST') {
-    throw httpError.badRequest('Method not allowed', 'Only POST requests are supported')
+  if (req.method !== 'GET') {
+    throw httpError.badRequest('Method not allowed', 'Only GET requests are supported')
   }
 
   const correlationId = generateCorrelationId()
@@ -18,13 +19,40 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
 
   // Environment validation
   const clientId = process.env.DISCORD_CLIENT_ID
-  const redirectUri = process.env.DISCORD_REDIRECT_URI ||
-                      `${process.env.VITE_SITE_URL || 'http://localhost:5173'}/api/auth/discord/callback`
 
   if (!clientId) {
     logger.error('DISCORD_CLIENT_ID not configured', { correlationId })
     throw httpError.internal('Discord authentication not configured')
   }
+
+  // Compute redirect_uri from request host
+  const host = req.headers.host
+  if (!host) {
+    logger.error('Missing Host header', { correlationId })
+    throw httpError.badRequest('Invalid request: missing host header')
+  }
+
+  // Optional: validate host against allowlist
+  const allowedHosts = process.env.ALLOWED_REDIRECT_HOSTS?.split(',').map(h => h.trim())
+  if (allowedHosts && allowedHosts.length > 0) {
+    const isAllowed = allowedHosts.some(allowed => {
+      if (allowed.startsWith('*.')) {
+        // Wildcard: *.vercel.app matches preview-xyz.vercel.app
+        const domain = allowed.slice(2)
+        return host.endsWith(domain)
+      }
+      return host === allowed
+    })
+
+    if (!isAllowed) {
+      logger.error('Host not in allowlist', { correlationId, host, allowedHosts })
+      throw httpError.badRequest('Invalid request host')
+    }
+  }
+
+  // Determine protocol
+  const proto = req.headers['x-forwarded-proto'] || (host.includes('localhost') ? 'http' : 'https')
+  const redirectUri = `${proto}://${host}/api/auth/discord/callback`
 
   // Extract session ID from header
   const sid = req.headers['x-session-id']?.toString() ?? ''

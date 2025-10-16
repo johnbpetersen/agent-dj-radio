@@ -120,6 +120,8 @@ describe('findMatchingMethods', () => {
     { method: 'GET', pattern: '/users/:id', handler: mockHandler },
     { method: 'PATCH', pattern: '/users/:id', handler: mockHandler },
     { method: 'PUT', pattern: '/users/:id', handler: mockHandler },
+    { method: 'GET', pattern: '/station/advance', handler: mockHandler },
+    { method: 'POST', pattern: '/station/advance', handler: mockHandler },
   ]
 
   it('should find single method for path', () => {
@@ -135,6 +137,13 @@ describe('findMatchingMethods', () => {
     expect(methods).toHaveLength(3)
   })
 
+  it('should find multiple methods for station/advance', () => {
+    const methods = findMatchingMethods(routes, '/api/station/advance')
+    expect(methods).toContain('GET')
+    expect(methods).toContain('POST')
+    expect(methods).toHaveLength(2)
+  })
+
   it('should return empty array for non-existent path', () => {
     const methods = findMatchingMethods(routes, '/api/nonexistent')
     expect(methods).toEqual([])
@@ -143,5 +152,43 @@ describe('findMatchingMethods', () => {
   it('should handle paths with trailing slash', () => {
     const methods = findMatchingMethods(routes, '/api/station/state/')
     expect(methods).toEqual(['GET'])
+  })
+})
+
+describe('Multi-method route matching', () => {
+  const mockHandler = async () => {}
+
+  const routes: Route[] = [
+    { method: 'GET', pattern: '/station/advance', handler: mockHandler },
+    { method: 'POST', pattern: '/station/advance', handler: mockHandler },
+    { method: 'GET', pattern: '/auth/discord/start', handler: mockHandler },
+  ]
+
+  it('should match GET /station/advance', () => {
+    const match = matchRoute(routes, 'GET', '/api/station/advance')
+    expect(match).not.toBeNull()
+    expect(match?.params).toEqual({})
+  })
+
+  it('should match POST /station/advance', () => {
+    const match = matchRoute(routes, 'POST', '/api/station/advance')
+    expect(match).not.toBeNull()
+    expect(match?.params).toEqual({})
+  })
+
+  it('should return null for PUT /station/advance', () => {
+    const match = matchRoute(routes, 'PUT', '/api/station/advance')
+    expect(match).toBeNull()
+  })
+
+  it('should match GET /auth/discord/start', () => {
+    const match = matchRoute(routes, 'GET', '/api/auth/discord/start')
+    expect(match).not.toBeNull()
+    expect(match?.params).toEqual({})
+  })
+
+  it('should return null for POST /auth/discord/start', () => {
+    const match = matchRoute(routes, 'POST', '/api/auth/discord/start')
+    expect(match).toBeNull()
   })
 })
