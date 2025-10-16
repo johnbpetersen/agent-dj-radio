@@ -16,31 +16,36 @@ import { httpError } from '../../_shared/errors.js'
 import { safeRedirect } from '../../_shared/http.js'
 import { resolveDisplayNameWithSuffix } from '../../_shared/identity.js'
 
+// --- Type definitions ---
+type DiscordTokenError = { error: string; error_description?: string }
+
 interface DiscordTokenResponse {
   access_token: string
   token_type: string
-  expires_in: number
-  refresh_token: string
-  scope: string
+  expires_in?: number
+  refresh_token?: string
+  scope?: string
 }
 
 interface DiscordUser {
   id: string
   username: string
-  discriminator: string
+  discriminator?: string
   global_name: string | null
   avatar: string | null
-  bot?: boolean
-  system?: boolean
-  mfa_enabled?: boolean
-  banner?: string | null
-  accent_color?: number | null
-  locale?: string
-  verified?: boolean
-  email?: string | null
-  flags?: number
-  premium_type?: number
-  public_flags?: number
+}
+
+// --- Type guards for safe JSON narrowing ---
+function isDiscordTokenResponse(v: unknown): v is DiscordTokenResponse {
+  return !!v && typeof v === 'object'
+    && typeof (v as any).access_token === 'string'
+    && typeof (v as any).token_type === 'string'
+}
+
+function isDiscordUser(v: unknown): v is DiscordUser {
+  return !!v && typeof v === 'object'
+    && typeof (v as any).id === 'string'
+    && typeof (v as any).username === 'string'
 }
 
 // Removed: parseCookie() - now using parseCookies() from session-helpers
@@ -171,56 +176,62 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
       })
     })
 
+    // Parse token response defensively
+    const rawTokenPayload: unknown = await tokenResponse.json().catch(() => null)
+
     if (!tokenResponse.ok) {
-      // Parse error response from Discord
-      let errorData: any = {}
-      try {
-        errorData = await tokenResponse.json()
-      } catch {
-        const errorText = await tokenResponse.text()
-        errorData = { error: 'unknown', error_description: errorText.substring(0, 200) }
-      }
+      // Try to read Discord OAuth error shape
+      const err = (rawTokenPayload ?? {}) as Partial<DiscordTokenError>
 
       debugOAuth('Discord token exchange failed', {
         correlationId,
         status: tokenResponse.status,
-        error: errorData.error,
-        error_description: errorData.error_description?.substring(0, 200)
+        error: err?.error,
+        error_description: err?.error_description
       })
 
       logger.error('Discord token exchange failed', {
         correlationId,
         status: tokenResponse.status,
-        error: errorData.error
+        error: err?.error
       })
 
-      // Map Discord errors per CTO review
-      if (errorData.error === 'invalid_grant') {
+      if (err?.error === 'invalid_grant') {
         throw httpError.badRequest(
           'Invalid or expired authorization code or redirect_uri mismatch',
-          'Please try logging in again. The authorization may have expired.'
+          'Please try logging in again.'
         )
       }
-
-      if (errorData.error === 'invalid_client') {
+      if (err?.error === 'invalid_client') {
         throw httpError.internal('Discord authentication misconfigured')
       }
-
-      // Discord 5xx or network error
       if (tokenResponse.status >= 500) {
         throw httpError.networkError('Discord service unavailable', {
           network: { url: 'https://discord.com/api/oauth2/token', method: 'POST' }
         })
       }
 
-      // Fallback to 400
       throw httpError.badRequest(
         'Failed to authenticate with Discord',
-        'Please try again or contact support if the problem persists.'
+        'Please try again or contact support.'
       )
     }
 
-    const tokenData: DiscordTokenResponse = await tokenResponse.json()
+    // Validate token response shape
+    if (!isDiscordTokenResponse(rawTokenPayload)) {
+      debugOAuth('Discord token payload missing required fields', {
+        correlationId,
+        receivedKeys: rawTokenPayload && typeof rawTokenPayload === 'object'
+          ? Object.keys(rawTokenPayload as any)
+          : 'non-object'
+      })
+      throw httpError.badRequest(
+        'Failed to authenticate with Discord',
+        'Unexpected token response.'
+      )
+    }
+
+    const tokenData = rawTokenPayload // Now typed as DiscordTokenResponse
 
     // Fetch Discord user profile
     logger.debug('Fetching Discord user profile', { correlationId })
@@ -231,13 +242,20 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
       }
     })
 
+    // Parse user response defensively
+    const rawUserPayload: unknown = await userResponse.json().catch(() => null)
+
     if (!userResponse.ok) {
-      const errorText = await userResponse.text()
+      const sample = rawUserPayload == null
+        ? 'null'
+        : typeof rawUserPayload === 'string'
+          ? rawUserPayload.slice(0, 200)
+          : JSON.stringify(rawUserPayload).slice(0, 200)
 
       debugOAuth('Discord user fetch failed', {
         correlationId,
         status: userResponse.status,
-        error: errorText.substring(0, 200)
+        sample
       })
 
       logger.error('Discord user fetch failed', {
@@ -245,14 +263,27 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
         status: userResponse.status
       })
 
-      // Map to 400 - user-facing error
       throw httpError.badRequest(
         'Failed to retrieve Discord profile',
         'Please try logging in again.'
       )
     }
 
-    const discordUser: DiscordUser = await userResponse.json()
+    // Validate user response shape
+    if (!isDiscordUser(rawUserPayload)) {
+      debugOAuth('Discord user payload missing required fields', {
+        correlationId,
+        receivedKeys: rawUserPayload && typeof rawUserPayload === 'object'
+          ? Object.keys(rawUserPayload as any)
+          : 'non-object'
+      })
+      throw httpError.badRequest(
+        'Failed to retrieve Discord profile',
+        'Unexpected user response.'
+      )
+    }
+
+    const discordUser = rawUserPayload // Now typed as DiscordUser
     const { id: discordUserId, username, global_name, avatar } = discordUser
 
     logger.info('Discord user authenticated', {
