@@ -8,7 +8,8 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from '../../_shared/supabase.js'
-import { getSessionId, parseCookies } from '../../_shared/session-helpers.js'
+import { getSessionId, parseCookies, clearOAuthStateCookie, debugOAuth } from '../../_shared/session-helpers.js'
+import { computeRedirectUri } from '../../_shared/url-helpers.js'
 import { secureHandler, securityConfigs } from '../../_shared/secure-handler.js'
 import { logger, generateCorrelationId } from '../../../src/lib/logger.js'
 import { httpError } from '../../_shared/errors.js'
@@ -111,31 +112,46 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
     throw httpError.badRequest('Invalid state parameter format')
   }
 
-  // Verify CSRF state from cookie (use oauth_state, not discord_state)
+  // Verify CSRF state from cookie (use oauth_state)
   const cookies = parseCookies(req)
   const cookieState = cookies.oauth_state
+
+  debugOAuth('Verifying OAuth state', {
+    correlationId,
+    hasState: !!state,
+    hasCookie: !!cookieState,
+    stateMatch: cookieState === state
+  })
+
   if (!cookieState || cookieState !== state) {
     logger.warn('Discord OAuth state mismatch', {
       correlationId,
       receivedState: typeof state === 'string' ? state.substring(0, 8) + '...' : 'invalid',
       cookieState: cookieState ? cookieState.substring(0, 8) + '...' : 'missing'
     })
-    throw httpError.badRequest('Invalid state parameter (CSRF check failed)')
+    throw httpError.unauthorized('Invalid OAuth state', 'State mismatch - please try logging in again')
   }
 
   // Clear oauth_state cookie (keep sid cookie)
-  res.setHeader('Set-Cookie', 'oauth_state=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0')
+  clearOAuthStateCookie(res, req)
+  debugOAuth('Cleared oauth_state cookie', { correlationId })
 
   // Environment validation
   const clientId = process.env.DISCORD_CLIENT_ID
   const clientSecret = process.env.DISCORD_CLIENT_SECRET
-  const redirectUri = process.env.DISCORD_REDIRECT_URI ||
-                      `${process.env.VITE_SITE_URL || 'http://localhost:5173'}/api/auth/discord/callback`
 
   if (!clientId || !clientSecret) {
     logger.error('Discord credentials not configured', { correlationId })
     throw httpError.internal('Discord authentication not configured')
   }
+
+  // Compute redirect_uri using url-helpers (same as start handler)
+  const redirectUri = computeRedirectUri(req, '/api/auth/discord/callback')
+
+  debugOAuth('Computed redirect URI for token exchange', {
+    correlationId,
+    redirectUri
+  })
 
   try {
     // Exchange code for access token
@@ -156,15 +172,52 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
     })
 
     if (!tokenResponse.ok) {
-      const errorText = await tokenResponse.text()
+      // Parse error response from Discord
+      let errorData: any = {}
+      try {
+        errorData = await tokenResponse.json()
+      } catch {
+        const errorText = await tokenResponse.text()
+        errorData = { error: 'unknown', error_description: errorText.substring(0, 200) }
+      }
+
+      debugOAuth('Discord token exchange failed', {
+        correlationId,
+        status: tokenResponse.status,
+        error: errorData.error,
+        error_description: errorData.error_description?.substring(0, 200)
+      })
+
       logger.error('Discord token exchange failed', {
         correlationId,
         status: tokenResponse.status,
-        error: errorText
+        error: errorData.error
       })
-      throw httpError.networkError('Failed to authenticate with Discord', {
-        external: { service: 'discord', operation: 'token_exchange' }
-      })
+
+      // Map Discord errors per CTO review
+      if (errorData.error === 'invalid_grant') {
+        throw httpError.badRequest(
+          'Invalid or expired authorization code or redirect_uri mismatch',
+          'Please try logging in again. The authorization may have expired.'
+        )
+      }
+
+      if (errorData.error === 'invalid_client') {
+        throw httpError.internal('Discord authentication misconfigured')
+      }
+
+      // Discord 5xx or network error
+      if (tokenResponse.status >= 500) {
+        throw httpError.networkError('Discord service unavailable', {
+          network: { url: 'https://discord.com/api/oauth2/token', method: 'POST' }
+        })
+      }
+
+      // Fallback to 400
+      throw httpError.badRequest(
+        'Failed to authenticate with Discord',
+        'Please try again or contact support if the problem persists.'
+      )
     }
 
     const tokenData: DiscordTokenResponse = await tokenResponse.json()
@@ -180,14 +233,23 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
 
     if (!userResponse.ok) {
       const errorText = await userResponse.text()
-      logger.error('Discord user fetch failed', {
+
+      debugOAuth('Discord user fetch failed', {
         correlationId,
         status: userResponse.status,
-        error: errorText
+        error: errorText.substring(0, 200)
       })
-      throw httpError.networkError('Failed to fetch Discord profile', {
-        external: { service: 'discord', operation: 'user_fetch' }
+
+      logger.error('Discord user fetch failed', {
+        correlationId,
+        status: userResponse.status
       })
+
+      // Map to 400 - user-facing error
+      throw httpError.badRequest(
+        'Failed to retrieve Discord profile',
+        'Please try logging in again.'
+      )
     }
 
     const discordUser: DiscordUser = await userResponse.json()
@@ -204,15 +266,28 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
     const sessionId = getSessionId(req)
 
     if (!sessionId) {
+      debugOAuth('Discord callback missing session ID', {
+        correlationId,
+        discordUserId
+      })
+
       logger.warn('Discord callback missing session ID', {
         correlationId,
         discordUserId
       })
-      throw httpError.badRequest(
-        'Session not found',
-        'Please refresh the page and try again. Your session cookie may have expired.'
+
+      // Return 401 per CTO review
+      throw httpError.unauthorized(
+        'Missing session',
+        'Please refresh the page and try logging in again.'
       )
     }
+
+    debugOAuth('Discord callback session check', {
+      correlationId,
+      sidSuffix: sessionId.slice(-6),
+      discordUserId
+    })
 
     logger.debug('Discord callback session check', {
       correlationId,

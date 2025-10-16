@@ -321,8 +321,96 @@ curl -X POST http://localhost:3001/api/queue/confirm \
 - **OAuth State**: `oauth_state` cookie (10 min TTL) for CSRF protection during OAuth flow
 - **Cookie Attributes**: `httpOnly; SameSite=Lax; Secure (production); Path=/; no Domain`
 - **Start Endpoint**: `GET /api/auth/discord/start` returns 302 redirect, `POST` returns `{redirectUrl}` JSON
-- **Callback**: Reads `sid` from cookie/header; returns 400 MISSING_SESSION if absent (never creates new session)
+- **Callback**: Reads `sid` from cookie/header; returns 401 if missing session or state mismatch
 - **Environment Variables**: `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `ALLOWED_REDIRECT_HOSTS` (optional allowlist)
+
+### Discord OAuth Production Setup
+
+**Redirect URI Configuration:**
+The redirect URI is computed dynamically from request headers using a single helper function in both start and callback handlers:
+- Production: `https://{host}/api/auth/discord/callback`
+- Development: `http://localhost:3001/api/auth/discord/callback`
+
+**Discord Developer Portal Setup:**
+1. Go to https://discord.com/developers/applications
+2. Select your application
+3. Navigate to OAuth2 → Redirects
+4. Add EXACT redirect URI: `https://your-domain.com/api/auth/discord/callback`
+5. Ensure URI matches exactly (no trailing slash, no typos)
+
+**Environment Variables:**
+```bash
+# Required
+DISCORD_CLIENT_ID=your_client_id_here
+DISCORD_CLIENT_SECRET=your_client_secret_here
+
+# Optional: Debug Discord API errors (dev/staging only - NEVER in production)
+DEBUG_OAUTH=1
+
+# Optional: Host allowlist for security (comma-separated)
+ALLOWED_REDIRECT_HOSTS=yourdomain.com,*.vercel.app
+```
+
+**Error Handling:**
+Discord OAuth errors are now properly mapped to appropriate HTTP status codes:
+- `400 Bad Request`: Invalid/expired code, malformed state, or redirect_uri mismatch
+- `401 Unauthorized`: Missing session cookie or OAuth state mismatch
+- `500 Internal Server Error`: Discord authentication misconfigured (invalid_client)
+- `502 Bad Gateway`: Discord service unavailable (5xx responses)
+
+**Troubleshooting Discord OAuth Errors:**
+
+1. **"Invalid or expired authorization code or redirect_uri mismatch"** (400)
+   - Authorization codes expire after 10 minutes
+   - Verify redirect URI in Discord portal matches exactly: `https://your-domain.com/api/auth/discord/callback`
+   - Check that start and callback handlers compute the same redirect_uri
+   - Enable `DEBUG_OAUTH=1` to see computed redirect_uri in logs
+
+2. **"Invalid OAuth state" or "Missing session"** (401)
+   - User's cookies may be blocked or cleared
+   - Ensure cookies are enabled in browser
+   - Check that `oauth_state` and `sid` cookies are being set (inspect Network tab)
+   - Verify cookies have correct attributes: HttpOnly, SameSite=Lax, Secure (production)
+
+3. **"Discord authentication misconfigured"** (500)
+   - Check `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` are set correctly
+   - Verify credentials match Discord Developer Portal
+   - Ensure client secret hasn't been regenerated
+
+4. **"Discord service unavailable"** (502)
+   - Discord API is experiencing issues
+   - Retry after a few minutes
+   - Check Discord status: https://discordstatus.com
+
+**Debug Mode (`DEBUG_OAUTH=1`):**
+When enabled, logs sanitized debug information to help troubleshoot issues:
+- HTTP status codes from Discord API
+- Error codes and descriptions (sanitized to 200 chars)
+- Computed redirect_uri for both start and callback
+- Session ID suffix (last 6 characters only)
+- OAuth state verification results
+
+**IMPORTANT**: Never enable `DEBUG_OAUTH` in production. It should only be used in development or staging environments.
+
+**Smoke Tests:**
+```bash
+# 1) Start should set cookies and redirect (inspect headers)
+curl -I https://agent-dj-radio.vercel.app/api/auth/discord/start
+
+# Expected:
+# HTTP/2 302
+# Location: https://discord.com/api/oauth2/authorize?...
+# Set-Cookie: sid=...; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=2592000
+# Set-Cookie: oauth_state=...; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=600
+
+# 2) Callback with fake/expired code (should be 400, not 500)
+curl -i "https://agent-dj-radio.vercel.app/api/auth/discord/callback?code=BAD&state=ALSO_BAD"
+
+# Expected: HTTP/2 400 with JSON error
+
+# 3) Happy path (manual): Click the Discord button in production
+# After OAuth consent, you should land back on app with no error banner
+```
 
 ### 🔄 Real-time Updates
 - Supabase Realtime for queue updates
