@@ -1,6 +1,6 @@
-// Serverless function shim for /api/auth/discord/start
-// Re-exports handler from shared handlers directory
-// This ensures Vercel routes directly to this function (bypasses catch-all)
-// Initiates Discord OAuth flow with dynamic redirect_uri
+import type { VercelRequest, VercelResponse } from '@vercel/node'
+import realHandler from '../../../api_handlers/auth/discord/start'
 
-export { default } from '../../../api_handlers/auth/discord/start.js'
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  return await (realHandler as any)(req, res)
+}

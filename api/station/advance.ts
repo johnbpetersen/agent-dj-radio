@@ -1,6 +1,6 @@
-// Serverless function shim for /api/station/advance
-// Re-exports handler from shared handlers directory
-// This ensures Vercel routes directly to this function (bypasses catch-all)
-// Supports both GET and POST methods (idempotent operation)
+import type { VercelRequest, VercelResponse } from '@vercel/node'
+import realHandler from '../../api_handlers/station/advance'
 
-export { default } from '../../api_handlers/station/advance.js'
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  return await (realHandler as any)(req, res)
+}
