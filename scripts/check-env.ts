@@ -303,7 +303,70 @@ function checkEnvironment(): CheckResult[] {
     })
   }
 
+  // ALLOW_DISCORD_UNLINK (optional, default: true)
+  const allowDiscordUnlink = process.env.ALLOW_DISCORD_UNLINK
+  if (allowDiscordUnlink === undefined || allowDiscordUnlink === '') {
+    results.push({
+      name: 'ALLOW_DISCORD_UNLINK',
+      status: 'WARN',
+      message: 'not set (defaulting to true). Set explicitly to enable/disable unlink UI'
+    })
+  } else {
+    results.push({
+      name: 'ALLOW_DISCORD_UNLINK',
+      status: 'PASS',
+      message: allowDiscordUnlink
+    })
+  }
+
   return results
+}
+
+/**
+ * Parse .env.local.example to extract all keys
+ */
+function parseEnvExample(): Set<string> {
+  const examplePath = path.resolve(process.cwd(), '.env.local.example')
+  if (!fs.existsSync(examplePath)) {
+    return new Set()
+  }
+
+  const content = fs.readFileSync(examplePath, 'utf-8')
+  const keys = new Set<string>()
+
+  // Extract keys from env file (ignore comments and empty lines)
+  content.split('\n').forEach(line => {
+    const trimmed = line.trim()
+    if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
+      const key = trimmed.split('=')[0].trim()
+      keys.add(key)
+    }
+  })
+
+  return keys
+}
+
+/**
+ * Detect env delta: new keys in example vs process.env
+ */
+function checkEnvDelta(): { added: string[]; missing: string[] } {
+  const exampleKeys = parseEnvExample()
+  const envKeys = new Set(Object.keys(process.env))
+
+  const added: string[] = []
+  const missing: string[] = []
+
+  // Check for keys in example but not in process.env
+  exampleKeys.forEach(key => {
+    if (!envKeys.has(key)) {
+      added.push(key)
+    }
+  })
+
+  // For now, we don't check "missing from example" as that's less critical
+  // (developers may have extra keys locally)
+
+  return { added, missing }
 }
 
 function printResults(results: CheckResult[]): void {
@@ -339,6 +402,21 @@ function printResults(results: CheckResult[]): void {
     }[status]
     console.log(`  ${colorFn(status)}: ${count}`)
   })
+
+  // Env delta detection
+  const delta = checkEnvDelta()
+  if (delta.added.length > 0 || delta.missing.length > 0) {
+    console.log(colors.bold('\nEnv Delta:'))
+    if (delta.added.length > 0) {
+      console.log(colors.red(`  🔴 NEW ENV KEYS (add to your .env.local): ${delta.added.join(', ')}`))
+    }
+    if (delta.missing.length > 0) {
+      console.log(colors.yellow(`  🟡 MISSING FROM EXAMPLE: ${delta.missing.join(', ')}`))
+    }
+    console.log(`  Env delta: [ADDED: ${delta.added.length}, MISSING: ${delta.missing.length}]`)
+  } else {
+    console.log(colors.green('\n✓ No env delta detected'))
+  }
 }
 
 function main(): void {

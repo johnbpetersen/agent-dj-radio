@@ -2,7 +2,7 @@
 // Routes all /api/* requests to appropriate handlers
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { matchRoute, findMatchingMethods, type Route } from './_shared/router.js'
+import { matchRoute, findMatchingMethods, getRouteMetadata, type Route } from './_shared/router.js'
 import { logger, generateCorrelationId } from '../src/lib/logger.js'
 
 // Import all handlers from api_handlers/ (not treated as Vercel Functions)
@@ -136,8 +136,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   // Set request ID early
   res.setHeader('X-Request-Id', requestId)
 
+  // Enable debug logging in dev
+  const isDev = process.env.NODE_ENV !== 'production'
+
+  // Special handling for debug route (dev only)
+  if (isDev && method === 'GET' && path.includes('/_debug/routes')) {
+    const metadata = getRouteMetadata(routes)
+    res.status(200).json({
+      routes: metadata,
+      count: metadata.length,
+      env: process.env.NODE_ENV
+    })
+    return
+  }
+
+  // Handle OPTIONS preflight (always allow CORS)
+  if (method === 'OPTIONS') {
+    res.status(200).end()
+    return
+  }
+
   // Match route
-  const match = matchRoute(routes, method, path)
+  const match = matchRoute(routes, method, path, {
+    debug: isDev,
+    correlationId: requestId
+  })
 
   if (!match) {
     // Check if path matches but different method (405 vs 404)

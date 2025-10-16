@@ -193,10 +193,16 @@ async function devRoutesHandler(req: any, res: any): Promise<void> {
 const secureDevRoutesHandler = secureHandler(devRoutesHandler, securityConfigs.public)
 
 async function loadFunctionForPath(pathname: string): Promise<Handler | null> {
-  // Check registry first
+  // Check registry first for exact match
   const entry = routeRegistry.get(pathname)
   if (entry?.handler) {
     return entry.handler
+  }
+
+  // Check for catch-all handler ([...all].ts)
+  const catchAllEntry = routeRegistry.get('/api/[...all]')
+  if (catchAllEntry?.handler) {
+    return catchAllEntry.handler
   }
 
   // Fallback to original discovery for dynamic routes or missed patterns

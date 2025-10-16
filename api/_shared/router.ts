@@ -38,10 +38,20 @@ function patternToRegex(pattern: string): { regex: RegExp; params: string[] } {
 
 /**
  * Normalize path: strip leading /api, normalize trailing slash
+ * - Strips only ONE leading /api prefix (avoid double-stripping)
+ * - Removes trailing slash (except for root /)
+ * - Handles query strings by extracting pathname only
  */
 export function normalizePath(path: string): string {
-  // Strip /api prefix
-  let normalized = path.replace(/^\/api/, '')
+  // Extract pathname (strip query string and hash)
+  let normalized = path.split('?')[0].split('#')[0]
+
+  // Strip exactly ONE /api prefix (avoid double-stripping like /api/api/foo)
+  if (normalized.startsWith('/api/')) {
+    normalized = normalized.slice(4) // Remove "/api" (4 chars)
+  } else if (normalized === '/api') {
+    normalized = '/'
+  }
 
   // Ensure leading slash
   if (!normalized.startsWith('/')) {
@@ -58,14 +68,22 @@ export function normalizePath(path: string): string {
 
 /**
  * Match a path against route patterns
- * Returns { params, handler } if match found, null otherwise
+ * Returns { handler, params, matchedRoute } if match found, null otherwise
  */
 export function matchRoute(
   routes: Route[],
   method: string,
-  path: string
-): { handler: RouteHandler; params: Record<string, string> } | null {
+  path: string,
+  options?: { debug?: boolean; correlationId?: string }
+): { handler: RouteHandler; params: Record<string, string>; matchedRoute?: Route } | null {
+  const rawPath = path
   const normalizedPath = normalizePath(path)
+
+  // Dev-only logging
+  const isDev = process.env.NODE_ENV !== 'production'
+  if (isDev && options?.debug) {
+    console.info(`[Router ${options.correlationId || 'N/A'}] method=${method} rawPath=${rawPath} normalizedPath=${normalizedPath}`)
+  }
 
   for (const route of routes) {
     // Check method first (cheap)
@@ -84,8 +102,16 @@ export function matchRoute(
         params[paramNames[i]] = match[i + 1]
       }
 
-      return { handler: route.handler, params }
+      if (isDev && options?.debug) {
+        console.info(`[Router ${options.correlationId || 'N/A'}] ✓ matched pattern=${route.pattern} handler=${route.handler.name || 'anonymous'}`)
+      }
+
+      return { handler: route.handler, params, matchedRoute: route }
     }
+  }
+
+  if (isDev && options?.debug) {
+    console.warn(`[Router ${options.correlationId || 'N/A'}] ✗ no match found`)
   }
 
   return null
@@ -106,4 +132,24 @@ export function findMatchingMethods(routes: Route[], path: string): string[] {
   }
 
   return methods
+}
+
+/**
+ * Get route metadata for debugging (dev only)
+ */
+export function getRouteMetadata(routes: Route[]): Array<{
+  method: string
+  pattern: string
+  regex: string
+  handlerName: string
+}> {
+  return routes.map(route => {
+    const { regex } = patternToRegex(route.pattern)
+    return {
+      method: route.method,
+      pattern: route.pattern,
+      regex: regex.toString(),
+      handlerName: route.handler.name || 'anonymous'
+    }
+  })
 }
