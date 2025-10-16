@@ -78,7 +78,7 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
       // Ensure cookie is set even if session came from header
       const cookies = parseCookies(req)
       if (!cookies.sid) {
-        setSessionCookie(res, sessionId)
+        setSessionCookie(res, sessionId, req)
       }
 
       // Update timestamps and return existing user
@@ -133,7 +133,7 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
 
     // Import helper to set cookie
     const { setSessionCookie: setCookie } = await import('../_shared/session-helpers.js')
-    setCookie(res, newSessionId)
+    setCookie(res, newSessionId, req)
 
     let finalDisplayName = display_name?.trim() || generateFunName()
     

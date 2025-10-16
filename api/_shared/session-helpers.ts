@@ -6,6 +6,17 @@ import { supabaseAdmin } from './supabase.js'
 import { generateCorrelationId } from '../../src/lib/logger.js'
 
 /**
+ * Debug OAuth logging helper
+ * Only logs when DEBUG_OAUTH=1 environment variable is set
+ * Never logs sensitive data (tokens, secrets, full bodies)
+ */
+export function debugOAuth(message: string, context?: Record<string, unknown>): void {
+  if (process.env.DEBUG_OAUTH === '1') {
+    console.log(`[DEBUG_OAUTH] ${message}`, context ? JSON.stringify(context, null, 2) : '')
+  }
+}
+
+/**
  * Parse Cookie header into key-value object
  * Handles malformed/missing cookies gracefully
  */
@@ -46,10 +57,15 @@ export function getSessionId(req: VercelRequest): string | null {
 /**
  * Check if request is over HTTPS
  * Uses x-forwarded-proto (Vercel standard) or NODE_ENV
+ * Handles comma-separated proto lists (e.g., "https,http")
  */
 export function isHttps(req: VercelRequest): boolean {
-  const proto = req.headers['x-forwarded-proto']
-  if (proto) return proto === 'https'
+  const proto = req.headers['x-forwarded-proto'] as string | undefined
+  if (proto) {
+    // Handle comma-separated lists - use first value
+    const firstProto = proto.split(',')[0].trim()
+    return firstProto === 'https'
+  }
 
   // Fallback: assume production is HTTPS
   return process.env.NODE_ENV === 'production'
@@ -59,36 +75,66 @@ export function isHttps(req: VercelRequest): boolean {
  * Set session cookie with secure attributes
  * - httpOnly: Prevents JavaScript access
  * - SameSite=Lax: Allows top-level navigation (OAuth flow)
- * - Secure: Only sent over HTTPS in production
+ * - Secure: Only sent over HTTPS (when isHttps returns true)
  * - Path=/: Available to all routes
+ * - Max-Age: 2592000 (30 days)
  * - No Domain: Host-only (most secure)
  */
 export function setSessionCookie(
   res: VercelResponse,
   sid: string,
-  options: { maxAgeDays?: number } = {}
+  req: VercelRequest
 ): void {
-  const maxAgeDays = options.maxAgeDays ?? 30
-  const maxAgeSeconds = maxAgeDays * 24 * 60 * 60
+  const maxAgeSeconds = 2592000 // 30 days
 
-  const secure = process.env.NODE_ENV === 'production' ? 'Secure; ' : ''
+  const secure = isHttps(req) ? 'Secure; ' : ''
   const cookieValue = `sid=${sid}; HttpOnly; SameSite=Lax; ${secure}Path=/; Max-Age=${maxAgeSeconds}`
 
-  res.setHeader('Set-Cookie', cookieValue)
+  // Preserve existing Set-Cookie headers
+  const existing = res.getHeader('Set-Cookie')
+  if (existing) {
+    const cookies = Array.isArray(existing) ? existing : [String(existing)]
+    res.setHeader('Set-Cookie', [...cookies, cookieValue])
+  } else {
+    res.setHeader('Set-Cookie', cookieValue)
+  }
 }
 
 /**
  * Set OAuth state cookie for CSRF protection
- * Short TTL (10 minutes) for security
+ * - HttpOnly; SameSite=Lax; Secure (when HTTPS); Path=/
+ * - Max-Age: 600 (10 minutes)
+ * - No Domain: Host-only
  */
 export function setOAuthStateCookie(
   res: VercelResponse,
   state: string,
   req: VercelRequest
 ): void {
-  const maxAgeSeconds = 10 * 60 // 10 minutes
+  const maxAgeSeconds = 600 // 10 minutes
   const secure = isHttps(req) ? 'Secure; ' : ''
   const cookieValue = `oauth_state=${state}; HttpOnly; SameSite=Lax; ${secure}Path=/; Max-Age=${maxAgeSeconds}`
+
+  // Preserve existing Set-Cookie headers
+  const existing = res.getHeader('Set-Cookie')
+  if (existing) {
+    const cookies = Array.isArray(existing) ? existing : [String(existing)]
+    res.setHeader('Set-Cookie', [...cookies, cookieValue])
+  } else {
+    res.setHeader('Set-Cookie', cookieValue)
+  }
+}
+
+/**
+ * Clear OAuth state cookie after verification
+ * Sets Max-Age=0 to delete the cookie
+ */
+export function clearOAuthStateCookie(
+  res: VercelResponse,
+  req: VercelRequest
+): void {
+  const secure = isHttps(req) ? 'Secure; ' : ''
+  const cookieValue = `oauth_state=; HttpOnly; SameSite=Lax; ${secure}Path=/; Max-Age=0`
 
   // Preserve existing Set-Cookie headers
   const existing = res.getHeader('Set-Cookie')
@@ -125,7 +171,7 @@ export async function ensureSession(
       // Session valid - set cookie if not already present
       const cookies = parseCookies(req)
       if (!cookies.sid) {
-        setSessionCookie(res, sid)
+        setSessionCookie(res, sid, req)
       }
 
       return {
@@ -162,7 +208,7 @@ export async function ensureSession(
   })
 
   // Always set cookie for new sessions
-  setSessionCookie(res, sid)
+  setSessionCookie(res, sid, req)
   created = true
 
   return { sid, userId, created }
