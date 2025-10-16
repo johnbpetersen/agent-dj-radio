@@ -6,7 +6,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from '../_shared/supabase.js'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
 import { sanitizeForClient } from '../_shared/security.js'
-import { requireSessionId } from '../_shared/session.js'
+import { getSessionId } from '../_shared/session-helpers.js'
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
 import { generateFunName, generateNameVariants } from '../../src/lib/name-generator.js'
 import { validateDisplayName } from '../../src/lib/profanity.js'
@@ -46,26 +46,41 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
   const startTime = Date.now()
 
   try {
-    const sessionId = requireSessionId(req)
+    // Get existing session ID from header or cookie (don't create new one yet)
+    const sessionId = getSessionId(req)
     const { display_name }: SessionHelloRequest = req.body || {}
 
-    logger.request('/api/session/hello', { 
-      correlationId, 
-      sessionId,
+    logger.request('/api/session/hello', {
+      correlationId,
+      sessionId: sessionId || 'will_create',
       hasDisplayName: !!display_name
     })
 
-    // Check if presence already exists for this session
-    const { data: existingPresence } = await supabaseAdmin
-      .from('presence')
-      .select(`
-        *,
-        user:users(id, display_name, bio, is_agent, banned, kind)
-      `)
-      .eq('session_id', sessionId)
-      .single()
+    // If session exists, check for presence
+    let existingPresence = null
+    if (sessionId) {
+      const { data } = await supabaseAdmin
+        .from('presence')
+        .select(`
+          *,
+          user:users(id, display_name, bio, is_agent, banned, kind)
+        `)
+        .eq('session_id', sessionId)
+        .single()
 
-    if (existingPresence?.user && !existingPresence.user.banned) {
+      existingPresence = data
+    }
+
+    if (existingPresence?.user && !existingPresence.user.banned && sessionId) {
+      // Import helper to set cookie if needed
+      const { parseCookies, setSessionCookie } = await import('../_shared/session-helpers.js')
+
+      // Ensure cookie is set even if session came from header
+      const cookies = parseCookies(req)
+      if (!cookies.sid) {
+        setSessionCookie(res, sessionId)
+      }
+
       // Update timestamps and return existing user
       await Promise.all([
         supabaseAdmin
@@ -112,7 +127,14 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
       return
     }
 
-    // Create new ephemeral user
+    // Create new session and ephemeral user
+    // Generate a new session ID if we don't have one
+    const newSessionId = sessionId || generateCorrelationId()
+
+    // Import helper to set cookie
+    const { setSessionCookie: setCookie } = await import('../_shared/session-helpers.js')
+    setCookie(res, newSessionId)
+
     let finalDisplayName = display_name?.trim() || generateFunName()
     
     // Validate display name
@@ -198,16 +220,16 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
     const { error: presenceError } = await supabaseAdmin
       .from('presence')
       .upsert({
-        session_id: sessionId,
+        session_id: newSessionId,
         user_id: user.id,
         display_name: user.display_name,
         last_seen_at: new Date().toISOString(),
         user_agent: req.headers['user-agent'] || null,
-        ip: req.headers['x-forwarded-for']?.toString()?.split(',')[0] || 
+        ip: req.headers['x-forwarded-for']?.toString()?.split(',')[0] ||
             req.headers['x-real-ip']?.toString() || null
-      }, { 
-        onConflict: 'session_id', 
-        ignoreDuplicates: false 
+      }, {
+        onConflict: 'session_id',
+        ignoreDuplicates: false
       })
 
     if (presenceError) {
@@ -233,26 +255,21 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
         isWalletLinked: false
       },
       identity,
-      session_id: sessionId
+      session_id: newSessionId
     }
 
     logger.requestComplete('/api/session/hello', Date.now() - startTime, {
       correlationId,
       userId: user.id,
       displayName: user.display_name,
-      action: 'new_user'
+      action: 'new_user',
+      sidSuffix: newSessionId.slice(-6)
     })
 
     res.status(201).json(response)
 
   } catch (error) {
-    // Check for session ID errors and convert to proper HTTP errors
-    if (error instanceof Error &&
-        (error.message.includes('Missing X-Session-Id') || error.message.includes('Invalid X-Session-Id'))) {
-      throw httpError.badRequest(error.message, 'Please provide a valid session ID in X-Session-Id header')
-    }
-
-    // All other errors will be handled by secureHandler
+    // All errors will be handled by secureHandler
     throw error
   }
 }

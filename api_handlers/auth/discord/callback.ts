@@ -8,7 +8,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from '../../_shared/supabase.js'
-import { requireSessionId } from '../../_shared/session.js'
+import { getSessionId, parseCookies } from '../../_shared/session-helpers.js'
 import { secureHandler, securityConfigs } from '../../_shared/secure-handler.js'
 import { logger, generateCorrelationId } from '../../../src/lib/logger.js'
 import { httpError } from '../../_shared/errors.js'
@@ -42,11 +42,7 @@ interface DiscordUser {
   public_flags?: number
 }
 
-function parseCookie(cookieHeader: string | undefined, name: string): string | null {
-  if (!cookieHeader) return null
-  const match = cookieHeader.match(new RegExp(`(?:^|; )${name}=([^;]*)`))
-  return match ? decodeURIComponent(match[1]) : null
-}
+// Removed: parseCookie() - now using parseCookies() from session-helpers
 
 /**
  * Parse OAuth state parameter (base64url encoded JSON with csrf + sid)
@@ -115,8 +111,9 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
     throw httpError.badRequest('Invalid state parameter format')
   }
 
-  // Verify CSRF state from cookie
-  const cookieState = parseCookie(req.headers.cookie, 'discord_state')
+  // Verify CSRF state from cookie (use oauth_state, not discord_state)
+  const cookies = parseCookies(req)
+  const cookieState = cookies.oauth_state
   if (!cookieState || cookieState !== state) {
     logger.warn('Discord OAuth state mismatch', {
       correlationId,
@@ -126,8 +123,8 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
     throw httpError.badRequest('Invalid state parameter (CSRF check failed)')
   }
 
-  // Clear state cookie (but keep x_session_id cookie)
-  res.setHeader('Set-Cookie', 'discord_state=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0')
+  // Clear oauth_state cookie (keep sid cookie)
+  res.setHeader('Set-Cookie', 'oauth_state=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0')
 
   // Environment validation
   const clientId = process.env.DISCORD_CLIENT_ID
@@ -165,7 +162,9 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
         status: tokenResponse.status,
         error: errorText
       })
-      throw httpError.external('Failed to authenticate with Discord', 'discord_token_exchange_failed')
+      throw httpError.networkError('Failed to authenticate with Discord', {
+        external: { service: 'discord', operation: 'token_exchange' }
+      })
     }
 
     const tokenData: DiscordTokenResponse = await tokenResponse.json()
@@ -186,7 +185,9 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
         status: userResponse.status,
         error: errorText
       })
-      throw httpError.external('Failed to fetch Discord profile', 'discord_user_fetch_failed')
+      throw httpError.networkError('Failed to fetch Discord profile', {
+        external: { service: 'discord', operation: 'user_fetch' }
+      })
     }
 
     const discordUser: DiscordUser = await userResponse.json()
@@ -199,14 +200,25 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
       hasAvatar: !!avatar
     })
 
-    // Get current session user
-    const sessionId = requireSessionId(req)
+    // Get current session ID from header or cookie (MUST NOT create new session)
+    const sessionId = getSessionId(req)
 
-    // Debug: Log session ID source
-    const fromHeader = req.headers['x-session-id']
-    const fromCookie = parseCookie(req.headers.cookie, 'x_session_id')
-    const sidSource = fromHeader ? 'header' : fromCookie ? 'cookie' : 'state'
-    console.log('[discord/callback] sid source:', sidSource)
+    if (!sessionId) {
+      logger.warn('Discord callback missing session ID', {
+        correlationId,
+        discordUserId
+      })
+      throw httpError.badRequest(
+        'Session not found',
+        'Please refresh the page and try again. Your session cookie may have expired.'
+      )
+    }
+
+    logger.debug('Discord callback session check', {
+      correlationId,
+      sidSuffix: sessionId.slice(-6),
+      discordUserId
+    })
 
     const { data: presence, error: presenceError } = await supabaseAdmin
       .from('presence')
@@ -263,7 +275,7 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
       if (mergeError) {
         logger.error('User merge function failed', { correlationId }, mergeError)
         throw httpError.dbError('Failed to merge user accounts', {
-          db: { type: 'RPC', operation: 'merge_users_on_discord_link' }
+          db: { type: 'QUERY', operation: 'merge_users_on_discord_link' }
         })
       }
 

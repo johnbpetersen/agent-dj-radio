@@ -9,6 +9,7 @@ import { logger, generateCorrelationId } from '../src/lib/logger.js'
 // Note: These handlers are already wrapped with secureHandler()
 import healthHandler from '../api_handlers/health.js'
 import versionHandler from '../api_handlers/version.js'
+import pingHandler from '../api_handlers/ping.js'
 import sessionHelloHandler from '../api_handlers/session/hello.js'
 import sessionWhoamiHandler from '../api_handlers/session/whoami.js'
 import discordStartHandler from '../api_handlers/auth/discord/start.js'
@@ -52,6 +53,7 @@ const routes: Route[] = [
   // Health & version
   { method: 'GET', pattern: '/health', handler: healthHandler },
   { method: 'GET', pattern: '/version', handler: versionHandler },
+  { method: 'GET', pattern: '/ping', handler: pingHandler },
 
   // Session
   { method: 'GET', pattern: '/session/hello', handler: sessionHelloHandler },
@@ -60,6 +62,7 @@ const routes: Route[] = [
 
   // Auth - Discord
   { method: 'GET', pattern: '/auth/discord/start', handler: discordStartHandler },
+  { method: 'POST', pattern: '/auth/discord/start', handler: discordStartHandler },
   { method: 'GET', pattern: '/auth/discord/callback', handler: discordCallbackHandler },
   { method: 'POST', pattern: '/auth/discord/unlink', handler: discordUnlinkHandler },
 

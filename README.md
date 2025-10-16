@@ -316,6 +316,14 @@ curl -X POST http://localhost:3001/api/queue/confirm \
 - Early 403 guards prevent guests from posting chat messages
 - Structured error responses: `{ error: "discord_required" }` for unauthorized chat access
 
+**Discord OAuth Cookie Flow:**
+- **Session Management**: Dual support for `X-Session-Id` header (fetch API) and `sid` cookie (browser navigation)
+- **OAuth State**: `oauth_state` cookie (10 min TTL) for CSRF protection during OAuth flow
+- **Cookie Attributes**: `httpOnly; SameSite=Lax; Secure (production); Path=/; no Domain`
+- **Start Endpoint**: `GET /api/auth/discord/start` returns 302 redirect, `POST` returns `{redirectUrl}` JSON
+- **Callback**: Reads `sid` from cookie/header; returns 400 MISSING_SESSION if absent (never creates new session)
+- **Environment Variables**: `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `ALLOWED_REDIRECT_HOSTS` (optional allowlist)
+
 ### 🔄 Real-time Updates
 - Supabase Realtime for queue updates
 - Station advancement with cron scheduling
