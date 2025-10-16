@@ -1,5 +1,6 @@
-// POST /api/session/hello - Create/retrieve ephemeral user + presence
+// GET/POST /api/session/hello - Create/retrieve ephemeral user + presence
 // Creates ephemeral user and presence for session-based authentication
+// Supports both GET and POST for idempotent session initialization
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from '../_shared/supabase.js'
@@ -31,8 +32,9 @@ interface SessionHelloResponse {
 }
 
 async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
-  if (req.method !== 'POST') {
-    throw httpError.badRequest('Method not allowed', 'Only POST requests are supported')
+  // Accept both GET and POST (idempotent cookie-based session init)
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    throw httpError.badRequest('Method not allowed', 'Only GET and POST requests are supported')
   }
 
   // Check feature flag

@@ -55,6 +55,7 @@ const routes: Route[] = [
 
   // Session
   { method: 'GET', pattern: '/session/hello', handler: sessionHelloHandler },
+  { method: 'POST', pattern: '/session/hello', handler: sessionHelloHandler },
   { method: 'GET', pattern: '/session/whoami', handler: sessionWhoamiHandler },
 
   // Auth - Discord
