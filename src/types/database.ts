@@ -28,11 +28,31 @@ export interface Database {
           last_seen_at?: string | null
         }
       }
+      sessions: {
+        Row: {
+          session_id: string
+          user_id: string
+          created_at: string
+          last_seen_at: string
+        }
+        Insert: {
+          session_id: string
+          user_id: string
+          created_at?: string
+          last_seen_at?: string
+        }
+        Update: {
+          session_id?: string
+          user_id?: string
+          created_at?: string
+          last_seen_at?: string
+        }
+      }
       user_accounts: {
         Row: {
           id: string
           user_id: string
-          provider: 'discord' | 'wallet'
+          provider: 'wallet'
           provider_user_id: string
           meta: Record<string, any>
           created_at: string
@@ -41,7 +61,7 @@ export interface Database {
         Insert: {
           id?: string
           user_id: string
-          provider: 'discord' | 'wallet'
+          provider: 'wallet'
           provider_user_id: string
           meta?: Record<string, any>
           created_at?: string
@@ -50,7 +70,7 @@ export interface Database {
         Update: {
           id?: string
           user_id?: string
-          provider?: 'discord' | 'wallet'
+          provider?: 'wallet'
           provider_user_id?: string
           meta?: Record<string, any>
           created_at?: string
@@ -209,13 +229,6 @@ export interface Database {
     }
     Views: {}
     Functions: {
-      merge_users_on_discord_link: {
-        Args: {
-          p_guest_user_id: string
-          p_target_user_id: string
-        }
-        Returns: void
-      }
       claim_next_job: {
         Args: {
           p_kind: 'augment' | 'generate'
@@ -228,7 +241,7 @@ export interface Database {
       track_status: 'PENDING_PAYMENT' | 'PAID' | 'AUGMENTING' | 'QUEUED' | 'GENERATING' | 'READY' | 'PLAYING' | 'DONE' | 'FAILED' | 'ARCHIVED'
       reaction_kind: 'LOVE' | 'FIRE' | 'SKIP'
       user_kind: 'human' | 'agent'
-      account_provider: 'discord' | 'wallet'
+      account_provider: 'wallet'
       job_kind: 'augment' | 'generate'
       job_status: 'queued' | 'running' | 'succeeded' | 'failed' | 'timeout'
     }

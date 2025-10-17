@@ -1,4 +1,3 @@
-import DiscordLoginButton from '../../DiscordLoginButton'
 import { useEphemeralUser } from '../../../hooks/useEphemeralUser'
 
 interface TopNavProps {
@@ -33,8 +32,6 @@ export default function TopNav({ onQueueTrack, className = '' }: TopNavProps) {
             <span>Queue a Track</span>
           </div>
         </button>
-
-        {(!user || !user.isDiscordLinked) && <DiscordLoginButton />}
       </div>
     </nav>
   )

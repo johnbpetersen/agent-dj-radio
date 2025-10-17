@@ -46,7 +46,7 @@ export function computePublicOrigin(req: VercelRequest): string {
  * Compute full redirect URI for OAuth callback
  *
  * @param req - Vercel request
- * @param path - Callback path (e.g., "/api/auth/discord/callback")
+ * @param path - Callback path (e.g., "/api/auth/callback")
  * @returns Full redirect URI
  */
 export function computeRedirectUri(req: VercelRequest, path: string): string {

@@ -20,6 +20,8 @@
     "check:env": "tsx scripts/check-env.ts",
     "check:env:strict": "ALLOW_ENV_WARNINGS=false tsx scripts/check-env.ts",
     "doctor": "tsx scripts/doctor.ts",
+    "ci:forbidden-refs": "bash scripts/ci-check-discord-refs.sh",
+    "smoke:baseline": "bash scripts/smoke-baseline.sh",
     "prebuild": "npm run check:env:strict"
   },
   "dependencies": {
