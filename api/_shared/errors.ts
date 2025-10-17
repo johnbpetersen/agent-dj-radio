@@ -6,6 +6,8 @@ export type ErrorCode =
   | 'UNAUTHORIZED'
   | 'FORBIDDEN'
   | 'NOT_FOUND'
+  | 'CONFLICT'
+  | 'TOO_MANY_REQUESTS'
   | 'NETWORK_ERROR'
   | 'UPSTREAM_4XX'
   | 'UPSTREAM_5XX'
@@ -78,6 +80,8 @@ export class AppError extends Error {
       case 'UNAUTHORIZED': return 401
       case 'FORBIDDEN': return 403
       case 'NOT_FOUND': return 404
+      case 'CONFLICT': return 409
+      case 'TOO_MANY_REQUESTS': return 429
       case 'NETWORK_ERROR': return 503
       case 'UPSTREAM_4XX': return 502
       case 'UPSTREAM_5XX': return 503
@@ -277,6 +281,12 @@ export const httpError = {
 
   notFound: (message: string = 'Not found', hint?: string, meta?: ErrorMeta) =>
     new AppError('NOT_FOUND', message, { hint, meta }),
+
+  conflict: (message: string = 'Conflict', meta?: ErrorMeta) =>
+    new AppError('CONFLICT', message, { meta }),
+
+  tooManyRequests: (message: string = 'Too many requests', meta?: ErrorMeta) =>
+    new AppError('TOO_MANY_REQUESTS', message, { meta }),
 
   networkError: (message: string, meta?: ErrorMeta) =>
     new AppError('NETWORK_ERROR', message, { meta }),

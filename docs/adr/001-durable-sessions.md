@@ -189,6 +189,52 @@ Returns current user identity derived from durable session (no writes except pre
 - Debugging session state with DEBUG_AUTH=1
 - Checking ban/ephemeral status before actions
 
+## Rename Endpoint
+
+**Endpoint:** `POST /api/users/rename`
+
+Allows guest users to change their display name with collision safety:
+
+```typescript
+// Request body
+{
+  displayName: string  // 3-24 chars, lowercase/digits/underscores only
+}
+
+// Response (200)
+{
+  userId: string
+  displayName: string
+}
+```
+
+**Validation Rules:**
+- Pattern: `^[a-z0-9_]{3,24}$` (lowercase letters, digits, underscores)
+- No leading/trailing whitespace
+- Length: 3-24 characters
+
+**Key behaviors:**
+- **POST-only endpoint** - body must be JSON with `displayName` field
+- Uses `ensureSession()` to get userId from durable sessions (NOT presence)
+- **Collision handling:** Returns **409 Conflict** with `{ code: "NAME_TAKEN" }` if name taken
+  - No auto-suffixing (user must choose different name manually)
+  - Different from first-visit flow which does auto-suffix
+- **No-op handling:** Returns **200 OK** if renaming to current name (no DB write)
+- **Banned users:** Returns **403 Forbidden** - banned users cannot rename
+- **Rate limiting:** Optional dev-only limit (1/min) when `ENABLE_RENAME_RL=true` (default: off)
+  - Returns **429 Too Many Requests** with `{ code: "RATE_LIMITED" }`
+
+**Error Responses:**
+- 400: Invalid displayName (empty, too short/long, bad chars, whitespace)
+- 403: User is banned
+- 409: Name already taken (`NAME_TAKEN` code)
+- 429: Rate limited (if enabled)
+
+**Use cases:**
+- Guest users personalizing their randomly-assigned names
+- Changing name before linking wallet (preserves identity)
+- Testing name availability without auto-suffix fallback
+
 ## References
 
 - Migration: `supabase/migrations/012_durable_sessions.sql`

@@ -1,200 +1,171 @@
-// POST /api/users/rename - Change display name
-// Updates display name for ephemeral user with validation and rate limiting
+// POST /api/users/rename - Change display name with collision safety
+// Identity comes from durable sessions (never presence)
+// Returns 409 on collision (no auto-suffix), 200 on no-op (same name)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from '../_shared/supabase.js'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
-import { sanitizeForClient } from '../_shared/security.js'
-import { requireSessionId } from '../_shared/session.js'
-import { checkSessionRateLimit } from '../../src/server/rate-limit.js'
-import { validateDisplayName } from '../../src/lib/profanity.js'
-import { generateNameVariants } from '../../src/lib/name-generator.js'
+import { ensureSession, setSessionCookie } from '../_shared/session-helpers.js'
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
+import { httpError } from '../_shared/errors.js'
+import { checkRenameRateLimit } from '../_shared/rate-limit.js'
 
-interface UsersRenameRequest {
-  new_name: string
+interface RenameRequest {
+  displayName: string
 }
 
-interface UsersRenameResponse {
-  user: {
-    id: string
-    display_name: string
-    bio: string | null
-    is_agent: boolean
+interface RenameResponse {
+  userId: string
+  displayName: string
+}
+
+/**
+ * Validate display name against rules:
+ * - Must be trimmed (no leading/trailing whitespace)
+ * - Length: 3-24 characters
+ * - Pattern: lowercase letters, digits, underscores only
+ */
+function validateDisplayName(displayName: string): void {
+  // Check if value exists
+  if (!displayName || displayName.length === 0) {
+    throw httpError.badRequest('Display name is required')
+  }
+
+  // Check for whitespace
+  const trimmed = displayName.trim()
+  if (trimmed !== displayName) {
+    throw httpError.badRequest('Display name cannot contain leading or trailing whitespace')
+  }
+
+  // Check length
+  if (displayName.length < 3) {
+    throw httpError.badRequest('Display name must be at least 3 characters')
+  }
+
+  if (displayName.length > 24) {
+    throw httpError.badRequest('Display name must be at most 24 characters')
+  }
+
+  // Check pattern: lowercase letters, digits, underscores only
+  const validPattern = /^[a-z0-9_]+$/
+  if (!validPattern.test(displayName)) {
+    throw httpError.badRequest(
+      'Display name can only contain lowercase letters, numbers, and underscores'
+    )
   }
 }
 
-async function usersRenameHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
+async function renameHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
+  // POST-only endpoint
   if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method not allowed' })
-    return
-  }
-
-  // Check feature flag
-  if (process.env.ENABLE_EPHEMERAL_USERS !== 'true') {
-    res.status(404).json({ error: 'Feature not available' })
-    return
+    throw httpError.badRequest('Method not allowed', 'Only POST requests are supported')
   }
 
   const correlationId = generateCorrelationId()
   const startTime = Date.now()
 
   try {
-    const sessionId = requireSessionId(req)
-    const { new_name }: UsersRenameRequest = req.body || {}
+    // Get user identity from durable session
+    const { userId, sessionId, shouldSetCookie } = await ensureSession(req, res)
 
-    logger.request('/api/users/rename', { 
-      correlationId, 
-      sessionId,
-      newNameLength: new_name?.length
-    })
+    if (shouldSetCookie) {
+      setSessionCookie(res, sessionId, req)
+    }
 
-    // Check rate limiting: 1 rename per minute per session
-    const rateLimitResult = checkSessionRateLimit(sessionId, 'rename', {
-      windowMs: 60 * 1000, // 1 minute
-      maxRequests: 1
-    })
-
-    if (!rateLimitResult.allowed) {
-      logger.warn('Rename rate limit exceeded', { correlationId, sessionId })
-      res.status(429).json({
-        error: 'Too many rename requests',
-        retry_after_seconds: Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000),
-        correlationId
+    // Check rate limit (optional, dev-only)
+    if (!checkRenameRateLimit(userId)) {
+      throw httpError.tooManyRequests('Too many rename attempts', {
+        code: 'RATE_LIMITED'
       })
-      return
     }
 
-    // Validate new name
-    const validationError = validateDisplayName(new_name)
-    if (validationError) {
-      logger.warn('Invalid new display name', { correlationId, validationError })
-      res.status(400).json({ error: validationError, correlationId })
-      return
-    }
+    // Extract and validate display name
+    const body = req.body as RenameRequest
+    const { displayName } = body
 
-    const trimmedName = new_name.trim()
+    validateDisplayName(displayName)
 
-    // Get current user via presence
-    const { data: presence, error: presenceError } = await supabaseAdmin
-      .from('presence')
-      .select(`
-        user_id,
-        user:users!inner(id, display_name, bio, is_agent, banned)
-      `)
-      .eq('session_id', sessionId)
+    // Fetch current user state (identity source: sessions → users, NOT presence)
+    const { data: user, error: userError } = await supabaseAdmin
+      .from('users')
+      .select('id, display_name, banned')
+      .eq('id', userId)
       .single()
 
-    if (presenceError || !presence?.user) {
-      logger.warn('Session not found for rename', { correlationId, sessionId })
-      res.status(404).json({ error: 'Session not found', correlationId })
-      return
-    }
-
-    if (presence.user.banned) {
-      logger.warn('Banned user attempted rename', { 
-        correlationId, 
-        sessionId, 
-        userId: presence.user.id 
-      })
-      res.status(403).json({ error: 'User is banned', correlationId })
-      return
-    }
-
-    // Check if name is already the same
-    if (presence.user.display_name === trimmedName) {
-      const response: UsersRenameResponse = {
-        user: sanitizeForClient(presence.user, [])
-      }
-      
-      res.status(200).json(response)
-      return
-    }
-
-    try {
-      // Attempt to update user's display name
-      const { data: updatedUser, error: updateError } = await supabaseAdmin
-        .from('users')
-        .update({ 
-          display_name: trimmedName,
-          last_seen_at: new Date().toISOString()
-        })
-        .eq('id', presence.user.id)
-        .select()
-        .single()
-
-      if (updateError) {
-        if (updateError.code === '23505') {
-          // Unique constraint violation - name already taken
-          const variants = generateNameVariants(trimmedName, 3)
-          const suggestions = [trimmedName, ...variants]
-
-          logger.info('Display name conflict', { 
-            correlationId, 
-            sessionId, 
-            requestedName: trimmedName,
-            suggestions
-          })
-
-          res.status(409).json({
-            error: 'Display name already taken',
-            suggestions,
-            correlationId
-          })
-          return
+    if (userError || !user) {
+      throw httpError.internal('Failed to fetch user', {
+        db: {
+          type: 'QUERY',
+          operation: 'select',
+          table: 'users'
         }
-        throw updateError
-      }
+      })
+    }
 
-      // Update denormalized display name in presence table
-      await supabaseAdmin
-        .from('presence')
-        .update({ display_name: trimmedName })
-        .eq('session_id', sessionId)
+    // Guard: banned users cannot rename
+    if (user.banned) {
+      throw httpError.forbidden('Banned users cannot change display name')
+    }
 
-      const response: UsersRenameResponse = {
-        user: sanitizeForClient(updatedUser, [])
-      }
-
+    // No-op: renaming to current name (case-sensitive match)
+    if (displayName === user.display_name) {
       logger.requestComplete('/api/users/rename', Date.now() - startTime, {
         correlationId,
-        sessionId,
-        userId: updatedUser.id,
-        oldName: presence.user.display_name,
-        newName: trimmedName
+        userId,
+        noOp: true
       })
+
+      const response: RenameResponse = {
+        userId,
+        displayName
+      }
 
       res.status(200).json(response)
-
-    } catch (error) {
-      // Handle unexpected database errors
-      logger.error('Database error during rename', { 
-        correlationId, 
-        sessionId, 
-        userId: presence.user.id 
-      }, error)
-      
-      res.status(500).json({
-        error: 'Failed to update display name',
-        correlationId
-      })
-    }
-
-  } catch (error) {
-    const err = error instanceof Error ? error : new Error(String(error))
-    
-    logger.error('Users rename error', { correlationId }, err)
-
-    if (err.message.includes('Missing X-Session-Id') || err.message.includes('Invalid X-Session-Id')) {
-      res.status(400).json({ error: err.message, correlationId })
       return
     }
 
-    res.status(500).json({ 
-      error: 'Internal server error',
-      correlationId
+    // Attempt to update display name
+    const { error: updateError } = await supabaseAdmin
+      .from('users')
+      .update({ display_name: displayName })
+      .eq('id', userId)
+
+    if (updateError) {
+      // Postgres unique constraint violation (23505) → name already taken
+      if (updateError.code === '23505') {
+        throw httpError.conflict('Display name already taken', {
+          code: 'NAME_TAKEN'
+        })
+      }
+
+      // Other DB errors
+      throw httpError.internal('Failed to update display name', {
+        db: {
+          type: 'QUERY',
+          operation: 'update',
+          table: 'users'
+        }
+      })
+    }
+
+    logger.requestComplete('/api/users/rename', Date.now() - startTime, {
+      correlationId,
+      userId,
+      oldName: user.display_name,
+      newName: displayName
     })
+
+    const response: RenameResponse = {
+      userId,
+      displayName
+    }
+
+    res.status(200).json(response)
+
+  } catch (error) {
+    // All errors will be handled by secureHandler
+    throw error
   }
 }
 
-export default secureHandler(usersRenameHandler, securityConfigs.user)
+export default secureHandler(renameHandler, securityConfigs.user)
