@@ -11,7 +11,7 @@ export interface UserInfo {
  * @returns Display name with @ prefix or "Guest" fallback
  *
  * Examples:
- * - Discord-linked: "jbp3" → "@jbp3"
+ * - "jbp3" → "@jbp3"
  * - Ephemeral: "purple_raccoon" → "@purple_raccoon"
  * - Numeric suffix: "jbp3_2" → "@jbp3_2"
  * - Guest/null: null → "Guest"

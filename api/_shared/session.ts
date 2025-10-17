@@ -24,7 +24,7 @@ function parseCookie(cookieHeader: string | undefined, name: string): string | n
 
 /**
  * Try to extract session ID from OAuth state parameter (base64url encoded JSON)
- * Used as fallback for Discord OAuth callback
+ * Used as fallback for OAuth callback flows
  */
 function extractSidFromState(req: VercelRequest): string | null {
   try {

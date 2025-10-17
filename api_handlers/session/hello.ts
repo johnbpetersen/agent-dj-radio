@@ -1,21 +1,15 @@
-// GET/POST /api/session/hello - Create/retrieve ephemeral user + presence
-// Creates ephemeral user and presence for session-based authentication
+// GET/POST /api/session/hello - Create/retrieve durable session + user identity
+// Uses durable sessions table for identity (not presence TTL)
 // Supports both GET and POST for idempotent session initialization
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from '../_shared/supabase.js'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
 import { sanitizeForClient } from '../_shared/security.js'
-import { getSessionId } from '../_shared/session-helpers.js'
+import { ensureSession, setSessionCookie } from '../_shared/session-helpers.js'
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
-import { generateFunName, generateNameVariants } from '../../src/lib/name-generator.js'
-import { validateDisplayName } from '../../src/lib/profanity.js'
-import { httpError, type ErrorMeta } from '../_shared/errors.js'
+import { httpError } from '../_shared/errors.js'
 import { computeIdentityPayload, type Identity } from '../_shared/identity.js'
-
-interface SessionHelloRequest {
-  display_name?: string
-}
 
 interface SessionHelloResponse {
   user: {
@@ -45,223 +39,65 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
   const startTime = Date.now()
 
   try {
-    // Get existing session ID from header or cookie (don't create new one yet)
-    const sessionId = getSessionId(req)
-    const { display_name }: SessionHelloRequest = req.body || {}
+    // Use durable session helper - handles all session/user/presence logic
+    const { userId, sessionId, shouldSetCookie } = await ensureSession(req, res)
 
-    logger.request('/api/session/hello', {
-      correlationId,
-      sessionId: sessionId || 'will_create',
-      hasDisplayName: !!display_name
-    })
-
-    // If session exists, check for presence
-    let existingPresence = null
-    if (sessionId) {
-      const { data } = await supabaseAdmin
-        .from('presence')
-        .select(`
-          *,
-          user:users(id, display_name, bio, is_agent, banned, kind)
-        `)
-        .eq('session_id', sessionId)
-        .single()
-
-      existingPresence = data
+    // Set cookie if needed (first visit or came from header)
+    if (shouldSetCookie) {
+      setSessionCookie(res, sessionId, req)
     }
 
-    if (existingPresence?.user && !existingPresence.user.banned && sessionId) {
-      // Import helper to set cookie if needed
-      const { parseCookies, setSessionCookie } = await import('../_shared/session-helpers.js')
+    // Fetch user data (already exists from ensureSession)
+    const { data: user, error: userError } = await supabaseAdmin
+      .from('users')
+      .select('id, display_name, bio, is_agent, banned, kind')
+      .eq('id', userId)
+      .single()
 
-      // Ensure cookie is set even if session came from header
-      const cookies = parseCookies(req)
-      if (!cookies.sid) {
-        setSessionCookie(res, sessionId, req)
-      }
-
-      // Update timestamps and return existing user
-      await Promise.all([
-        supabaseAdmin
-          .from('presence')
-          .update({ last_seen_at: new Date().toISOString() })
-          .eq('session_id', sessionId),
-        supabaseAdmin
-          .from('users')
-          .update({ last_seen_at: new Date().toISOString() })
-          .eq('id', existingPresence.user.id)
-      ])
-
-      // Check for linked accounts (wallet)
-      const { data: userAccounts } = await supabaseAdmin
-        .from('user_accounts')
-        .select('provider, meta')
-        .eq('user_id', existingPresence.user.id)
-
-      const isWalletLinked = userAccounts?.some(acc => acc.provider === 'wallet') ?? false
-
-      // Compute identity payload
-      const identity = await computeIdentityPayload(existingPresence.user, userAccounts || [])
-
-      const response: SessionHelloResponse = {
-        user: {
-          ...sanitizeForClient(existingPresence.user, []),
-          isWalletLinked
-        },
-        identity,
-        session_id: sessionId
-      }
-
-      logger.requestComplete('/api/session/hello', Date.now() - startTime, {
-        correlationId,
-        userId: existingPresence.user.id,
-        action: 'existing_session',
-        isWalletLinked
+    if (userError || !user) {
+      throw httpError.internal('Failed to fetch user', {
+        db: {
+          type: 'QUERY',
+          operation: 'select',
+          table: 'users'
+        }
       })
-
-      res.status(200).json(response)
-      return
     }
 
-    // Create new session and ephemeral user
-    // Generate a new session ID if we don't have one
-    const newSessionId = sessionId || generateCorrelationId()
-
-    // Import helper to set cookie
-    const { setSessionCookie: setCookie } = await import('../_shared/session-helpers.js')
-    setCookie(res, newSessionId, req)
-
-    let finalDisplayName = display_name?.trim() || generateFunName()
-    
-    // Validate display name
-    const validationError = validateDisplayName(finalDisplayName)
-    if (validationError) {
-      logger.warn('Invalid display name', { correlationId, validationError })
-      throw httpError.badRequest(validationError, 'Please choose a different display name')
+    // Check if user is banned
+    if (user.banned) {
+      throw httpError.forbidden('Account banned', 'This account has been banned')
     }
 
-    let user: Record<string, unknown> | null = null
-    let attempts = 0
-    const maxAttempts = 5
+    // Check for linked accounts (wallet)
+    const { data: userAccounts } = await supabaseAdmin
+      .from('user_accounts')
+      .select('provider, meta')
+      .eq('user_id', userId)
 
-    while (!user && attempts < maxAttempts) {
-      attempts++
-      
-      try {
-        // Try to create user with current name
-        const { data: newUser, error: userError } = await supabaseAdmin
-          .from('users')
-          .insert({
-            display_name: finalDisplayName,
-            banned: false,
-            is_agent: false,
-            bio: null,
-            last_seen_at: new Date().toISOString(),
-            ephemeral: true
-          })
-          .select()
-          .single()
+    const isWalletLinked = userAccounts?.some(acc => acc.provider === 'wallet') ?? false
 
-        if (newUser) {
-          user = newUser
-          break
-        }
-
-        if (userError?.code === '23505') {
-          // Unique constraint violation - try variants
-          if (attempts === 1) {
-            // First retry: try numbered variants
-            generateNameVariants(finalDisplayName, 3)
-
-            throw httpError.badRequest('Display name already taken', undefined, {
-              context: {
-                route: '/api/session/hello',
-                method: 'POST',
-                path: req.url,
-                queryKeysOnly: req.query ? Object.keys(req.query) : [],
-                targetUrl: 'supabase://users'
-              }
-            })
-          } else {
-            // Subsequent retries: generate new fun name
-            finalDisplayName = generateFunName()
-          }
-        } else {
-          const context: ErrorMeta['context'] = {
-            route: '/api/session/hello',
-            method: 'POST',
-            path: req.url,
-            queryKeysOnly: req.query ? Object.keys(req.query) : [],
-            targetUrl: 'supabase://users'
-          }
-          logger.error('User creation failed', { correlationId, ...context }, userError)
-          throw httpError.dbError('Failed to create user', {
-            db: { type: 'QUERY', operation: 'insert', table: 'users' },
-            context
-          })
-        }
-      } catch (error) {
-        if (attempts >= maxAttempts) {
-          throw error
-        }
-        // Continue to next attempt
-      }
-    }
-
-    if (!user) {
-      throw httpError.internal('Failed to create user after multiple attempts')
-    }
-
-    // Create presence record (upsert to prevent duplicate key errors)
-    const { error: presenceError } = await supabaseAdmin
-      .from('presence')
-      .upsert({
-        session_id: newSessionId,
-        user_id: user.id,
-        display_name: user.display_name,
-        last_seen_at: new Date().toISOString(),
-        user_agent: req.headers['user-agent'] || null,
-        ip: req.headers['x-forwarded-for']?.toString()?.split(',')[0] ||
-            req.headers['x-real-ip']?.toString() || null
-      }, {
-        onConflict: 'session_id',
-        ignoreDuplicates: false
-      })
-
-    if (presenceError) {
-      const context: ErrorMeta['context'] = {
-        route: '/api/session/hello',
-        method: 'POST',
-        path: req.url,
-        queryKeysOnly: req.query ? Object.keys(req.query) : [],
-        targetUrl: 'supabase://presence'
-      }
-      logger.error('Failed to create presence', { correlationId, ...context }, presenceError)
-      // Continue anyway - user creation succeeded
-    }
-
-    // New users don't have linked accounts yet
-    // Compute identity payload for new user
-    const identity = await computeIdentityPayload(user as any, [])
+    // Compute identity payload
+    const identity = await computeIdentityPayload(user, userAccounts || [])
 
     const response: SessionHelloResponse = {
       user: {
         ...sanitizeForClient(user, []),
-        isWalletLinked: false
+        isWalletLinked
       },
       identity,
-      session_id: newSessionId
+      session_id: sessionId
     }
 
     logger.requestComplete('/api/session/hello', Date.now() - startTime, {
       correlationId,
-      userId: user.id,
-      displayName: user.display_name,
-      action: 'new_user',
-      sidSuffix: newSessionId.slice(-6)
+      userId,
+      sessionId: sessionId.slice(-6),
+      action: shouldSetCookie ? 'new_session' : 'existing_session',
+      isWalletLinked
     })
 
-    res.status(201).json(response)
+    res.status(200).json(response)
 
   } catch (error) {
     // All errors will be handled by secureHandler

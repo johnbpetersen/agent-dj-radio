@@ -1,80 +1,92 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # scripts/ci-check-discord-refs.sh
 # CI check to fail build if Discord/oauth_state/isDiscordLinked appear in runtime code
 
 set -euo pipefail
 
-echo "🔍 Checking for Discord references in runtime code..."
+echo "🔍 Checking for forbidden Discord references in runtime code..."
 
 # Patterns to search for (case-insensitive)
 PATTERNS="discord|oauth_state|isDiscordLinked"
 
-# Files to search (runtime code only - exclude docs, tests, migrations)
-SEARCH_PATHS=(
-  "api/**/*.ts"
-  "api_handlers/**/*.ts"
-  "src/**/*.ts"
-  "src/**/*.tsx"
+# Allowlist: paths that are OK to mention Discord
+ALLOWLIST=(
+  "*.md"
+  "docs/**"
+  "CHANGELOG*"
+  ".git/**"
+  "package.json"
+  "scripts/ci-check-discord-refs.sh"
+  "scripts/smoke-baseline.sh"
+  "scripts/acceptance-discord-removal.ts"
+  "scripts/test-*.sh"
+  "test-*.sh"
+  "api/auth/discord/**"
+  "api_handlers/auth/discord/**"
+  "**/*.test.ts"
+  "**/*.test.js"
+  "**/*.bak"
+  "supabase/migrations/**"
 )
 
-# Explicitly allowed exceptions (files that are OK to have references)
-ALLOWED_EXCEPTIONS=(
-  "api/auth/discord/start.ts"        # Tombstone handler (intentional)
-  "api/auth/discord/callback.ts"     # Tombstone handler (intentional)
-  "api_handlers/auth/discord/start.ts"    # Tombstone handler (intentional)
-  "api_handlers/auth/discord/callback.ts" # Tombstone handler (intentional)
-  "scripts/acceptance-discord-removal.ts" # Test script (intentional)
-  "scripts/ci-check-discord-refs.sh"      # This file (intentional)
-)
-
-# Build ripgrep command with glob patterns
-RG_GLOBS=""
-for pattern in "${SEARCH_PATHS[@]}"; do
-  RG_GLOBS="$RG_GLOBS --glob '$pattern'"
-done
-
-# Run ripgrep and capture results
-echo "Running: rg -i '$PATTERNS' $RG_GLOBS -S --no-heading --with-filename"
-MATCHES=$(eval "rg -i '$PATTERNS' $RG_GLOBS -S --no-heading --with-filename" || true)
-
-if [ -z "$MATCHES" ]; then
-  echo "✅ No Discord references found in runtime code"
-  exit 0
+# Prefer ripgrep (rg) if available; fallback to grep
+if command -v rg &> /dev/null; then
+  SEARCH_CMD="rg"
+else
+  SEARCH_CMD="grep"
 fi
 
-# Filter out allowed exceptions
-FILTERED_MATCHES=""
-while IFS= read -r line; do
-  if [ -z "$line" ]; then
-    continue
-  fi
-
-  # Extract filename from line (format: "file:line:content")
-  FILE=$(echo "$line" | cut -d':' -f1)
-
-  # Check if file is in allowed exceptions
-  IS_ALLOWED=false
-  for exception in "${ALLOWED_EXCEPTIONS[@]}"; do
-    if [ "$FILE" = "$exception" ]; then
-      IS_ALLOWED=true
-      break
-    fi
+# Run the search
+if [ "$SEARCH_CMD" = "rg" ]; then
+  # ripgrep: build exclude arguments
+  EXCLUDE_ARGS=()
+  for pattern in "${ALLOWLIST[@]}"; do
+    EXCLUDE_ARGS+=("--glob" "!${pattern}")
   done
 
-  if [ "$IS_ALLOWED" = false ]; then
-    FILTERED_MATCHES="$FILTERED_MATCHES$line"$'\n'
+  # Run ripgrep (case-insensitive, print matches with line numbers)
+  if rg -i "${EXCLUDE_ARGS[@]}" -n "$PATTERNS" . 2>/dev/null; then
+    echo ""
+    echo "❌ FAIL: Found forbidden Discord references in runtime code (see above)."
+    echo "   Allowed locations: ${ALLOWLIST[*]}"
+    exit 1
+  else
+    echo "✅ PASS: No forbidden Discord references found in runtime code."
+    exit 0
   fi
-done <<< "$MATCHES"
+else
+  # grep fallback: recursively search, excluding allowlist paths
+  TEMP_RESULTS=$(mktemp)
 
-if [ -z "$FILTERED_MATCHES" ]; then
-  echo "✅ No Discord references found in runtime code (allowed exceptions filtered)"
-  exit 0
+  find . -type f \
+    ! -path "*.md" \
+    ! -path "*/docs/*" \
+    ! -path "CHANGELOG*" \
+    ! -path "*/.git/*" \
+    ! -path "package.json" \
+    ! -path "scripts/ci-check-discord-refs.sh" \
+    ! -path "scripts/smoke-baseline.sh" \
+    ! -path "scripts/acceptance-discord-removal.ts" \
+    ! -path "scripts/test-*.sh" \
+    ! -path "test-*.sh" \
+    ! -path "*/api/auth/discord/*" \
+    ! -path "*/api_handlers/auth/discord/*" \
+    ! -path "**/*.test.ts" \
+    ! -path "**/*.test.js" \
+    ! -path "**/*.bak" \
+    ! -path "supabase/migrations/*" \
+    -exec grep -niH -E "$PATTERNS" {} + > "$TEMP_RESULTS" 2>/dev/null || true
+
+  if [ -s "$TEMP_RESULTS" ]; then
+    cat "$TEMP_RESULTS"
+    rm "$TEMP_RESULTS"
+    echo ""
+    echo "❌ FAIL: Found forbidden Discord references in runtime code (see above)."
+    echo "   Allowed locations: ${ALLOWLIST[*]}"
+    exit 1
+  else
+    rm "$TEMP_RESULTS"
+    echo "✅ PASS: No forbidden Discord references found in runtime code."
+    exit 0
+  fi
 fi
-
-# Found forbidden references
-echo "❌ Found Discord references in runtime code:"
-echo "$FILTERED_MATCHES"
-echo ""
-echo "Per CTO requirement: runtime code must not contain discord|oauth_state|isDiscordLinked"
-echo "If these are intentional, add them to ALLOWED_EXCEPTIONS in this script."
-exit 1

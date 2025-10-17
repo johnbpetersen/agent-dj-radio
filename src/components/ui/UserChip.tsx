@@ -17,7 +17,7 @@ interface UserChipProps {
  * UserChip component - shows avatar + handle for attribution
  *
  * Behavior:
- * - If userId provided: fetches Discord avatar, shows handle or fallback
+ * - If userId provided: fetches provider avatar, shows handle or fallback
  * - If userId null: shows letter avatar for fallback name or "Guest"
  * - Graceful loading: skeleton during fetch, no layout shift
  * - Tooltip shows full handle (useful for long names)
@@ -62,7 +62,7 @@ export default function UserChip({ userId, fallbackName: fallbackNameProp, class
         )}
 
         {avatarUrl && !isLoading && (
-          // Discord avatar
+          // Provider avatar
           <img
             src={avatarUrl}
             alt={handle}

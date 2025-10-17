@@ -1,5 +1,5 @@
 // api/_shared/session-helpers.ts
-// Session cookie management utilities for ephemeral user sessions
+// Session cookie management utilities for durable user sessions
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from './supabase.js'
@@ -103,6 +103,14 @@ export function setSessionCookie(
 }
 
 /**
+ * Validate UUID v4 format
+ */
+function isValidUuid(value: string): boolean {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  return uuidRegex.test(value)
+}
+
+/**
  * Generate cryptographically random suffix for display names
  * Uses crypto.randomBytes for stronger randomness than Math.random()
  *
@@ -174,111 +182,212 @@ async function createGuestUserWithUniqueName(
 
     // Any other DB error - fail immediately with wrapped error
     throw httpError.internal('Failed to create guest user', {
-      meta: {
-        db: {
-          type: 'QUERY',
-          operation: 'insert_user',
-          table: 'users'
-        }
+      db: {
+        type: 'QUERY',
+        operation: 'insert_user',
+        table: 'users'
       }
     })
   }
 
   // Exhausted all retries
   throw httpError.internal('Failed to create guest user after retries', {
-    meta: {
-      db: {
-        type: 'QUERY',
-        operation: 'insert_user',
-        table: 'users'
-      }
+    db: {
+      type: 'QUERY',
+      operation: 'insert_user',
+      table: 'users'
     }
   })
 }
 
 /**
- * Load or create ephemeral session, ensuring sid cookie is set
- * Always sets cookie if missing (idempotent)
+ * Ensure session exists and return userId + sessionId
+ * Uses durable sessions table as source of truth for identity
+ * Presence is upserted but NOT queried for identity
  *
- * @returns { sid, userId, created } - Session info
+ * Flow:
+ * 1. Get sid from cookie/header (or generate new)
+ * 2. Lookup sessions table by session_id
+ * 3. If found: update last_seen_at, upsert presence, return userId
+ * 4. If not found: create user → insert session → upsert presence → set cookie
+ *
+ * Race safety: Primary key constraint on session_id handles concurrent inserts
+ *
+ * @param req - Vercel request
+ * @param res - Vercel response (for setting cookie)
+ * @returns { userId, sessionId, shouldSetCookie } - Session info
  */
 export async function ensureSession(
   req: VercelRequest,
-  res: VercelResponse
-): Promise<{ sid: string; userId: string; created: boolean }> {
+  _res: VercelResponse
+): Promise<{ userId: string; sessionId: string; shouldSetCookie: boolean }> {
   let sid = getSessionId(req)
-  let created = false
 
-  // If session exists, verify it in database (use presence table)
+  // Validate existing sid (treat invalid UUID as missing)
+  if (sid && !isValidUuid(sid)) {
+    debugOAuth('invalid-uuid-in-cookie', { sidPrefix: sid.slice(0, 8) })
+    sid = null
+  }
+
+  const now = new Date().toISOString()
+
+  // If sid exists, lookup in sessions table
   if (sid) {
-    const { data: existingSession } = await supabaseAdmin
-      .from('presence')
+    const { data: existingSession, error: sessionError } = await supabaseAdmin
+      .from('sessions')
       .select('session_id, user_id')
       .eq('session_id', sid)
       .single()
 
     if (existingSession) {
-      // Session valid - set cookie if not already present
-      const cookies = parseCookies(req)
-      if (!cookies.sid) {
-        setSessionCookie(res, sid, req)
-      }
+      // Session found! Update last_seen_at
+      await supabaseAdmin
+        .from('sessions')
+        .update({ last_seen_at: now })
+        .eq('session_id', sid)
 
-      debugOAuth('Existing session found in ensureSession', {
+      // Get user display_name for presence upsert
+      const { data: user } = await supabaseAdmin
+        .from('users')
+        .select('display_name')
+        .eq('id', existingSession.user_id)
+        .single()
+
+      // Upsert presence (presence is ephemeral, NOT identity source)
+      await supabaseAdmin
+        .from('presence')
+        .upsert({
+          session_id: sid,
+          user_id: existingSession.user_id,
+          display_name: user?.display_name || 'guest',
+          last_seen_at: now
+        }, {
+          onConflict: 'session_id'
+        })
+
+      debugOAuth('session-hit', {
         sidSuffix: sid.slice(-6),
         userId: existingSession.user_id
       })
 
+      // Check if cookie needs to be set (came from header)
+      const cookies = parseCookies(req)
+      const shouldSetCookie = !cookies.sid
+
       return {
-        sid: existingSession.session_id,
         userId: existingSession.user_id,
-        created: false
+        sessionId: sid,
+        shouldSetCookie
       }
     }
 
-    debugOAuth('Session ID present but not found in presence table', {
-      sidSuffix: sid.slice(-6)
-    })
+    // Session not found in DB but sid was present
+    if (sessionError?.code !== 'PGRST116') {
+      // Unexpected error
+      debugOAuth('session-lookup-error', {
+        sidSuffix: sid.slice(-6),
+        errorCode: sessionError?.code
+      })
+    } else {
+      // Session mapping missing (data loss scenario)
+      console.warn('[session-mapping-missing] Cookie present but no session row', {
+        sidSuffix: sid.slice(-6)
+      })
+    }
+
+    // Fall through to create new session with new user
+    // (Cannot recover old identity without the sessions row)
   }
 
-  // Create new session
-  sid = generateCorrelationId() // UUID v4
+  // Create new session + user + presence
+  sid = sid || generateCorrelationId() // Reuse sid if present, else generate
 
-  // Create user with collision-safe retry (handles 23505 unique constraint violations)
-  const user = await createGuestUserWithUniqueName()
-  const userId = user.id
-  const displayName = user.display_name
+  // Race-safe: try to insert, retry once on conflict
+  let userId: string
+  let displayName: string
 
-  // Create presence row (not ephemeral_sessions - that table doesn't exist)
-  const { error: presenceError } = await supabaseAdmin.from('presence').insert({
-    session_id: sid,
-    user_id: userId,
-    display_name: displayName,
-    last_seen_at: new Date().toISOString()
-  })
+  try {
+    // Create new guest user
+    const user = await createGuestUserWithUniqueName()
+    userId = user.id
+    displayName = user.display_name
 
-  if (presenceError) {
-    debugOAuth('Failed to create presence in ensureSession', { error: presenceError.message })
-    throw httpError.internal('Failed to create presence', {
-      meta: {
-        db: {
-          type: 'QUERY',
-          operation: 'insert_presence',
-          table: 'presence'
+    // Insert session row (PK constraint handles races)
+    const { error: sessionInsertError } = await supabaseAdmin
+      .from('sessions')
+      .insert({
+        session_id: sid,
+        user_id: userId,
+        created_at: now,
+        last_seen_at: now
+      })
+
+    if (sessionInsertError) {
+      // If 23505 (unique constraint), another request won - retry by reading
+      if (sessionInsertError.code === '23505') {
+        debugOAuth('session-insert-conflict', {
+          sidSuffix: sid.slice(-6),
+          willRetryRead: true
+        })
+
+        // Read the winning row
+        const { data: winningSession } = await supabaseAdmin
+          .from('sessions')
+          .select('user_id')
+          .eq('session_id', sid)
+          .single()
+
+        if (winningSession) {
+          userId = winningSession.user_id
+
+          // Get winner's display name
+          const { data: winnerUser } = await supabaseAdmin
+            .from('users')
+            .select('display_name')
+            .eq('id', userId)
+            .single()
+
+          displayName = winnerUser?.display_name || 'guest'
+        } else {
+          throw httpError.internal('Session conflict but cannot read winner')
         }
+      } else {
+        throw httpError.internal('Failed to create session', {
+          db: {
+            type: 'QUERY',
+            operation: 'insert_session',
+            table: 'sessions'
+          }
+        })
       }
+    }
+
+    // Upsert presence row
+    await supabaseAdmin
+      .from('presence')
+      .upsert({
+        session_id: sid,
+        user_id: userId,
+        display_name: displayName,
+        last_seen_at: now
+      }, {
+        onConflict: 'session_id'
+      })
+
+    debugOAuth('session-created', {
+      sidSuffix: sid.slice(-6),
+      userId,
+      displayName
     })
+
+    return {
+      userId,
+      sessionId: sid,
+      shouldSetCookie: true
+    }
+
+  } catch (error) {
+    // Re-throw wrapped errors
+    throw error
   }
-
-  // Set cookie ONLY after both user and presence inserts succeed
-  setSessionCookie(res, sid, req)
-  created = true
-
-  debugOAuth('Created new session in ensureSession', {
-    sidSuffix: sid.slice(-6),
-    userId,
-    displayName
-  })
-
-  return { sid, userId, created }
 }
