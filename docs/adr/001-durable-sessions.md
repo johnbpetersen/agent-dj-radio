@@ -157,9 +157,43 @@ If two requests with the same new `sid` race:
 - **Wallet Linking:** When user links wallet, flip `users.ephemeral = false` and bind via `user_accounts` table
 - **Session Analytics:** Track session duration, return visit rate via `created_at` / `last_seen_at`
 
+## Read-Only Identity Endpoint
+
+**Endpoint:** `POST|GET /api/session/whoami`
+
+Returns current user identity derived from durable session (no writes except presence telemetry):
+
+```typescript
+// Response shape
+{
+  userId: string
+  displayName: string
+  ephemeral: boolean
+  kind: 'human' | 'agent'
+  banned: boolean
+  createdAt: string
+  sessionId?: string // Only included when DEBUG_AUTH=1
+}
+```
+
+**Key behaviors:**
+- Supports both GET and POST (idempotent read operation)
+- Uses `ensureSession()` - may create new session if cookie missing/invalid
+- Sets cookie on first visit or when came from header
+- Fetches identity from `sessions → users` (never queries `presence`)
+- Only includes `sessionId` in response when `DEBUG_AUTH=1` env var is set
+
+**Use cases:**
+- Client-side identity hydration on page load
+- Debugging session state with DEBUG_AUTH=1
+- Checking ban/ephemeral status before actions
+
 ## References
 
 - Migration: `supabase/migrations/012_durable_sessions.sql`
 - Implementation: `api/_shared/session-helpers.ts::ensureSession()`
-- Endpoint: `api_handlers/session/hello.ts`
+- Endpoints:
+  - `api_handlers/session/hello.ts` (session creation)
+  - `api_handlers/session/whoami.ts` (read-only identity)
 - Types: `src/types/database.ts` (added `sessions` table)
+- Client helper: `src/lib/api.ts::getWhoAmI()`

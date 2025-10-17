@@ -1,113 +1,88 @@
-// GET /api/session/whoami - Development debugging endpoint
-// Returns current session information for troubleshooting
-// DEV ONLY - returns 404 in production
+// GET/POST /api/session/whoami - Read-only identity endpoint
+// Returns current user identity derived from durable session (no writes except presence telemetry)
+// Supports both GET and POST for idempotent identity retrieval
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from '../_shared/supabase.js'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
-import { requireSessionId } from '../_shared/session.js'
+import { ensureSession, setSessionCookie } from '../_shared/session-helpers.js'
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
+import { httpError } from '../_shared/errors.js'
 
-interface WhoamiResponse {
+interface WhoAmIResponse {
   userId: string
   displayName: string
-  ephemeralDisplayName: string | null
-  isWalletLinked: boolean
-  sessionId: string
-  presenceExists: boolean
-  presenceDisplayName: string | null
+  ephemeral: boolean
+  kind: 'human' | 'agent'
+  banned: boolean
+  createdAt: string
+  sessionId?: string // Only included when DEBUG_AUTH=1
 }
 
 async function whoamiHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
-  // DEV ONLY - return 404 in production
-  if (process.env.NODE_ENV === 'production') {
-    res.status(404).json({ error: 'Not found' })
-    return
-  }
-
-  if (req.method !== 'GET') {
-    res.status(405).json({ error: 'Method not allowed' })
-    return
+  // Accept both GET and POST (idempotent read operation)
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    throw httpError.badRequest('Method not allowed', 'Only GET and POST requests are supported')
   }
 
   const correlationId = generateCorrelationId()
+  const startTime = Date.now()
 
   try {
-    // Get session ID from cookie/header
-    const sessionId = requireSessionId(req)
+    // Use durable session helper - handles all session/user/presence logic
+    // This may create a new session if cookie is missing/invalid
+    const { userId, sessionId, shouldSetCookie } = await ensureSession(req, res)
 
-    logger.debug('/api/session/whoami', { correlationId, sessionId })
-
-    // Get presence data
-    const { data: presence } = await supabaseAdmin
-      .from('presence')
-      .select('user_id, display_name')
-      .eq('session_id', sessionId)
-      .single()
-
-    if (!presence) {
-      res.status(200).json({
-        sessionId,
-        presenceExists: false,
-        message: 'Session ID valid but no presence record found'
-      })
-      return
+    // Set cookie if needed (first visit or came from header)
+    if (shouldSetCookie) {
+      setSessionCookie(res, sessionId, req)
     }
 
-    // Get user data
-    const { data: user } = await supabaseAdmin
+    // Fetch user data (identity source is sessions → users, NOT presence!)
+    const { data: user, error: userError } = await supabaseAdmin
       .from('users')
-      .select('id, display_name, ephemeral_display_name')
-      .eq('id', presence.user_id)
+      .select('id, display_name, ephemeral, kind, banned, created_at')
+      .eq('id', userId)
       .single()
 
-    if (!user) {
-      res.status(200).json({
-        sessionId,
-        presenceExists: true,
-        userId: presence.user_id,
-        message: 'Presence exists but user not found (orphaned session)'
+    if (userError || !user) {
+      throw httpError.internal('Failed to fetch user', {
+        db: {
+          type: 'QUERY',
+          operation: 'select',
+          table: 'users'
+        }
       })
-      return
     }
 
-    // Check wallet binding
-    const { data: walletAccount } = await supabaseAdmin
-      .from('user_accounts')
-      .select('id')
-      .eq('user_id', user.id)
-      .eq('provider', 'wallet')
-      .single()
-
-    const response: WhoamiResponse = {
+    // Build response payload
+    const response: WhoAmIResponse = {
       userId: user.id,
       displayName: user.display_name,
-      ephemeralDisplayName: user.ephemeral_display_name,
-      isWalletLinked: !!walletAccount,
-      sessionId,
-      presenceExists: true,
-      presenceDisplayName: presence.display_name
+      ephemeral: user.ephemeral ?? true, // Default to true for safety
+      kind: user.kind || 'human',
+      banned: user.banned ?? false,
+      createdAt: user.created_at
     }
+
+    // Include sessionId only when DEBUG_AUTH=1 (for debugging)
+    if (process.env.DEBUG_AUTH === '1') {
+      response.sessionId = sessionId
+    }
+
+    logger.requestComplete('/api/session/whoami', Date.now() - startTime, {
+      correlationId,
+      userId,
+      method: req.method,
+      newSession: shouldSetCookie
+    })
 
     res.status(200).json(response)
 
   } catch (error) {
-    const err = error instanceof Error ? error : new Error(String(error))
-
-    if (err.message.includes('Missing X-Session-Id')) {
-      res.status(200).json({
-        error: 'No session cookie or header found',
-        message: 'Check that x_session_id cookie is set or X-Session-Id header is present'
-      })
-      return
-    }
-
-    logger.error('Whoami error', { correlationId }, err)
-    res.status(500).json({
-      error: 'Internal server error',
-      correlationId
-    })
+    // All errors will be handled by secureHandler
+    throw error
   }
 }
 
-export default secureHandler(whoamiHandler, securityConfigs.public)
+export default secureHandler(whoamiHandler, securityConfigs.user)
