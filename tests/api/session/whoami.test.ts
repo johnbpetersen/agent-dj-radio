@@ -30,7 +30,7 @@ vi.mock('../../../api/_shared/session-helpers.js', () => ({
 
 // Helper to create mock request
 function createMockRequest(
-  method: 'GET' | 'POST' = 'POST',
+  method: 'GET' | 'POST' = 'GET',
   cookies?: Record<string, string>,
   headers?: Record<string, string>
 ): VercelRequest {
@@ -96,7 +96,7 @@ describe('/api/session/whoami', () => {
       const existingSessionId = 'session-existing-123'
       const existingUserId = 'user-existing-456'
 
-      const req = createMockRequest('POST', { sid: existingSessionId })
+      const req = createMockRequest('GET', { sid: existingSessionId })
       const res = createMockResponse()
 
       // Mock ensureSession to return existing session (no cookie needed)
@@ -147,7 +147,7 @@ describe('/api/session/whoami', () => {
     })
 
     it('does not include sessionId in response by default', async () => {
-      const req = createMockRequest('POST', { sid: 'session-123' })
+      const req = createMockRequest('GET', { sid: 'session-123' })
       const res = createMockResponse()
 
       // Mock ensureSession
@@ -186,7 +186,7 @@ describe('/api/session/whoami', () => {
     it('includes sessionId when DEBUG_AUTH=1', async () => {
       process.env.DEBUG_AUTH = '1'
 
-      const req = createMockRequest('POST', { sid: 'session-debug-123' })
+      const req = createMockRequest('GET', { sid: 'session-debug-123' })
       const res = createMockResponse()
 
       // Mock ensureSession
@@ -225,7 +225,7 @@ describe('/api/session/whoami', () => {
 
   describe('First visit (no cookie)', () => {
     it('creates new session and returns identity with Set-Cookie', async () => {
-      const req = createMockRequest('POST') // No cookie
+      const req = createMockRequest('GET') // No cookie
       const res = createMockResponse()
 
       const mockUserId = 'user-new-789'
@@ -281,7 +281,7 @@ describe('/api/session/whoami', () => {
 
   describe('Never queries presence for identity', () => {
     it('resolves identity via sessions → users only', async () => {
-      const req = createMockRequest('POST', { sid: 'session-123' })
+      const req = createMockRequest('GET', { sid: 'session-123' })
       const res = createMockResponse()
 
       // Mock ensureSession (it handles the sessions/presence logic)
@@ -331,80 +331,17 @@ describe('/api/session/whoami', () => {
     })
   })
 
-  describe('Supports GET and POST', () => {
-    it('GET returns same shape as POST', async () => {
-      const sessionId = 'session-same-123'
-      const userId = 'user-same-456'
+  describe('Method restrictions', () => {
+    it('POST returns 400 Bad Request', async () => {
+      const req = createMockRequest('POST', { sid: 'session-123' })
+      const res = createMockResponse()
 
-      // Test POST
-      const reqPost = createMockRequest('POST', { sid: sessionId })
-      const resPost = createMockResponse()
+      await whoamiHandler(req, res)
 
-      // Test GET
-      const reqGet = createMockRequest('GET', { sid: sessionId })
-      const resGet = createMockResponse()
-
-      // Mock ensureSession for POST
-      const { ensureSession } = await import('../../../api/_shared/session-helpers.js')
-      vi.mocked(ensureSession).mockResolvedValue({
-        userId,
-        sessionId,
-        shouldSetCookie: false
-      })
-
-      // Mock user fetch for POST
-      const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
-      vi.mocked(supabaseAdmin.from).mockReturnValue({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockResolvedValue({
-              data: {
-                id: userId,
-                display_name: 'test_user',
-                ephemeral: true,
-                kind: 'human',
-                banned: false,
-                created_at: '2025-01-17T10:00:00Z'
-              },
-              error: null
-            })
-          })
-        })
-      } as any)
-
-      await whoamiHandler(reqPost, resPost)
-
-      vi.clearAllMocks()
-
-      // Mock same for GET
-      vi.mocked(ensureSession).mockResolvedValue({
-        userId,
-        sessionId,
-        shouldSetCookie: false
-      })
-
-      vi.mocked(supabaseAdmin.from).mockReturnValue({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockResolvedValue({
-              data: {
-                id: userId,
-                display_name: 'test_user',
-                ephemeral: true,
-                kind: 'human',
-                banned: false,
-                created_at: '2025-01-17T10:00:00Z'
-              },
-              error: null
-            })
-          })
-        })
-      } as any)
-
-      await whoamiHandler(reqGet, resGet)
-
-      // Both should return identical payloads
-      expect(resPost._body).toEqual(resGet._body)
+      // secureHandler catches the error and returns 400
+      expect(res._status).toBe(400)
+      expect(res._body).toHaveProperty('error')
+      expect(res._body.error.message).toContain('Method not allowed')
     })
   })
 })

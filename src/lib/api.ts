@@ -30,7 +30,7 @@ export interface WhoAmIResponse {
 
 export async function getWhoAmI(): Promise<WhoAmIResponse> {
   const response = await apiFetch('/api/session/whoami', {
-    method: 'POST'
+    method: 'GET'
   })
 
   if (!response.ok) {

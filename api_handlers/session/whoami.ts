@@ -20,9 +20,9 @@ interface WhoAmIResponse {
 }
 
 async function whoamiHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
-  // Accept both GET and POST (idempotent read operation)
-  if (req.method !== 'GET' && req.method !== 'POST') {
-    throw httpError.badRequest('Method not allowed', 'Only GET and POST requests are supported')
+  // GET-only endpoint (idempotent read operation)
+  if (req.method !== 'GET') {
+    throw httpError.badRequest('Method not allowed', 'Only GET requests are supported')
   }
 
   const correlationId = generateCorrelationId()

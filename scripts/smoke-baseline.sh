@@ -57,6 +57,33 @@ else
 fi
 echo ""
 
+# Test 4: Whoami endpoint (GET-only)
+echo "Test 4: GET $BASE_URL/api/session/whoami"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X GET "$BASE_URL/api/session/whoami" || echo -e "\n000")
+STATUS=$(echo "$RESPONSE" | tail -n1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+
+if [[ "$STATUS" =~ ^2[0-9]{2}$ ]]; then
+  echo "  ✅ PASS: Got $STATUS (expected 2xx)"
+else
+  echo "  ❌ FAIL: Got $STATUS (expected 2xx)"
+  echo "  Response body:"
+  echo "$BODY" | head -20
+  EXIT_CODE=1
+fi
+echo ""
+
+# Test 5: Whoami rejects POST (405)
+echo "Test 5: POST $BASE_URL/api/session/whoami (should be 405)"
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/api/session/whoami" || echo "000")
+if [[ "$STATUS" == "400" || "$STATUS" == "405" ]]; then
+  echo "  ✅ PASS: Got $STATUS (expected 400 or 405)"
+else
+  echo "  ❌ FAIL: Got $STATUS (expected 400 or 405)"
+  EXIT_CODE=1
+fi
+echo ""
+
 # Summary
 if [ $EXIT_CODE -eq 0 ]; then
   echo "✅ All smoke tests passed"

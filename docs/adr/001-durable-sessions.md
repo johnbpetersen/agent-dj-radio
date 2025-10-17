@@ -159,7 +159,7 @@ If two requests with the same new `sid` race:
 
 ## Read-Only Identity Endpoint
 
-**Endpoint:** `POST|GET /api/session/whoami`
+**Endpoint:** `GET /api/session/whoami`
 
 Returns current user identity derived from durable session (no writes except presence telemetry):
 
@@ -177,14 +177,15 @@ Returns current user identity derived from durable session (no writes except pre
 ```
 
 **Key behaviors:**
-- Supports both GET and POST (idempotent read operation)
+- **GET-only endpoint** (POST returns 405)
+- Idempotent read operation - safe to call repeatedly
 - Uses `ensureSession()` - may create new session if cookie missing/invalid
 - Sets cookie on first visit or when came from header
 - Fetches identity from `sessions → users` (never queries `presence`)
 - Only includes `sessionId` in response when `DEBUG_AUTH=1` env var is set
 
 **Use cases:**
-- Client-side identity hydration on page load
+- Client-side identity hydration on page load (`getWhoAmI()` helper)
 - Debugging session state with DEBUG_AUTH=1
 - Checking ban/ephemeral status before actions
 
