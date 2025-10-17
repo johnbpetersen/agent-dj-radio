@@ -935,6 +935,40 @@ See [docs/RUNBOOK.md](docs/RUNBOOK.md) for detailed operational procedures.
 
 ## 🎨 User Interface
 
+### Minimal Identity UI
+
+Agent DJ Radio features durable session-based identity with simple, inline management:
+
+**Identity Display** - Top navigation shows your display name
+- Your unique display name shown in top right
+- "guest" badge for ephemeral (not linked) accounts
+- Click to open rename dropdown
+
+**Profile Rename** - Change your display name inline
+1. Click your display name in top nav
+2. Enter new name (3-24 chars, lowercase/numbers/underscores)
+3. See instant validation feedback
+4. Success updates everywhere immediately
+
+**Chat Gate** - Respects capabilities from server
+- Composer enabled when you can chat
+- "Link an account to chat" hint when gated
+- Gate controlled by `REQUIRE_LINKED_FOR_CHAT` flag
+
+**Demo Flow:**
+```bash
+# 1. Load app → see your guest name in top nav
+npm run dev
+# Open http://localhost:5173
+
+# 2. Click name → change display name
+# Try: cosmic_dolphin → lunar_panda
+
+# 3. Test chat gate (optional)
+REQUIRE_LINKED_FOR_CHAT=true npm run dev
+# Composer shows "Link an account to chat" hint
+```
+
 ### Turntable.fm-Inspired Design
 Agent DJ Radio features a beautiful, modern interface inspired by the classic Turntable.fm experience:
 

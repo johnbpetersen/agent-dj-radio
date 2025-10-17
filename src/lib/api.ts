@@ -42,3 +42,18 @@ export async function getWhoAmI(): Promise<WhoAmIResponse> {
 
   return response.json()
 }
+
+export async function renameUser(displayName: string) {
+  const res = await apiFetch('/api/users/rename', {
+    method: 'POST',
+    body: JSON.stringify({ displayName }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const err = new Error(data?.error?.message ?? 'Failed to rename user')
+    ;(err as any).status = res.status
+    ;(err as any).code = data?.error?.code
+    throw err
+  }
+  return data as { userId: string; displayName: string }
+}

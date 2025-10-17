@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronLeft, ChevronRight, MessageCircle, Send } from 'lucide-react'
 import { useEphemeralUser } from '../../../hooks/useEphemeralUser'
+import { useIdentity } from '../../../hooks/useIdentity'
 import { apiFetch } from '../../../lib/api'
 import Avatar from '../Avatar'
 
@@ -23,7 +24,8 @@ export default function ChatPanel() {
   const [error, setError] = useState<string | null>(null)
   const [isChatEnabled, setIsChatEnabled] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const { identity, loading } = useEphemeralUser()
+  const { identity: ephemeralIdentity, loading: ephemeralLoading } = useEphemeralUser()
+  const { identity, loading } = useIdentity()
 
   // Check if chat feature is enabled
   useEffect(() => {
@@ -148,8 +150,8 @@ export default function ChatPanel() {
               ) : (
                 messages.map((msg) => {
                   // Use session avatar for self messages (no network call)
-                  const isSelf = identity?.userId === msg.user_id
-                  const hintedAvatar = isSelf ? identity?.avatarUrl : undefined
+                  const isSelf = ephemeralIdentity?.userId === msg.user_id
+                  const hintedAvatar = isSelf ? ephemeralIdentity?.avatarUrl : undefined
 
                   return (
                     <div key={msg.id} className="flex items-start gap-2">
@@ -184,8 +186,15 @@ export default function ChatPanel() {
                     Loading session...
                   </div>
                 </div>
+              ) : !identity?.capabilities.canChat ? (
+                // Chat gate: user cannot chat
+                <div className="bg-black/30 border border-white/20 rounded-lg p-3 text-center">
+                  <div className="text-sm text-white/60">
+                    Link an account to chat
+                  </div>
+                </div>
               ) : (
-                // Chat input for all users
+                // Chat input for authorized users
                 <>
                   {error && (
                     <div className="mb-2 text-xs text-red-300 bg-red-500/20 px-2 py-1 rounded">
