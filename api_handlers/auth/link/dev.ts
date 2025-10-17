@@ -61,45 +61,8 @@ async function linkDevHandler(req: VercelRequest, res: VercelResponse): Promise<
       })
     }
 
-    // Check if already linked (idempotency check)
-    const { data: existingLink, error: checkError } = await supabaseAdmin
-      .from('user_accounts')
-      .select('provider, provider_id')
-      .eq('user_id', userId)
-      .eq('provider', 'dev')
-      .maybeSingle()
-
-    if (checkError) {
-      logger.error('Failed to check existing link', {
-        correlationId,
-        userId
-      }, checkError)
-      throw httpError.internal('Failed to check existing link', {
-        db: {
-          type: 'QUERY',
-          operation: 'select',
-          table: 'user_accounts'
-        }
-      })
-    }
-
-    if (existingLink) {
-      logger.warn('Dev provider already linked', {
-        correlationId,
-        userId,
-        sessionId
-      })
-      throw new AppError('CONFLICT', 'Dev provider already linked', {
-        meta: {
-          context: {
-            route: '/api/auth/link/dev',
-            method: 'POST'
-          }
-        }
-      })
-    }
-
     // Insert user_accounts row with deterministic provider_id
+    // Idempotency via insert-with-conflict: no pre-check SELECT
     const providerId = `dev:${userId}`
     const { error: insertError } = await supabaseAdmin
       .from('user_accounts')
@@ -107,38 +70,53 @@ async function linkDevHandler(req: VercelRequest, res: VercelResponse): Promise<
         user_id: userId,
         provider: 'dev',
         provider_id: providerId,
-        display_name: user.display_name
+        display_name: user.display_name ?? null
       })
 
     if (insertError) {
-      // Handle race condition (unique constraint violation)
-      if (insertError.code === '23505') {
-        logger.warn('Dev provider link race condition (PK conflict)', {
+      // 23505 = unique constraint violation (already linked)
+      // Unique constraints: (user_id, provider) or (provider, provider_id)
+      if (insertError.code === '23505' || insertError.message?.includes('duplicate key')) {
+        logger.warn('Dev provider already linked (unique constraint)', {
           correlationId,
           userId,
+          sessionId,
           dbErrorCode: insertError.code
         })
-        throw new AppError('CONFLICT', 'Dev provider already linked', {
-          meta: {
-            context: {
-              route: '/api/auth/link/dev',
-              method: 'POST'
-            }
-          }
+
+        res.status(409).json({
+          error: {
+            code: 'ALREADY_LINKED',
+            message: 'Dev provider already linked'
+          },
+          requestId: correlationId
         })
+        return
       }
 
+      // Other insert errors
       logger.error('Failed to insert user_accounts', {
         correlationId,
-        userId
+        userId,
+        dbErrorCode: insertError.code,
+        dbErrorMessage: insertError.message
       }, insertError)
+
+      // Include DB error code in meta when DEBUG_AUTH=1
+      const debugMeta = process.env.DEBUG_AUTH === '1' ? {
+        supabase: {
+          code: insertError.code,
+          message: insertError.message
+        }
+      } : undefined
 
       throw httpError.internal('Failed to link provider', {
         db: {
           type: 'QUERY',
           operation: 'insert',
           table: 'user_accounts'
-        }
+        },
+        ...(debugMeta && { context: debugMeta })
       })
     }
 

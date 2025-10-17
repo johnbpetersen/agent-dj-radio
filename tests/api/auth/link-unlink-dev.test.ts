@@ -115,20 +115,7 @@ describe('POST /api/auth/link/dev', () => {
           })
         })
       } as any)
-      // Mock check for existing link (not found)
-      .mockReturnValueOnce({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: null,
-                error: null
-              })
-            })
-          })
-        })
-      } as any)
-      // Mock insert user_accounts
+      // Mock insert user_accounts (success - no pre-check SELECT)
       .mockReturnValueOnce({
         insert: vi.fn().mockResolvedValue({
           error: null
@@ -151,7 +138,7 @@ describe('POST /api/auth/link/dev', () => {
     expect(res._body.provider).toBe('dev')
   })
 
-  it('returns 409 CONFLICT when already linked', async () => {
+  it('returns 409 ALREADY_LINKED when already linked (23505)', async () => {
     const req = createMockRequest()
     const res = createMockResponse()
 
@@ -181,31 +168,21 @@ describe('POST /api/auth/link/dev', () => {
           })
         })
       } as any)
-      // Mock check for existing link (found)
+      // Mock insert with unique constraint violation (no pre-check SELECT)
       .mockReturnValueOnce({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: {
-                  provider: 'dev',
-                  provider_id: 'dev:user-linked-123'
-                },
-                error: null
-              })
-            })
-          })
+        insert: vi.fn().mockResolvedValue({
+          error: { code: '23505', message: 'duplicate key value violates unique constraint' }
         })
       } as any)
 
     await linkDevHandler(req, res)
 
     expect(res._status).toBe(409)
-    expect(res._body.error.code).toBe('CONFLICT')
+    expect(res._body.error.code).toBe('ALREADY_LINKED')
     expect(res._body.error.message).toContain('already linked')
   })
 
-  it('handles race condition (PK conflict) with 409', async () => {
+  it('handles duplicate key message fallback (no code) with 409', async () => {
     const req = createMockRequest()
     const res = createMockResponse()
 
@@ -235,30 +212,17 @@ describe('POST /api/auth/link/dev', () => {
           })
         })
       } as any)
-      // Mock check for existing link (not found initially)
-      .mockReturnValueOnce({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: null,
-                error: null
-              })
-            })
-          })
-        })
-      } as any)
-      // Mock insert with PK conflict (23505)
+      // Mock insert with duplicate key in message (fallback detection)
       .mockReturnValueOnce({
         insert: vi.fn().mockResolvedValue({
-          error: { code: '23505', message: 'duplicate key value' }
+          error: { message: 'Error: duplicate key value violates unique constraint "user_accounts_pkey"' }
         })
       } as any)
 
     await linkDevHandler(req, res)
 
     expect(res._status).toBe(409)
-    expect(res._body.error.code).toBe('CONFLICT')
+    expect(res._body.error.code).toBe('ALREADY_LINKED')
     expect(res._body.error.message).toContain('already linked')
   })
 
@@ -292,20 +256,7 @@ describe('POST /api/auth/link/dev', () => {
           })
         })
       } as any)
-      // Mock check for existing link (not found)
-      .mockReturnValueOnce({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: null,
-                error: null
-              })
-            })
-          })
-        })
-      } as any)
-      // Mock insert user_accounts
+      // Mock insert user_accounts (success - no pre-check SELECT)
       .mockReturnValueOnce({
         insert: vi.fn().mockResolvedValue({
           error: null
@@ -505,6 +456,7 @@ describe('Link/Unlink Lifecycle Tests', () => {
     let res = createMockResponse()
 
     vi.mocked(supabaseAdmin.from)
+      // Mock user fetch
       .mockReturnValueOnce({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
@@ -515,18 +467,11 @@ describe('Link/Unlink Lifecycle Tests', () => {
           })
         })
       } as any)
-      .mockReturnValueOnce({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
-            })
-          })
-        })
-      } as any)
+      // Mock insert (success - no pre-check SELECT)
       .mockReturnValueOnce({
         insert: vi.fn().mockResolvedValue({ error: null })
       } as any)
+      // Mock update ephemeral
       .mockReturnValueOnce({
         update: vi.fn().mockReturnValue({
           eq: vi.fn().mockResolvedValue({ error: null })
@@ -569,6 +514,7 @@ describe('Link/Unlink Lifecycle Tests', () => {
     res = createMockResponse()
 
     vi.mocked(supabaseAdmin.from)
+      // Mock user fetch
       .mockReturnValueOnce({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
@@ -579,18 +525,11 @@ describe('Link/Unlink Lifecycle Tests', () => {
           })
         })
       } as any)
-      .mockReturnValueOnce({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
-            })
-          })
-        })
-      } as any)
+      // Mock insert (success - no pre-check SELECT)
       .mockReturnValueOnce({
         insert: vi.fn().mockResolvedValue({ error: null })
       } as any)
+      // Mock update ephemeral
       .mockReturnValueOnce({
         update: vi.fn().mockReturnValue({
           eq: vi.fn().mockResolvedValue({ error: null })
