@@ -1,5 +1,4 @@
-// ChatPanel - Full-featured chat UI with Discord gating
-// Shows read-only chat for guests, full chat for Discord users
+// ChatPanel - Full-featured chat UI for all users with active sessions
 
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -24,10 +23,7 @@ export default function ChatPanel() {
   const [error, setError] = useState<string | null>(null)
   const [isChatEnabled, setIsChatEnabled] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const { user, identity, loading } = useEphemeralUser()
-
-  // Hydration-safe: only determine Discord status after session loads
-  const isDiscordLinked = !loading && (user?.isDiscordLinked ?? false)
+  const { identity, loading } = useEphemeralUser()
 
   // Check if chat feature is enabled
   useEffect(() => {
@@ -77,7 +73,7 @@ export default function ChatPanel() {
   }, [messages])
 
   const handleSendMessage = async () => {
-    if (!inputMessage.trim() || sending || !isDiscordLinked) return
+    if (!inputMessage.trim() || sending) return
 
     setError(null)
     setSending(true)
@@ -91,9 +87,7 @@ export default function ChatPanel() {
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}))
 
-        if (response.status === 403) {
-          setError('Please sign in with Discord to chat')
-        } else if (response.status === 429) {
+        if (response.status === 429) {
           setError(errorData.message || 'Too many messages. Please wait.')
         } else {
           setError(errorData.error || 'Failed to send message')
@@ -121,22 +115,6 @@ export default function ChatPanel() {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSendMessage()
-    }
-  }
-
-  const handleDiscordLogin = async () => {
-    try {
-      const res = await apiFetch('/api/auth/discord/start', { method: 'POST' })
-      const json = await res.json().catch(() => null)
-      if (!res.ok || !json?.redirectUrl) {
-        console.error('Discord start failed:', json)
-        alert(json?.message || 'Failed to start Discord login')
-        return
-      }
-      window.location.href = json.redirectUrl
-    } catch (e) {
-      console.error('Discord start error', e)
-      alert('Could not start Discord login')
     }
   }
 
@@ -197,7 +175,7 @@ export default function ChatPanel() {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Input area or Discord CTA */}
+            {/* Input area */}
             <div className="p-3 border-t border-white/10">
               {loading ? (
                 // Loading state - hydration-safe
@@ -206,8 +184,8 @@ export default function ChatPanel() {
                     Loading session...
                   </div>
                 </div>
-              ) : isDiscordLinked ? (
-                // Discord user - full input
+              ) : (
+                // Chat input for all users
                 <>
                   {error && (
                     <div className="mb-2 text-xs text-red-300 bg-red-500/20 px-2 py-1 rounded">
@@ -233,19 +211,6 @@ export default function ChatPanel() {
                     </button>
                   </div>
                 </>
-              ) : (
-                // Guest - CTA to sign in
-                <div className="bg-[#5865F2]/20 border border-[#5865F2]/30 rounded-lg p-3 text-center">
-                  <p className="text-sm text-white/80 mb-2">
-                    Sign in with Discord to chat
-                  </p>
-                  <button
-                    onClick={handleDiscordLogin}
-                    className="bg-[#5865F2] hover:brightness-110 text-white text-sm font-semibold px-4 py-2 rounded-md transition-all"
-                  >
-                    Sign in with Discord
-                  </button>
-                </div>
               )}
             </div>
           </motion.div>

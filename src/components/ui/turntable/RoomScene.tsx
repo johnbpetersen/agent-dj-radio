@@ -1,10 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Users, ChevronLeft, ChevronRight, Heart, ThumbsDown, Radio, Mic } from "lucide-react";
-import { useEphemeralUser } from "../../../hooks/useEphemeralUser";
-import { apiFetch } from "../../../lib/api";
 import ChatPanel from "./ChatPanel";
-import UserIdentityPill from "../UserIdentityPill";
 
 // --- TYPE DEFINITIONS for props ---
 // These define the "shape" of the data our component expects.
@@ -153,23 +150,6 @@ function DJBooth({ nowPlaying, djs }: { nowPlaying: NowPlayingData | null, djs: 
 // ----------------------------
 // FIX: This now accepts props and does NOT call useRoomState
 export default function RoomScene({ nowPlaying, listeners, djs, onQueueTrack }: RoomSceneProps) {
-  const { user } = useEphemeralUser();
-
-  const handleDiscordLogin = async () => {
-    try {
-      const res = await apiFetch('/api/auth/discord/start', { method: 'POST' });
-      const json = await res.json().catch(() => null);
-      if (!res.ok || !json?.redirectUrl) {
-        console.error('Discord start failed:', json);
-        alert(json?.message || 'Failed to start Discord login');
-        return;
-      }
-      window.location.href = json.redirectUrl;
-    } catch (e) {
-      console.error('Discord start error', e);
-      alert('Could not start Discord login');
-    }
-  };
 
   return (
     <div
@@ -184,16 +164,6 @@ export default function RoomScene({ nowPlaying, listeners, djs, onQueueTrack }: 
       <ChatPanel />
 
       <div className="absolute top-4 right-4 z-30 flex items-center gap-3">
-        <UserIdentityPill />
-        {(!user || !user.isDiscordLinked) && (
-          <button
-            onClick={handleDiscordLogin}
-            className="bg-[#5865F2] hover:brightness-110 text-white font-bold px-4 py-2.5 rounded-lg shadow-lg border border-white/20 transition-all duration-200 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white/50"
-            title="Sign in with Discord"
-          >
-            Sign in with Discord
-          </button>
-        )}
         <button
           onClick={onQueueTrack}
           className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-bold px-5 py-3 rounded-lg shadow-lg border border-white/20 transition-all duration-200 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white/50 group flex items-center gap-2"
