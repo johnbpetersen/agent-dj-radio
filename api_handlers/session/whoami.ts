@@ -23,22 +23,11 @@ interface WhoAmIResponse {
 }
 
 /**
- * Compute canChat capability based on user state and feature flag
- * Logic: !banned && (flag !== 'true' || !ephemeral)
+ * Compute canChat capability based on user state (unconditional)
+ * Logic: !banned && !ephemeral
  */
 function computeCanChat(user: { banned: boolean; ephemeral: boolean }): boolean {
-  // Banned users can never chat
-  if (user.banned) {
-    return false
-  }
-
-  // If flag is not set or 'false', everyone can chat
-  if (process.env.REQUIRE_LINKED_FOR_CHAT !== 'true') {
-    return true
-  }
-
-  // If flag is 'true', only non-ephemeral users can chat
-  return !user.ephemeral
+  return !user.banned && !user.ephemeral
 }
 
 async function whoamiHandler(req: VercelRequest, res: VercelResponse): Promise<void> {

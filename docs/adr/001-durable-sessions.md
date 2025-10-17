@@ -240,21 +240,12 @@ Allows guest users to change their display name with collision safety:
 
 ## Guest Capabilities & Chat Gate
 
-**Feature Flag:** `REQUIRE_LINKED_FOR_CHAT` (default: `false`)
-
-Controls whether guest (ephemeral) users can post chat messages:
+**Policy:** Unconditional - Only linked (non-ephemeral) users can post chat messages.
 
 ```typescript
-// Capability computation logic
+// Capability computation logic (unconditional)
 function computeCanChat(user: { banned: boolean; ephemeral: boolean }): boolean {
-  // Banned users can never chat
-  if (user.banned) return false
-
-  // If flag is not set or 'false', everyone can chat
-  if (process.env.REQUIRE_LINKED_FOR_CHAT !== 'true') return true
-
-  // If flag is 'true', only non-ephemeral users can chat
-  return !user.ephemeral
+  return !user.banned && !user.ephemeral
 }
 ```
 
@@ -299,29 +290,22 @@ The `POST /api/chat/post` endpoint enforces the chat gate:
 
 **Use Cases:**
 
-- **Flag OFF (default):** All users (guest + linked) can chat (current behavior)
-- **Flag ON:** Only linked accounts can chat, guests can listen only
-- Gradual rollout strategy: test with flag OFF, flip to ON when ready
+- Linked accounts can chat (ephemeral=false)
+- Guests can listen to chat but cannot post (ephemeral=true)
 - Client can preemptively disable chat input by checking `capabilities.canChat`
 
 **Key Behaviors:**
 
-- **Fail-safe default:** Flag OFF means guests can chat (no lockout on misconfiguration)
+- **Unconditional rule:** No feature flags, deterministic behavior
 - **Consistent computation:** Same `computeCanChat()` logic used in whoami and chat gate
 - **Explicit error code:** `CHAT_REQUIRES_LINKED` allows client to show link prompt
 - **No presence reads:** Identity and capabilities derived entirely from sessions → users
 
 **Testing:**
 
-- `tests/api/session/whoami-capabilities.test.ts` - Capability computation in whoami
-- `tests/api/chat/chat-auth.test.ts` - Chat gate enforcement in post handler
-
-**Environment Variable:**
-
-```bash
-# .env.local.example
-REQUIRE_LINKED_FOR_CHAT=false  # Default: guests can chat
-```
+- `tests/api/session/whoami-capabilities.test.ts` - Capability computation (3 tests)
+- `tests/api/chat/chat-auth.test.ts` - Chat gate enforcement (4 tests)
+- `scripts/smoke-chat.sh` - Curl-based smoke test for chat gate
 
 ## References
 

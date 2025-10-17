@@ -1,7 +1,7 @@
 // tests/api/session/whoami-capabilities.test.ts
-// Tests for GET /api/session/whoami capabilities field
+// Tests for GET /api/session/whoami capabilities field (unconditional gate)
 
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import whoamiHandler from '../../../api_handlers/session/whoami.js'
 
@@ -76,241 +76,116 @@ function createMockResponse(): VercelResponse & {
   return res
 }
 
-describe('GET /api/session/whoami - capabilities', () => {
+describe('GET /api/session/whoami - capabilities (unconditional)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    delete process.env.REQUIRE_LINKED_FOR_CHAT
   })
 
-  afterEach(() => {
-    delete process.env.REQUIRE_LINKED_FOR_CHAT
+  it('guest user has canChat: false', async () => {
+    const req = createMockRequest({ sid: 'session-123' })
+    const res = createMockResponse()
+
+    const { ensureSession } = await import('../../../api/_shared/session-helpers.js')
+    vi.mocked(ensureSession).mockResolvedValue({
+      userId: 'user-guest',
+      sessionId: 'session-123',
+      shouldSetCookie: false
+    })
+
+    const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
+    vi.mocked(supabaseAdmin.from).mockReturnValueOnce({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({
+            data: {
+              id: 'user-guest',
+              display_name: 'cosmic_dolphin',
+              ephemeral: true,
+              kind: 'human',
+              banned: false,
+              created_at: '2025-01-17T10:00:00Z'
+            },
+            error: null
+          })
+        })
+      })
+    } as any)
+
+    await whoamiHandler(req, res)
+
+    expect(res._status).toBe(200)
+    expect(res._body.capabilities).toEqual({ canChat: false })
   })
 
-  describe('Flag OFF (default) - guests can chat', () => {
-    it('guest user has canChat: true', async () => {
-      const req = createMockRequest({ sid: 'session-123' })
-      const res = createMockResponse()
+  it('non-ephemeral user has canChat: true', async () => {
+    const req = createMockRequest({ sid: 'session-123' })
+    const res = createMockResponse()
 
-      const { ensureSession } = await import('../../../api/_shared/session-helpers.js')
-      vi.mocked(ensureSession).mockResolvedValue({
-        userId: 'user-guest',
-        sessionId: 'session-123',
-        shouldSetCookie: false
-      })
-
-      const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
-      vi.mocked(supabaseAdmin.from).mockReturnValueOnce({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockResolvedValue({
-              data: {
-                id: 'user-guest',
-                display_name: 'cosmic_dolphin',
-                ephemeral: true,
-                kind: 'human',
-                banned: false,
-                created_at: '2025-01-17T10:00:00Z'
-              },
-              error: null
-            })
-          })
-        })
-      } as any)
-
-      await whoamiHandler(req, res)
-
-      expect(res._status).toBe(200)
-      expect(res._body.capabilities).toEqual({ canChat: true })
+    const { ensureSession } = await import('../../../api/_shared/session-helpers.js')
+    vi.mocked(ensureSession).mockResolvedValue({
+      userId: 'user-linked',
+      sessionId: 'session-123',
+      shouldSetCookie: false
     })
 
-    it('non-ephemeral user has canChat: true', async () => {
-      const req = createMockRequest({ sid: 'session-123' })
-      const res = createMockResponse()
-
-      const { ensureSession } = await import('../../../api/_shared/session-helpers.js')
-      vi.mocked(ensureSession).mockResolvedValue({
-        userId: 'user-linked',
-        sessionId: 'session-123',
-        shouldSetCookie: false
-      })
-
-      const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
-      vi.mocked(supabaseAdmin.from).mockReturnValueOnce({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockResolvedValue({
-              data: {
-                id: 'user-linked',
-                display_name: 'linked_user',
-                ephemeral: false,
-                kind: 'human',
-                banned: false,
-                created_at: '2025-01-17T10:00:00Z'
-              },
-              error: null
-            })
+    const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
+    vi.mocked(supabaseAdmin.from).mockReturnValueOnce({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({
+            data: {
+              id: 'user-linked',
+              display_name: 'linked_user',
+              ephemeral: false,
+              kind: 'human',
+              banned: false,
+              created_at: '2025-01-17T10:00:00Z'
+            },
+            error: null
           })
         })
-      } as any)
+      })
+    } as any)
 
-      await whoamiHandler(req, res)
+    await whoamiHandler(req, res)
 
-      expect(res._status).toBe(200)
-      expect(res._body.capabilities).toEqual({ canChat: true })
-    })
+    expect(res._status).toBe(200)
+    expect(res._body.capabilities).toEqual({ canChat: true })
   })
 
-  describe('Flag ON - only non-ephemeral can chat', () => {
-    it('guest user has canChat: false when REQUIRE_LINKED_FOR_CHAT=true', async () => {
-      process.env.REQUIRE_LINKED_FOR_CHAT = 'true'
+  it('banned user has canChat: false', async () => {
+    const req = createMockRequest({ sid: 'session-123' })
+    const res = createMockResponse()
 
-      const req = createMockRequest({ sid: 'session-123' })
-      const res = createMockResponse()
-
-      const { ensureSession } = await import('../../../api/_shared/session-helpers.js')
-      vi.mocked(ensureSession).mockResolvedValue({
-        userId: 'user-guest',
-        sessionId: 'session-123',
-        shouldSetCookie: false
-      })
-
-      const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
-      vi.mocked(supabaseAdmin.from).mockReturnValueOnce({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockResolvedValue({
-              data: {
-                id: 'user-guest',
-                display_name: 'cosmic_dolphin',
-                ephemeral: true,
-                kind: 'human',
-                banned: false,
-                created_at: '2025-01-17T10:00:00Z'
-              },
-              error: null
-            })
-          })
-        })
-      } as any)
-
-      await whoamiHandler(req, res)
-
-      expect(res._status).toBe(200)
-      expect(res._body.capabilities).toEqual({ canChat: false })
+    const { ensureSession } = await import('../../../api/_shared/session-helpers.js')
+    vi.mocked(ensureSession).mockResolvedValue({
+      userId: 'user-banned',
+      sessionId: 'session-123',
+      shouldSetCookie: false
     })
 
-    it('non-ephemeral user has canChat: true when REQUIRE_LINKED_FOR_CHAT=true', async () => {
-      process.env.REQUIRE_LINKED_FOR_CHAT = 'true'
-
-      const req = createMockRequest({ sid: 'session-123' })
-      const res = createMockResponse()
-
-      const { ensureSession } = await import('../../../api/_shared/session-helpers.js')
-      vi.mocked(ensureSession).mockResolvedValue({
-        userId: 'user-linked',
-        sessionId: 'session-123',
-        shouldSetCookie: false
-      })
-
-      const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
-      vi.mocked(supabaseAdmin.from).mockReturnValueOnce({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockResolvedValue({
-              data: {
-                id: 'user-linked',
-                display_name: 'linked_user',
-                ephemeral: false,
-                kind: 'human',
-                banned: false,
-                created_at: '2025-01-17T10:00:00Z'
-              },
-              error: null
-            })
+    const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
+    vi.mocked(supabaseAdmin.from).mockReturnValueOnce({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({
+            data: {
+              id: 'user-banned',
+              display_name: 'banned_user',
+              ephemeral: false,
+              kind: 'human',
+              banned: true,
+              created_at: '2025-01-17T10:00:00Z'
+            },
+            error: null
           })
         })
-      } as any)
-
-      await whoamiHandler(req, res)
-
-      expect(res._status).toBe(200)
-      expect(res._body.capabilities).toEqual({ canChat: true })
-    })
-  })
-
-  describe('Banned users cannot chat', () => {
-    it('banned user has canChat: false regardless of flag', async () => {
-      const req = createMockRequest({ sid: 'session-123' })
-      const res = createMockResponse()
-
-      const { ensureSession } = await import('../../../api/_shared/session-helpers.js')
-      vi.mocked(ensureSession).mockResolvedValue({
-        userId: 'user-banned',
-        sessionId: 'session-123',
-        shouldSetCookie: false
       })
+    } as any)
 
-      const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
-      vi.mocked(supabaseAdmin.from).mockReturnValueOnce({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockResolvedValue({
-              data: {
-                id: 'user-banned',
-                display_name: 'banned_user',
-                ephemeral: false,
-                kind: 'human',
-                banned: true,
-                created_at: '2025-01-17T10:00:00Z'
-              },
-              error: null
-            })
-          })
-        })
-      } as any)
+    await whoamiHandler(req, res)
 
-      await whoamiHandler(req, res)
-
-      expect(res._status).toBe(200)
-      expect(res._body.capabilities).toEqual({ canChat: false })
-    })
-
-    it('banned guest has canChat: false when flag is true', async () => {
-      process.env.REQUIRE_LINKED_FOR_CHAT = 'true'
-
-      const req = createMockRequest({ sid: 'session-123' })
-      const res = createMockResponse()
-
-      const { ensureSession } = await import('../../../api/_shared/session-helpers.js')
-      vi.mocked(ensureSession).mockResolvedValue({
-        userId: 'user-banned-guest',
-        sessionId: 'session-123',
-        shouldSetCookie: false
-      })
-
-      const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
-      vi.mocked(supabaseAdmin.from).mockReturnValueOnce({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockResolvedValue({
-              data: {
-                id: 'user-banned-guest',
-                display_name: 'banned_guest',
-                ephemeral: true,
-                kind: 'human',
-                banned: true,
-                created_at: '2025-01-17T10:00:00Z'
-              },
-              error: null
-            })
-          })
-        })
-      } as any)
-
-      await whoamiHandler(req, res)
-
-      expect(res._status).toBe(200)
-      expect(res._body.capabilities).toEqual({ canChat: false })
-    })
+    expect(res._status).toBe(200)
+    expect(res._body.capabilities).toEqual({ canChat: false })
   })
 })
