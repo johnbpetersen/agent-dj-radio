@@ -21,11 +21,16 @@ echo ""
 
 # Test 1: Session hello endpoint
 echo "Test 1: POST $BASE_URL/api/session/hello"
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/api/session/hello" || echo "000")
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$BASE_URL/api/session/hello" || echo -e "\n000")
+STATUS=$(echo "$RESPONSE" | tail -n1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+
 if [[ "$STATUS" =~ ^2[0-9]{2}$ ]]; then
   echo "  ✅ PASS: Got $STATUS (expected 2xx)"
 else
   echo "  ❌ FAIL: Got $STATUS (expected 2xx)"
+  echo "  Response body:"
+  echo "$BODY" | head -20
   EXIT_CODE=1
 fi
 echo ""

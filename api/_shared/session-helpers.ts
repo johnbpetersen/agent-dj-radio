@@ -74,32 +74,83 @@ export function isHttps(req: VercelRequest): boolean {
 }
 
 /**
- * Set session cookie with secure attributes
- * - httpOnly: Prevents JavaScript access
- * - SameSite=Lax: Allows top-level navigation
- * - Secure: Only sent over HTTPS (when isHttps returns true)
- * - Path=/: Available to all routes
- * - Max-Age: 2592000 (30 days)
- * - No Domain: Host-only (most secure)
+ * Build cookie string with secure attributes
+ * Pure function for easier testing
+ *
+ * @param sid - Session ID (UUID)
+ * @param req - Request object (for HTTPS detection)
+ * @returns Cookie string with all attributes
+ */
+function buildCookieString(sid: string, req: VercelRequest): string {
+  const maxAgeSeconds = 2592000 // 30 days
+  const secure = isHttps(req) ? 'Secure; ' : ''
+  return `sid=${sid}; HttpOnly; SameSite=Lax; ${secure}Path=/; Max-Age=${maxAgeSeconds}`
+}
+
+/**
+ * Set session cookie with cross-runtime support
+ *
+ * Supports three response object types:
+ * 1. Node.js ServerResponse (Vercel prod, local API routes) - has setHeader/getHeader methods
+ * 2. Fetch-style Response with Headers (Vercel dev, edge runtime) - has headers.append method
+ * 3. Plain object bag (test environments, custom runtimes) - mutate headers property
+ *
+ * Cookie attributes: HttpOnly, SameSite=Lax, Path=/, Max-Age=2592000 (30 days)
+ * Secure flag: Only when request is over HTTPS (conservative check via x-forwarded-proto)
+ *
+ * @param res - Response object (any runtime type)
+ * @param sid - Session ID to set in cookie
+ * @param req - Request object (for HTTPS detection)
  */
 export function setSessionCookie(
-  res: VercelResponse,
+  res: VercelResponse | any,
   sid: string,
   req: VercelRequest
 ): void {
-  const maxAgeSeconds = 2592000 // 30 days
+  const cookieValue = buildCookieString(sid, req)
 
-  const secure = isHttps(req) ? 'Secure; ' : ''
-  const cookieValue = `sid=${sid}; HttpOnly; SameSite=Lax; ${secure}Path=/; Max-Age=${maxAgeSeconds}`
+  // Strategy 1: Node ServerResponse (has setHeader/getHeader methods)
+  if (typeof res.setHeader === 'function' && typeof res.getHeader === 'function') {
+    debugOAuth('cookie-path-node', { sidSuffix: sid.slice(-6) })
 
-  // Preserve existing Set-Cookie headers
-  const existing = res.getHeader('Set-Cookie')
-  if (existing) {
-    const cookies = Array.isArray(existing) ? existing : [String(existing)]
-    res.setHeader('Set-Cookie', [...cookies, cookieValue])
-  } else {
-    res.setHeader('Set-Cookie', cookieValue)
+    const existing = res.getHeader('Set-Cookie')
+    if (existing) {
+      const cookies = Array.isArray(existing) ? existing : [String(existing)]
+      res.setHeader('Set-Cookie', [...cookies, cookieValue])
+    } else {
+      res.setHeader('Set-Cookie', cookieValue)
+    }
+    return
   }
+
+  // Strategy 2: Fetch-style Response (has headers with append method)
+  if (res.headers && typeof res.headers.append === 'function') {
+    debugOAuth('cookie-path-fetch', { sidSuffix: sid.slice(-6) })
+    res.headers.append('Set-Cookie', cookieValue)
+    return
+  }
+
+  // Strategy 3: Plain object bag (mutate headers property)
+  if (res.headers && typeof res.headers === 'object') {
+    debugOAuth('cookie-path-plain', { sidSuffix: sid.slice(-6) })
+
+    const existing = res.headers['Set-Cookie']
+    if (existing) {
+      res.headers['Set-Cookie'] = Array.isArray(existing)
+        ? [...existing, cookieValue]
+        : [existing, cookieValue]
+    } else {
+      res.headers['Set-Cookie'] = cookieValue
+    }
+    return
+  }
+
+  // Fallback: warn and skip (shouldn't happen in practice)
+  console.warn('[setSessionCookie] Unknown response type, cannot set cookie', {
+    hasSetHeader: typeof res.setHeader === 'function',
+    hasHeaders: !!res.headers,
+    headersType: typeof res.headers
+  })
 }
 
 /**

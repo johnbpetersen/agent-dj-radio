@@ -108,8 +108,8 @@ describe('Durable Session Identity', () => {
     })
   })
 
-  describe('setSessionCookie', () => {
-    it('should set cookie with correct attributes over HTTPS', () => {
+  describe('setSessionCookie - Cross-Runtime Support', () => {
+    it('should set cookie on Node ServerResponse (setHeader/getHeader)', () => {
       const req = createMockRequest(undefined, { 'x-forwarded-proto': 'https' })
       const res = createMockResponse()
 
@@ -129,7 +129,96 @@ describe('Durable Session Identity', () => {
       expect(attrs['Max-Age']).toBe('2592000') // 30 days
     })
 
-    it('should omit Secure attribute over HTTP', () => {
+    it('should append cookie to existing Set-Cookie on Node', () => {
+      const req = createMockRequest(undefined, { 'x-forwarded-proto': 'https' })
+      const res = createMockResponse()
+
+      // Pre-set an existing cookie
+      res._headers.set('Set-Cookie', 'other=cookie123; Path=/')
+
+      setSessionCookie(res, 'test-session-id', req)
+
+      expect(res.setHeader).toHaveBeenCalled()
+      const setCookieHeader = res._headers.get('Set-Cookie') as string[]
+      expect(Array.isArray(setCookieHeader)).toBe(true)
+      expect(setCookieHeader).toHaveLength(2)
+      expect(setCookieHeader[0]).toBe('other=cookie123; Path=/')
+      expect(setCookieHeader[1]).toContain('sid=test-session-id')
+    })
+
+    it('should set cookie on fetch-style Response with Headers', () => {
+      const req = createMockRequest(undefined, { 'x-forwarded-proto': 'https' })
+
+      // Mock fetch-style response with Headers object
+      const headers = new Map<string, string>()
+      const res = {
+        headers: {
+          append: vi.fn((name: string, value: string) => {
+            const existing = headers.get(name)
+            if (existing) {
+              headers.set(name, existing + ', ' + value)
+            } else {
+              headers.set(name, value)
+            }
+          }),
+          get: vi.fn((name: string) => headers.get(name))
+        }
+      } as any
+
+      setSessionCookie(res, 'test-session-id', req)
+
+      expect(res.headers.append).toHaveBeenCalledWith('Set-Cookie', expect.stringContaining('sid=test-session-id'))
+      const setCookieHeader = headers.get('Set-Cookie')
+      expect(setCookieHeader).toContain('sid=test-session-id')
+      expect(setCookieHeader).toContain('HttpOnly')
+      expect(setCookieHeader).toContain('Secure')
+    })
+
+    it('should set cookie on plain object bag', () => {
+      const req = createMockRequest(undefined, { 'x-forwarded-proto': 'https' })
+
+      // Mock plain object response
+      const res = {
+        headers: {}
+      } as any
+
+      setSessionCookie(res, 'test-session-id', req)
+
+      expect(res.headers['Set-Cookie']).toBeDefined()
+      expect(res.headers['Set-Cookie']).toContain('sid=test-session-id')
+      expect(res.headers['Set-Cookie']).toContain('HttpOnly')
+    })
+
+    it('should append to existing cookie on plain object bag', () => {
+      const req = createMockRequest(undefined, { 'x-forwarded-proto': 'https' })
+
+      const res = {
+        headers: {
+          'Set-Cookie': 'other=cookie123; Path=/'
+        }
+      } as any
+
+      setSessionCookie(res, 'test-session-id', req)
+
+      const setCookieHeader = res.headers['Set-Cookie']
+      expect(Array.isArray(setCookieHeader)).toBe(true)
+      expect(setCookieHeader).toHaveLength(2)
+      expect(setCookieHeader[0]).toBe('other=cookie123; Path=/')
+      expect(setCookieHeader[1]).toContain('sid=test-session-id')
+    })
+
+    it('should include Secure flag when HTTPS (x-forwarded-proto)', () => {
+      const req = createMockRequest(undefined, { 'x-forwarded-proto': 'https' })
+      const res = createMockResponse()
+
+      setSessionCookie(res, 'test-session-id', req)
+
+      const setCookieHeader = res._headers.get('Set-Cookie') as string
+      const attrs = parseCookieAttributes(setCookieHeader)
+      expect(attrs.Secure).toBe(true)
+    })
+
+    it('should omit Secure flag when HTTP', () => {
       const req = createMockRequest(undefined, { 'x-forwarded-proto': 'http' })
       const res = createMockResponse()
 
@@ -138,6 +227,28 @@ describe('Durable Session Identity', () => {
       const setCookieHeader = res._headers.get('Set-Cookie') as string
       const attrs = parseCookieAttributes(setCookieHeader)
       expect(attrs.Secure).toBeUndefined()
+    })
+
+    it('should warn gracefully on unknown response type', () => {
+      const req = createMockRequest(undefined, { 'x-forwarded-proto': 'https' })
+      const consoleWarnSpy = vi.spyOn(console, 'warn')
+
+      // Mock completely unknown response type (no setHeader, no headers property)
+      const res = {} as any
+
+      // Should not throw
+      expect(() => setSessionCookie(res, 'test-session-id', req)).not.toThrow()
+
+      // Should log warning
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        '[setSessionCookie] Unknown response type, cannot set cookie',
+        expect.objectContaining({
+          hasSetHeader: false,
+          hasHeaders: false
+        })
+      )
+
+      consoleWarnSpy.mockRestore()
     })
   })
 

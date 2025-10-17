@@ -45,6 +45,14 @@ CREATE TABLE public.sessions (
 - Attributes: `HttpOnly; SameSite=Lax; Secure (HTTPS only); Path=/; Max-Age=2592000` (30 days)
 - Set once per new session; not refreshed on every request
 
+**Cross-Runtime Cookie Setting:**
+The `setSessionCookie()` helper supports three response object types to work across different runtime environments:
+1. **Node.js ServerResponse** (Vercel prod) - uses `setHeader`/`getHeader` methods
+2. **Fetch-style Response** (Vercel dev, edge runtime) - uses `headers.append` method
+3. **Plain object bag** (test environments) - mutates `headers` property directly
+
+The `Secure` flag is applied conservatively: only when `x-forwarded-proto === 'https'` (primary check) or `NODE_ENV === 'production'` (fallback). This ensures cookies work correctly in both local HTTP development and production HTTPS deployments.
+
 ### Request Flow (`ensureSession()`)
 
 ```typescript
