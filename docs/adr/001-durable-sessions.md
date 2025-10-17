@@ -307,6 +307,110 @@ The `POST /api/chat/post` endpoint enforces the chat gate:
 - `tests/api/chat/chat-auth.test.ts` - Chat gate enforcement (4 tests)
 - `scripts/smoke-chat.sh` - Curl-based smoke test for chat gate
 
+## Dev Provider Link/Unlink
+
+**Purpose:** Provider-agnostic link/unlink skeleton that flips `ephemeral` ↔ `non-ephemeral` WITHOUT creating new users or sessions. Establishes the contract for future Discord/wallet providers.
+
+### Endpoints
+
+**POST /api/auth/link/dev**
+
+Links the "dev" provider to the current session, flipping `users.ephemeral = false`.
+
+```typescript
+// Request: POST /api/auth/link/dev (no body required)
+
+// Response (201 Created)
+{
+  userId: string
+  ephemeral: false
+  provider: 'dev'
+}
+
+// Response (409 Conflict - already linked)
+{
+  error: {
+    code: 'CONFLICT'
+    message: 'Dev provider already linked'
+  }
+  requestId: string
+}
+```
+
+**Key Behaviors:**
+- Identity via `ensureSession()` (sessions → users, no presence reads)
+- Creates `user_accounts` row: `{ user_id, provider: 'dev', provider_id: 'dev:<userId>', display_name }`
+- Flips `users.ephemeral = false`
+- Returns **201** on success
+- Returns **409 Conflict** if already linked (idempotency check)
+- Handles race conditions: DB unique constraint maps `23505` → **409**
+- **Allows banned users** to link (identity operation, chat gate enforces ban separately)
+
+**POST /api/auth/unlink/dev**
+
+Unlinks the "dev" provider from the current session. Ephemeral flag depends on remaining linked accounts.
+
+```typescript
+// Request: POST /api/auth/unlink/dev (no body required)
+
+// Response (200 OK - always, even if already unlinked)
+{
+  userId: string
+  ephemeral: boolean  // true if no accounts remain, false if others exist
+  provider: 'dev'
+}
+```
+
+**Key Behaviors:**
+- Identity via `ensureSession()`
+- Deletes `user_accounts` row for `(user_id, provider='dev')`
+- **Idempotent:** Returns **200** even if row didn't exist
+- **Future-proof ephemeral logic:**
+  - Count remaining `user_accounts` rows for user
+  - Set `users.ephemeral = (count == 0)`
+  - If Discord/wallet accounts remain after unlinking dev → stay non-ephemeral
+  - If no accounts remain → become ephemeral
+- Returns computed `ephemeral` value in response
+
+### Provider ID Format
+
+- **Dev provider:** `'dev:' + userId` (deterministic, no external state)
+- Future providers will use their own schemes:
+  - Discord: `'discord:' + discordUserId`
+  - Wallet: `'wallet:' + ethereumAddress`
+
+### Identity Invariants
+
+✅ **No new users:** Link/unlink never creates new `users` rows
+✅ **No new sessions:** Link/unlink preserves existing `session_id`
+✅ **userId constant:** Same `userId` before, during, and after link/unlink cycles
+✅ **Capability updates:** `canChat` reflects new `ephemeral` state immediately
+
+### Testing
+
+**Unit Tests:** `tests/api/auth/link-unlink-dev.test.ts`
+- Link from guest → ephemeral=false, chat allowed
+- Link twice → 409 Conflict
+- Unlink → ephemeral=true (if no other accounts), chat blocked
+- Unlink twice → 200 OK (idempotent)
+- userId preserved across link/unlink/link cycle
+- Banned users can link (but still can't chat)
+- Multi-provider scenario: unlink dev while Discord remains → ephemeral=false
+
+**Smoke Test:** `scripts/smoke-link-unlink.sh`
+- End-to-end lifecycle: guest → link → chat → unlink → chat blocked
+- Verifies userId preservation, capability updates, idempotency
+
+### Future Provider Integration
+
+This contract enables future providers to plug in with minimal changes:
+
+1. **Add handler:** `api_handlers/auth/link/discord.ts`
+   - Same flow, but fetch `provider_id` from Discord OAuth
+   - Same `user_accounts` table, different `provider` value
+2. **Reuse unlink logic:** Extract shared ephemeral computation into helper
+3. **No schema changes:** `user_accounts` table already supports multiple providers
+
 ## References
 
 - Migration: `supabase/migrations/012_durable_sessions.sql`
@@ -314,5 +418,7 @@ The `POST /api/chat/post` endpoint enforces the chat gate:
 - Endpoints:
   - `api_handlers/session/hello.ts` (session creation)
   - `api_handlers/session/whoami.ts` (read-only identity)
+  - `api_handlers/auth/link/dev.ts` (dev provider link)
+  - `api_handlers/auth/unlink/dev.ts` (dev provider unlink)
 - Types: `src/types/database.ts` (added `sessions` table)
 - Client helper: `src/lib/api.ts::getWhoAmI()`

@@ -44,6 +44,8 @@ import workerAugmentHandler from '../api_handlers/worker/augment.js'
 import workerCleanupHandler from '../api_handlers/worker/cleanup-ephemeral.js'
 import walletProveHandler from '../api_handlers/wallet/prove.js'
 import x402MockProofsHandler from '../api_handlers/x402/mock-proofs.js'
+import authLinkDevHandler from '../api_handlers/auth/link/dev.js'
+import authUnlinkDevHandler from '../api_handlers/auth/unlink/dev.js'
 
 // Route table - order matters! Specific routes before dynamic ones
 const routes: Route[] = [
@@ -56,6 +58,10 @@ const routes: Route[] = [
   { method: 'GET', pattern: '/session/hello', handler: sessionHelloHandler },
   { method: 'POST', pattern: '/session/hello', handler: sessionHelloHandler },
   { method: 'GET', pattern: '/session/whoami', handler: sessionWhoamiHandler },
+
+  // Auth
+  { method: 'POST', pattern: '/auth/link/dev', handler: authLinkDevHandler },
+  { method: 'POST', pattern: '/auth/unlink/dev', handler: authUnlinkDevHandler },
 
   // Chat
   { method: 'GET', pattern: '/chat/recent', handler: chatRecentHandler },
