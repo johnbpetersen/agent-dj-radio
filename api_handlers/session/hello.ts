@@ -24,7 +24,6 @@ interface SessionHelloResponse {
     bio: string | null
     is_agent: boolean
     kind: string
-    isDiscordLinked: boolean
     isWalletLinked: boolean
   }
   identity: Identity
@@ -93,13 +92,12 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
           .eq('id', existingPresence.user.id)
       ])
 
-      // Check for linked accounts (Discord, wallet)
+      // Check for linked accounts (wallet)
       const { data: userAccounts } = await supabaseAdmin
         .from('user_accounts')
         .select('provider, meta')
         .eq('user_id', existingPresence.user.id)
 
-      const isDiscordLinked = userAccounts?.some(acc => acc.provider === 'discord') ?? false
       const isWalletLinked = userAccounts?.some(acc => acc.provider === 'wallet') ?? false
 
       // Compute identity payload
@@ -108,7 +106,6 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
       const response: SessionHelloResponse = {
         user: {
           ...sanitizeForClient(existingPresence.user, []),
-          isDiscordLinked,
           isWalletLinked
         },
         identity,
@@ -119,7 +116,6 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
         correlationId,
         userId: existingPresence.user.id,
         action: 'existing_session',
-        isDiscordLinked,
         isWalletLinked
       })
 
@@ -251,7 +247,6 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
     const response: SessionHelloResponse = {
       user: {
         ...sanitizeForClient(user, []),
-        isDiscordLinked: false,
         isWalletLinked: false
       },
       identity,
