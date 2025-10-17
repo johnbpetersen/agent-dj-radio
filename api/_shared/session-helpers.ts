@@ -1,5 +1,5 @@
 // api/_shared/session-helpers.ts
-// Session cookie management utilities for Discord OAuth and session handling
+// Session cookie management utilities for ephemeral user sessions
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from './supabase.js'
@@ -8,13 +8,13 @@ import { httpError } from './errors.js'
 import * as crypto from 'crypto'
 
 /**
- * Debug OAuth logging helper
- * Only logs when DEBUG_OAUTH=1 environment variable is set
+ * Debug session logging helper
+ * Only logs when DEBUG_OAUTH=1 environment variable is set (legacy name preserved)
  * Never logs sensitive data (tokens, secrets, full bodies)
  */
 export function debugOAuth(message: string, context?: Record<string, unknown>): void {
   if (process.env.DEBUG_OAUTH === '1') {
-    console.log(`[DEBUG_OAUTH] ${message}`, context ? JSON.stringify(context, null, 2) : '')
+    console.log(`[DEBUG_SESSION] ${message}`, context ? JSON.stringify(context, null, 2) : '')
   }
 }
 
@@ -76,7 +76,7 @@ export function isHttps(req: VercelRequest): boolean {
 /**
  * Set session cookie with secure attributes
  * - httpOnly: Prevents JavaScript access
- * - SameSite=Lax: Allows top-level navigation (OAuth flow)
+ * - SameSite=Lax: Allows top-level navigation
  * - Secure: Only sent over HTTPS (when isHttps returns true)
  * - Path=/: Available to all routes
  * - Max-Age: 2592000 (30 days)
@@ -91,52 +91,6 @@ export function setSessionCookie(
 
   const secure = isHttps(req) ? 'Secure; ' : ''
   const cookieValue = `sid=${sid}; HttpOnly; SameSite=Lax; ${secure}Path=/; Max-Age=${maxAgeSeconds}`
-
-  // Preserve existing Set-Cookie headers
-  const existing = res.getHeader('Set-Cookie')
-  if (existing) {
-    const cookies = Array.isArray(existing) ? existing : [String(existing)]
-    res.setHeader('Set-Cookie', [...cookies, cookieValue])
-  } else {
-    res.setHeader('Set-Cookie', cookieValue)
-  }
-}
-
-/**
- * Set OAuth state cookie for CSRF protection
- * - HttpOnly; SameSite=Lax; Secure (when HTTPS); Path=/
- * - Max-Age: 600 (10 minutes)
- * - No Domain: Host-only
- */
-export function setOAuthStateCookie(
-  res: VercelResponse,
-  state: string,
-  req: VercelRequest
-): void {
-  const maxAgeSeconds = 600 // 10 minutes
-  const secure = isHttps(req) ? 'Secure; ' : ''
-  const cookieValue = `oauth_state=${state}; HttpOnly; SameSite=Lax; ${secure}Path=/; Max-Age=${maxAgeSeconds}`
-
-  // Preserve existing Set-Cookie headers
-  const existing = res.getHeader('Set-Cookie')
-  if (existing) {
-    const cookies = Array.isArray(existing) ? existing : [String(existing)]
-    res.setHeader('Set-Cookie', [...cookies, cookieValue])
-  } else {
-    res.setHeader('Set-Cookie', cookieValue)
-  }
-}
-
-/**
- * Clear OAuth state cookie after verification
- * Sets Max-Age=0 to delete the cookie
- */
-export function clearOAuthStateCookie(
-  res: VercelResponse,
-  req: VercelRequest
-): void {
-  const secure = isHttps(req) ? 'Secure; ' : ''
-  const cookieValue = `oauth_state=; HttpOnly; SameSite=Lax; ${secure}Path=/; Max-Age=0`
 
   // Preserve existing Set-Cookie headers
   const existing = res.getHeader('Set-Cookie')

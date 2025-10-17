@@ -12,9 +12,7 @@ interface WhoamiResponse {
   userId: string
   displayName: string
   ephemeralDisplayName: string | null
-  isDiscordLinked: boolean
   isWalletLinked: boolean
-  discordUsername: string | null
   sessionId: string
   presenceExists: boolean
   presenceDisplayName: string | null
@@ -56,10 +54,10 @@ async function whoamiHandler(req: VercelRequest, res: VercelResponse): Promise<v
       return
     }
 
-    // Get user data with Discord fields
+    // Get user data
     const { data: user } = await supabaseAdmin
       .from('users')
-      .select('id, display_name, ephemeral_display_name, discord_user_id, discord_username')
+      .select('id, display_name, ephemeral_display_name')
       .eq('id', presence.user_id)
       .single()
 
@@ -85,9 +83,7 @@ async function whoamiHandler(req: VercelRequest, res: VercelResponse): Promise<v
       userId: user.id,
       displayName: user.display_name,
       ephemeralDisplayName: user.ephemeral_display_name,
-      isDiscordLinked: !!user.discord_user_id,
       isWalletLinked: !!walletAccount,
-      discordUsername: user.discord_username,
       sessionId,
       presenceExists: true,
       presenceDisplayName: presence.display_name

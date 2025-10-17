@@ -1,5 +1,5 @@
 // Reusable Avatar component
-// Shows Discord avatar if available, otherwise shows letter avatar
+// Shows letter avatar based on display name
 
 import { useState, useEffect } from 'react'
 import { resolveAvatar } from '../../lib/avatar'

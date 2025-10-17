@@ -12,7 +12,6 @@ interface EphemeralUser {
   display_name: string
   bio: string | null
   is_agent: boolean
-  isDiscordLinked?: boolean
   isWalletLinked?: boolean
 }
 
@@ -24,8 +23,6 @@ interface UseEphemeralUserReturn {
   error: string | null
   rename: (newName: string) => Promise<boolean>
   setBio: (bio: string) => Promise<boolean>
-  linkDiscord: () => void
-  unlinkDiscord: () => Promise<boolean>
   refreshSession: () => Promise<boolean>
   reset: () => void
 }
@@ -129,7 +126,6 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
               const retryData = await retryResponse.json()
               const userData = {
                 ...retryData.user,
-                isDiscordLinked: retryData.user.isDiscordLinked ?? false,
                 isWalletLinked: retryData.user.isWalletLinked ?? false
               }
               setUser(userData)
@@ -145,10 +141,8 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
       const data = await response.json()
 
       // Map response structure: { user: {...}, identity: {...}, session_id: "..." }
-      // The user object from API includes isDiscordLinked and isWalletLinked
       const userData = {
         ...data.user,
-        isDiscordLinked: data.user.isDiscordLinked ?? false,
         isWalletLinked: data.user.isWalletLinked ?? false
       }
 
@@ -189,23 +183,6 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
           } catch {
             console.warn('Failed to parse stored user, will create new session')
             sessionStorage.removeItem(STORAGE_KEY)
-          }
-        }
-
-        // Check if we just linked Discord and need to refresh session
-        if (typeof window !== 'undefined') {
-          const params = new URLSearchParams(window.location.search)
-          if (params.get('discord_linked') === '1') {
-            try {
-              // Re-fetch session to pick up isDiscordLinked: true
-              await initializeWithServer()
-            } finally {
-              // Clean the URL
-              params.delete('discord_linked')
-              const newUrl = window.location.pathname + (params.toString() ? `?${params}` : '')
-              window.history.replaceState({}, '', newUrl)
-            }
-            return // Skip normal initialization since we already refreshed
           }
         }
 
@@ -269,7 +246,6 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
       const data = await response.json()
       const userData = {
         ...data.user,
-        isDiscordLinked: data.user.isDiscordLinked ?? false,
         isWalletLinked: data.user.isWalletLinked ?? false
       }
       setUser(userData)
@@ -313,7 +289,6 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
       const data = await response.json()
       const userData = {
         ...data.user,
-        isDiscordLinked: data.user.isDiscordLinked ?? false,
         isWalletLinked: data.user.isWalletLinked ?? false
       }
       setUser(userData)
@@ -326,11 +301,6 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
       return false
     }
   }, [sessionId, featureEnabled])
-  
-  const linkDiscord = useCallback(() => {
-    // Redirect to Discord OAuth start endpoint
-    window.location.href = '/api/auth/discord/start'
-  }, [])
 
   const refreshSession = useCallback(async (): Promise<boolean> => {
     if (!sessionId) {
@@ -347,91 +317,6 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
       return false
     }
   }, [sessionId, initializeWithServer])
-
-  const unlinkDiscord = useCallback(async (): Promise<boolean> => {
-    if (!sessionId || !featureEnabled) {
-      setError('Session not initialized')
-      return false
-    }
-
-    if (!user?.isDiscordLinked) {
-      setError('Discord not linked')
-      return false
-    }
-
-    try {
-      setError(null)
-
-      const response = await apiFetch('/api/auth/discord/unlink', {
-        method: 'POST',
-        body: JSON.stringify({})
-      })
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          // Session expired - refresh and show toast
-          const errorData = await response.json().catch(() => ({}))
-          const message = errorData.error || 'Session expired. Refreshing...'
-          setError(message)
-
-          // Show toast notification
-          if (typeof window !== 'undefined' && window.alert) {
-            window.alert('Session expired. Reloading page...')
-          }
-
-          // Attempt session refresh
-          const refreshed = await refreshSession()
-          if (!refreshed) {
-            // Hard reload as fallback
-            window.location.reload()
-          }
-
-          return false
-        } else if (response.status === 409) {
-          // User account missing - data inconsistency
-          const errorData = await response.json().catch(() => ({}))
-          setError(errorData.error || 'Account not found. Refreshing...')
-
-          // Attempt session refresh to reset identity
-          await refreshSession()
-
-          return false
-        } else if (response.status === 429) {
-          const errorData = await response.json().catch(() => ({}))
-          setError(errorData.error || 'Too many unlink attempts. Please try again later.')
-          return false
-        } else if (response.status === 403) {
-          setError('Discord already unlinked')
-          return false
-        } else {
-          const errorData = await response.json().catch(() => ({}))
-          setError(errorData.error || 'Failed to unlink Discord')
-          return false
-        }
-      }
-
-      await response.json()
-
-      // Clear avatar cache for this user (Discord avatar no longer valid)
-      if (user?.id) {
-        clearAvatarCache(user.id)
-      }
-
-      // Refresh session to get updated identity
-      await refreshSession()
-
-      // Clean URL if we have any Discord params
-      if (typeof window !== 'undefined') {
-        window.history.replaceState({}, '', '/')
-      }
-
-      return true
-    } catch (err) {
-      console.error('Unlink Discord failed:', err)
-      setError('Network error during unlink')
-      return false
-    }
-  }, [sessionId, featureEnabled, user, refreshSession])
 
   const reset = useCallback(() => {
     // Development helper to reset session
@@ -458,8 +343,7 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
       error: null,
       rename: async () => false,
       setBio: async () => false,
-      linkDiscord,
-      unlinkDiscord: async () => false,
+      refreshSession: async () => false,
       reset
     }
   }
@@ -472,8 +356,6 @@ export function useEphemeralUser(): UseEphemeralUserReturn {
     error,
     rename,
     setBio,
-    linkDiscord,
-    unlinkDiscord,
     refreshSession,
     reset
   }

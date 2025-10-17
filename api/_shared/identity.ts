@@ -1,20 +1,13 @@
-// Identity utilities for computing displayLabel and managing Discord link/unlink
+// Identity utilities for computing displayLabel and managing user identity
 
 import { supabaseAdmin } from './supabase.js'
 
-export interface DiscordMetadata {
-  username: string
-  avatarUrl: string | null
-}
-
 export interface Identity {
-  isDiscordLinked: boolean
   isWalletLinked: boolean
   displayLabel: string
   ephemeralName: string
   avatarUrl: string | null
   userId: string
-  discord: DiscordMetadata | null
 }
 
 interface UserRecord {
@@ -87,52 +80,32 @@ export async function resolveDisplayNameWithSuffix(
 
 /**
  * Compute identity payload for session responses
- * Determines displayLabel based on Discord link status
+ * Determines displayLabel based on user data
  *
  * @param user - User record from database
- * @param accounts - Array of linked accounts (Discord, wallet)
- * @returns Identity payload with displayLabel, isDiscordLinked, etc.
+ * @param accounts - Array of linked accounts (wallet, etc.)
+ * @returns Identity payload with displayLabel, isWalletLinked, etc.
  */
 export async function computeIdentityPayload(
   user: UserRecord,
   accounts: UserAccount[]
 ): Promise<Identity> {
-  const discordAccount = accounts.find(acc => acc.provider === 'discord')
-  const isDiscordLinked = !!discordAccount
   const isWalletLinked = accounts.some(acc => acc.provider === 'wallet')
 
   // Ephemeral name is either stored ephemeral_display_name or current display_name
   const ephemeralName = user.ephemeral_display_name || user.display_name
 
-  let displayLabel: string
-  let discord: DiscordMetadata | null = null
+  // Use ephemeral name as display label
+  const displayLabel = ephemeralName
 
-  let avatarUrl: string | null = null
-
-  if (isDiscordLinked && discordAccount) {
-    // Discord linked: use @username format (current display_name has suffix)
-    displayLabel = `@${user.display_name}`
-
-    // Extract Discord metadata
-    const username = discordAccount.meta?.username || user.display_name
-    avatarUrl = discordAccount.meta?.avatar_url || null
-
-    discord = {
-      username,
-      avatarUrl
-    }
-  } else {
-    // Not linked: use ephemeral name without @ prefix
-    displayLabel = ephemeralName
-  }
+  // No avatar URL support for ephemeral users
+  const avatarUrl: string | null = null
 
   return {
-    isDiscordLinked,
     isWalletLinked,
     displayLabel,
     ephemeralName,
     avatarUrl,
-    userId: user.id,
-    discord
+    userId: user.id
   }
 }

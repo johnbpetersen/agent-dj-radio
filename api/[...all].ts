@@ -12,9 +12,6 @@ import versionHandler from '../api_handlers/version.js'
 import pingHandler from '../api_handlers/ping.js'
 import sessionHelloHandler from '../api_handlers/session/hello.js'
 import sessionWhoamiHandler from '../api_handlers/session/whoami.js'
-import discordStartHandler from '../api_handlers/auth/discord/start.js'
-import discordCallbackHandler from '../api_handlers/auth/discord/callback.js'
-import discordUnlinkHandler from '../api_handlers/auth/discord/unlink.js'
 import chatRecentHandler from '../api_handlers/chat/recent.js'
 import chatPostHandler from '../api_handlers/chat/post.js'
 import stationStateHandler from '../api_handlers/station/state.js'
@@ -59,12 +56,6 @@ const routes: Route[] = [
   { method: 'GET', pattern: '/session/hello', handler: sessionHelloHandler },
   { method: 'POST', pattern: '/session/hello', handler: sessionHelloHandler },
   { method: 'GET', pattern: '/session/whoami', handler: sessionWhoamiHandler },
-
-  // Auth - Discord
-  { method: 'GET', pattern: '/auth/discord/start', handler: discordStartHandler },
-  { method: 'POST', pattern: '/auth/discord/start', handler: discordStartHandler },
-  { method: 'GET', pattern: '/auth/discord/callback', handler: discordCallbackHandler },
-  { method: 'POST', pattern: '/auth/discord/unlink', handler: discordUnlinkHandler },
 
   // Chat
   { method: 'GET', pattern: '/chat/recent', handler: chatRecentHandler },

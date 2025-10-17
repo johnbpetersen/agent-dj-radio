@@ -3,19 +3,12 @@
 // Database types matching the Supabase schema
 
 // Identity types for session/user management
-export interface DiscordMetadata {
-  username: string
-  avatarUrl: string | null
-}
-
 export interface Identity {
-  isDiscordLinked: boolean
   isWalletLinked: boolean
   displayLabel: string
   ephemeralName: string
   avatarUrl: string | null
   userId: string
-  discord: DiscordMetadata | null
 }
 
 export type TrackSource = 'GENERATED' | 'REPLAY'
