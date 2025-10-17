@@ -138,7 +138,10 @@ describe('/api/session/whoami', () => {
         ephemeral: true,
         kind: 'human',
         banned: false,
-        createdAt: '2025-01-17T10:00:00Z'
+        createdAt: '2025-01-17T10:00:00Z',
+        capabilities: {
+          canChat: true
+        }
       })
 
       // Should NOT set cookie (cookie already present)
@@ -271,7 +274,10 @@ describe('/api/session/whoami', () => {
         ephemeral: true,
         kind: 'human',
         banned: false,
-        createdAt: '2025-01-17T12:00:00Z'
+        createdAt: '2025-01-17T12:00:00Z',
+        capabilities: {
+          canChat: true
+        }
       })
 
       // Should set cookie on first visit

@@ -4,10 +4,11 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from '../_shared/supabase.js'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
-import { requireSessionId } from '../_shared/session.js'
+import { ensureSession, setSessionCookie } from '../_shared/session-helpers.js'
 import { checkSessionRateLimit } from '../../src/server/rate-limit.js'
 import { validateChatMessage } from '../../src/lib/profanity.js'
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
+import { httpError } from '../_shared/errors.js'
 
 interface ChatPostRequest {
   message: string
@@ -15,6 +16,25 @@ interface ChatPostRequest {
 
 interface ChatPostResponse {
   ok: boolean
+}
+
+/**
+ * Compute canChat capability based on user state and feature flag
+ * Logic: !banned && (flag !== 'true' || !ephemeral)
+ */
+function computeCanChat(user: { banned: boolean; ephemeral: boolean }): boolean {
+  // Banned users can never chat
+  if (user.banned) {
+    return false
+  }
+
+  // If flag is not set or 'false', everyone can chat
+  if (process.env.REQUIRE_LINKED_FOR_CHAT !== 'true') {
+    return true
+  }
+
+  // If flag is 'true', only non-ephemeral users can chat
+  return !user.ephemeral
 }
 
 async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
@@ -38,7 +58,14 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
   const startTime = Date.now()
 
   try {
-    const sessionId = requireSessionId(req)
+    // Get or create session (durable session flow)
+    const { userId, sessionId, shouldSetCookie } = await ensureSession(req, res)
+
+    // Set cookie if needed
+    if (shouldSetCookie) {
+      setSessionCookie(res, sessionId, req)
+    }
+
     const { message }: ChatPostRequest = req.body || {}
 
     logger.request('/api/chat/post', {
@@ -57,37 +84,64 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
 
     const trimmedMessage = message.trim()
 
-    // Get current user via session and check presence
+    // Fetch user data (identity source is sessions → users)
+    const { data: user, error: userError } = await supabaseAdmin
+      .from('users')
+      .select('id, display_name, ephemeral, banned')
+      .eq('id', userId)
+      .single()
+
+    if (userError || !user) {
+      throw httpError.internal('Failed to fetch user', {
+        db: {
+          type: 'QUERY',
+          operation: 'select',
+          table: 'users'
+        }
+      })
+    }
+
+    // Check capability: can this user chat?
+    const canChat = computeCanChat({
+      banned: user.banned ?? false,
+      ephemeral: user.ephemeral ?? true
+    })
+
+    if (!canChat) {
+      // Determine specific reason for denial
+      if (user.banned) {
+        logger.warn('Banned user attempted chat post', {
+          correlationId,
+          sessionId,
+          userId
+        })
+        throw httpError.forbidden('User is banned')
+      }
+
+      // If not banned but can't chat, must be ephemeral with flag ON
+      logger.warn('Guest user attempted chat with REQUIRE_LINKED_FOR_CHAT enabled', {
+        correlationId,
+        sessionId,
+        userId,
+        ephemeral: user.ephemeral
+      })
+      throw httpError.chatRequiresLinked()
+    }
+
+    // Also check presence for backward compatibility (until we migrate chat fully)
     const { data: presence, error: presenceError } = await supabaseAdmin
       .from('presence')
-      .select(`
-        session_id,
-        user_id,
-        display_name,
-        user:users!inner(id, display_name, banned)
-      `)
+      .select('session_id, user_id, display_name')
       .eq('session_id', sessionId)
       .single()
 
-    if (presenceError || !presence?.user) {
-      logger.warn('Session not found for chat post', { correlationId, sessionId })
-      res.status(404).json({ error: 'Session not found', correlationId })
-      return
+    if (presenceError || !presence) {
+      logger.warn('Session not found in presence for chat post', { correlationId, sessionId })
+      throw httpError.notFound('Session not found')
     }
 
-    // Check ban status
-    if (presence.user.banned) {
-      logger.warn('Banned user attempted chat post', {
-        correlationId,
-        sessionId,
-        userId: presence.user.id
-      })
-      res.status(403).json({ error: 'User is banned', correlationId })
-      return
-    }
-
-    // Check rate limiting: 1 message per 2 seconds per user (after ban check)
-    const rateLimitResult = checkSessionRateLimit(presence.user_id, 'chat-post', {
+    // Check rate limiting: 1 message per 2 seconds per user (after capability check)
+    const rateLimitResult = checkSessionRateLimit(userId, 'chat-post', {
       windowMs: 2 * 1000, // 2 seconds
       maxRequests: 1
     })
@@ -96,15 +150,9 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
       logger.warn('Chat post rate limit exceeded', {
         correlationId,
         sessionId,
-        userId: presence.user_id
+        userId
       })
-      res.status(429).json({
-        error: 'Too many messages',
-        message: 'Please wait 2 seconds between messages',
-        retry_after_seconds: Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000),
-        correlationId
-      })
-      return
+      throw httpError.tooManyRequests('Please wait 2 seconds between messages')
     }
 
     // Insert chat message with denormalized data
@@ -112,8 +160,8 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
       .from('chat_messages')
       .insert({
         session_id: sessionId,
-        user_id: presence.user_id,
-        display_name: presence.display_name, // Use presence display name (most current)
+        user_id: userId,
+        display_name: user.display_name,
         message: trimmedMessage
       })
       .select('id')
@@ -123,14 +171,16 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
       logger.error('Failed to insert chat message', {
         correlationId,
         sessionId,
-        userId: presence.user_id
+        userId
       }, insertError)
 
-      res.status(500).json({
-        error: 'Failed to post message',
-        correlationId
+      throw httpError.internal('Failed to post message', {
+        db: {
+          type: 'QUERY',
+          operation: 'insert',
+          table: 'chat_messages'
+        }
       })
-      return
     }
 
     // Update presence last_seen_at
@@ -143,7 +193,7 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
     await supabaseAdmin
       .from('users')
       .update({ last_seen_at: new Date().toISOString() })
-      .eq('id', presence.user_id)
+      .eq('id', userId)
 
     const response: ChatPostResponse = {
       ok: true
@@ -152,7 +202,7 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
     // Structured success log (no message content for privacy)
     logger.info('Chat message posted', {
       event: 'chat_posted',
-      userId: presence.user_id,
+      userId,
       messageId: insertedMessage.id,
       correlationId
     })
@@ -160,27 +210,16 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
     logger.requestComplete('/api/chat/post', Date.now() - startTime, {
       correlationId,
       sessionId,
-      userId: presence.user_id,
-      displayName: presence.display_name,
+      userId,
+      displayName: user.display_name,
       messageLength: trimmedMessage.length
     })
 
     res.status(201).json(response)
 
   } catch (error) {
-    const err = error instanceof Error ? error : new Error(String(error))
-    
-    logger.error('Chat post error', { correlationId }, err)
-
-    if (err.message.includes('Missing X-Session-Id') || err.message.includes('Invalid X-Session-Id')) {
-      res.status(400).json({ error: err.message, correlationId })
-      return
-    }
-
-    res.status(500).json({ 
-      error: 'Internal server error',
-      correlationId
-    })
+    // All errors will be handled by secureHandler
+    throw error
   }
 }
 

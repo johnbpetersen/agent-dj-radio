@@ -16,7 +16,29 @@ interface WhoAmIResponse {
   kind: 'human' | 'agent'
   banned: boolean
   createdAt: string
+  capabilities: {
+    canChat: boolean
+  }
   sessionId?: string // Only included when DEBUG_AUTH=1
+}
+
+/**
+ * Compute canChat capability based on user state and feature flag
+ * Logic: !banned && (flag !== 'true' || !ephemeral)
+ */
+function computeCanChat(user: { banned: boolean; ephemeral: boolean }): boolean {
+  // Banned users can never chat
+  if (user.banned) {
+    return false
+  }
+
+  // If flag is not set or 'false', everyone can chat
+  if (process.env.REQUIRE_LINKED_FOR_CHAT !== 'true') {
+    return true
+  }
+
+  // If flag is 'true', only non-ephemeral users can chat
+  return !user.ephemeral
 }
 
 async function whoamiHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
@@ -62,7 +84,13 @@ async function whoamiHandler(req: VercelRequest, res: VercelResponse): Promise<v
       ephemeral: user.ephemeral ?? true, // Default to true for safety
       kind: user.kind || 'human',
       banned: user.banned ?? false,
-      createdAt: user.created_at
+      createdAt: user.created_at,
+      capabilities: {
+        canChat: computeCanChat({
+          banned: user.banned ?? false,
+          ephemeral: user.ephemeral ?? true
+        })
+      }
     }
 
     // Include sessionId only when DEBUG_AUTH=1 (for debugging)

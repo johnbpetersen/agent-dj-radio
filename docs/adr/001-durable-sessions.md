@@ -172,6 +172,9 @@ Returns current user identity derived from durable session (no writes except pre
   kind: 'human' | 'agent'
   banned: boolean
   createdAt: string
+  capabilities: {
+    canChat: boolean
+  }
   sessionId?: string // Only included when DEBUG_AUTH=1
 }
 ```
@@ -234,6 +237,91 @@ Allows guest users to change their display name with collision safety:
 - Guest users personalizing their randomly-assigned names
 - Changing name before linking wallet (preserves identity)
 - Testing name availability without auto-suffix fallback
+
+## Guest Capabilities & Chat Gate
+
+**Feature Flag:** `REQUIRE_LINKED_FOR_CHAT` (default: `false`)
+
+Controls whether guest (ephemeral) users can post chat messages:
+
+```typescript
+// Capability computation logic
+function computeCanChat(user: { banned: boolean; ephemeral: boolean }): boolean {
+  // Banned users can never chat
+  if (user.banned) return false
+
+  // If flag is not set or 'false', everyone can chat
+  if (process.env.REQUIRE_LINKED_FOR_CHAT !== 'true') return true
+
+  // If flag is 'true', only non-ephemeral users can chat
+  return !user.ephemeral
+}
+```
+
+**Capability Exposure:**
+
+The `canChat` capability is exposed via `/api/session/whoami` response:
+
+```typescript
+{
+  userId: "...",
+  displayName: "cosmic_dolphin",
+  ephemeral: true,
+  banned: false,
+  capabilities: {
+    canChat: true  // Computed from user state + feature flag
+  }
+}
+```
+
+**Chat Gate Enforcement:**
+
+The `POST /api/chat/post` endpoint enforces the chat gate:
+
+1. Fetches user from durable sessions (via `ensureSession()`)
+2. Computes `canChat` capability using same logic as whoami
+3. If `canChat === false`:
+   - **Banned users:** Returns **403 Forbidden** with generic "User is banned" message
+   - **Guest with flag ON:** Returns **403 Forbidden** with error code `CHAT_REQUIRES_LINKED`
+4. If `canChat === true`: Proceeds with message validation and insertion
+
+**Error Response (guest gated):**
+
+```json
+{
+  "error": {
+    "code": "CHAT_REQUIRES_LINKED",
+    "message": "Chat requires a linked account"
+  },
+  "requestId": "..."
+}
+```
+
+**Use Cases:**
+
+- **Flag OFF (default):** All users (guest + linked) can chat (current behavior)
+- **Flag ON:** Only linked accounts can chat, guests can listen only
+- Gradual rollout strategy: test with flag OFF, flip to ON when ready
+- Client can preemptively disable chat input by checking `capabilities.canChat`
+
+**Key Behaviors:**
+
+- **Fail-safe default:** Flag OFF means guests can chat (no lockout on misconfiguration)
+- **Consistent computation:** Same `computeCanChat()` logic used in whoami and chat gate
+- **Explicit error code:** `CHAT_REQUIRES_LINKED` allows client to show link prompt
+- **No presence reads:** Identity and capabilities derived entirely from sessions → users
+
+**Testing:**
+
+- `tests/api/session/whoami-capabilities.test.ts` - Capability computation in whoami
+- `tests/api/chat/chat-auth.test.ts` - Chat gate enforcement in post handler
+
+**Environment Variable:**
+
+```bash
+# .env.local.example
+REQUIRE_LINKED_FOR_CHAT=false  # Default: guests can chat
+```
 
 ## References
 

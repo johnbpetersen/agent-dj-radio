@@ -25,6 +25,9 @@ export interface WhoAmIResponse {
   kind: 'human' | 'agent'
   banned: boolean
   createdAt: string
+  capabilities: {
+    canChat: boolean
+  }
   sessionId?: string // Only present when DEBUG_AUTH=1
 }
 

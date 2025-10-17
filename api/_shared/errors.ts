@@ -8,6 +8,7 @@ export type ErrorCode =
   | 'NOT_FOUND'
   | 'CONFLICT'
   | 'TOO_MANY_REQUESTS'
+  | 'CHAT_REQUIRES_LINKED'
   | 'NETWORK_ERROR'
   | 'UPSTREAM_4XX'
   | 'UPSTREAM_5XX'
@@ -82,6 +83,7 @@ export class AppError extends Error {
       case 'NOT_FOUND': return 404
       case 'CONFLICT': return 409
       case 'TOO_MANY_REQUESTS': return 429
+      case 'CHAT_REQUIRES_LINKED': return 403
       case 'NETWORK_ERROR': return 503
       case 'UPSTREAM_4XX': return 502
       case 'UPSTREAM_5XX': return 503
@@ -287,6 +289,9 @@ export const httpError = {
 
   tooManyRequests: (message: string = 'Too many requests', meta?: ErrorMeta) =>
     new AppError('TOO_MANY_REQUESTS', message, { meta }),
+
+  chatRequiresLinked: (message: string = 'Chat requires a linked account', meta?: ErrorMeta) =>
+    new AppError('CHAT_REQUIRES_LINKED', message, { meta }),
 
   networkError: (message: string, meta?: ErrorMeta) =>
     new AppError('NETWORK_ERROR', message, { meta }),
