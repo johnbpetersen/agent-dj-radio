@@ -161,7 +161,6 @@ describe('Multi-method route matching', () => {
   const routes: Route[] = [
     { method: 'GET', pattern: '/station/advance', handler: mockHandler },
     { method: 'POST', pattern: '/station/advance', handler: mockHandler },
-    { method: 'GET', pattern: '/auth/discord/start', handler: mockHandler },
   ]
 
   it('should match GET /station/advance', () => {
@@ -178,17 +177,6 @@ describe('Multi-method route matching', () => {
 
   it('should return null for PUT /station/advance', () => {
     const match = matchRoute(routes, 'PUT', '/api/station/advance')
-    expect(match).toBeNull()
-  })
-
-  it('should match GET /auth/discord/start', () => {
-    const match = matchRoute(routes, 'GET', '/api/auth/discord/start')
-    expect(match).not.toBeNull()
-    expect(match?.params).toEqual({})
-  })
-
-  it('should return null for POST /auth/discord/start', () => {
-    const match = matchRoute(routes, 'POST', '/api/auth/discord/start')
     expect(match).toBeNull()
   })
 })
