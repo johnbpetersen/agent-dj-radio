@@ -57,7 +57,7 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
 
     const trimmedMessage = message.trim()
 
-    // Get current user via session - but check Discord FIRST before presence/rate limit
+    // Get current user via session and check presence
     const { data: presence, error: presenceError } = await supabaseAdmin
       .from('presence')
       .select(`
@@ -75,41 +75,7 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
       return
     }
 
-    // Check if user has Discord linked BEFORE checking ban/rate limits
-    // This prevents guests from hitting any further logic
-    const { data: discordAccount, error: discordError } = await supabaseAdmin
-      .from('user_accounts')
-      .select('id')
-      .eq('user_id', presence.user_id)
-      .eq('provider', 'discord')
-      .single()
-
-    if (discordError && discordError.code !== 'PGRST116') {
-      // PGRST116 = no rows found, which is expected for guests
-      logger.error('Error checking Discord account', { correlationId }, discordError)
-      res.status(500).json({
-        error: 'Internal server error',
-        correlationId
-      })
-      return
-    }
-
-    // Early return for guests - 403 without hitting any other checks
-    if (!discordAccount) {
-      logger.warn('Guest attempted chat post without Discord', {
-        correlationId,
-        sessionId,
-        userId: presence.user_id
-      })
-      res.status(403).json({
-        error: 'discord_required',
-        message: 'Please sign in with Discord to use chat',
-        correlationId
-      })
-      return
-    }
-
-    // Now check ban status (only for Discord-linked users)
+    // Check ban status
     if (presence.user.banned) {
       logger.warn('Banned user attempted chat post', {
         correlationId,
@@ -120,7 +86,7 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
       return
     }
 
-    // Check rate limiting: 1 message per 2 seconds per user (after Discord + ban checks)
+    // Check rate limiting: 1 message per 2 seconds per user (after ban check)
     const rateLimitResult = checkSessionRateLimit(presence.user_id, 'chat-post', {
       windowMs: 2 * 1000, // 2 seconds
       maxRequests: 1
