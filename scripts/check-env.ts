@@ -303,22 +303,6 @@ function checkEnvironment(): CheckResult[] {
     })
   }
 
-  // ALLOW_DISCORD_UNLINK (optional, default: true)
-  const allowDiscordUnlink = process.env.ALLOW_DISCORD_UNLINK
-  if (allowDiscordUnlink === undefined || allowDiscordUnlink === '') {
-    results.push({
-      name: 'ALLOW_DISCORD_UNLINK',
-      status: 'WARN',
-      message: 'not set (defaulting to true). Set explicitly to enable/disable unlink UI'
-    })
-  } else {
-    results.push({
-      name: 'ALLOW_DISCORD_UNLINK',
-      status: 'PASS',
-      message: allowDiscordUnlink
-    })
-  }
-
   return results
 }
 
