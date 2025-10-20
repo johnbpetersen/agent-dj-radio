@@ -239,6 +239,7 @@ function makeReqRes(req: IncomingMessage, res: ServerResponse) {
 
   // ---- RESPONSE SHIM (do NOT mutate res; keep originals bound) ----
   const rawSetHeader = res.setHeader.bind(res)
+  const rawGetHeader = res.getHeader.bind(res)
   const rawEnd = res.end.bind(res)
   const vRes: any = {
     status(code: number) {
@@ -248,6 +249,9 @@ function makeReqRes(req: IncomingMessage, res: ServerResponse) {
     setHeader(name: string, value: any) {
       rawSetHeader(name, value)
       return vRes
+    },
+    getHeader(name: string) {
+      return rawGetHeader(name)
     },
     json(data: any) {
       if (!res.getHeader('Content-Type')) {
