@@ -5,7 +5,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { secureHandler, securityConfigs } from '../../_shared/secure-handler.js'
 
-function discordCallbackTombstone(req: VercelRequest, res: VercelResponse): void {
+async function discordCallbackTombstone(req: VercelRequest, res: VercelResponse): Promise<void> {
   // Clear oauth_state cookie (cleanup for users who initiated OAuth before removal)
   const proto = (req.headers['x-forwarded-proto'] as string)?.split(',')[0]?.trim() || 'http'
   const isHttps = proto === 'https' || process.env.NODE_ENV === 'production'

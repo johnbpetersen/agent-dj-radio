@@ -25,7 +25,8 @@ async function userByIdHandler(req: VercelRequest, res: VercelResponse): Promise
   const { id } = req.query
 
   if (!id || typeof id !== 'string') {
-    return res.status(400).json({ error: 'User ID is required' })
+    res.status(400).json({ error: 'User ID is required' })
+    return
   }
 
   logger.request(`/api/users/${id}`, { correlationId, method: req.method })
@@ -40,7 +41,8 @@ async function userByIdHandler(req: VercelRequest, res: VercelResponse): Promise
 
       if (error || !user) {
         logger.warn('User not found', { correlationId, userId: id })
-        return res.status(404).json({ error: 'User not found' })
+        res.status(404).json({ error: 'User not found' })
+        return
       }
 
       const response: UserResponse = {
@@ -52,18 +54,21 @@ async function userByIdHandler(req: VercelRequest, res: VercelResponse): Promise
         userId: id
       })
 
-      return res.status(200).json(response)
+      res.status(200).json(response)
+      return
     }
 
     if (req.method === 'PATCH') {
       const { display_name }: UpdateUserRequest = req.body
 
       if (!display_name || !display_name.trim()) {
-        return res.status(400).json({ error: 'Display name is required' })
+        res.status(400).json({ error: 'Display name is required' })
+        return
       }
 
       if (display_name.trim().length > 50) {
-        return res.status(400).json({ error: 'Display name too long (max 50 characters)' })
+        res.status(400).json({ error: 'Display name too long (max 50 characters)' })
+        return
       }
 
       // Check if user exists and is not banned
@@ -75,11 +80,13 @@ async function userByIdHandler(req: VercelRequest, res: VercelResponse): Promise
 
       if (userError || !existingUser) {
         logger.warn('User not found for update', { correlationId, userId: id })
-        return res.status(404).json({ error: 'User not found' })
+        res.status(404).json({ error: 'User not found' })
+        return
       }
 
       if (existingUser.banned) {
-        return res.status(403).json({ error: 'Banned users cannot update their profile' })
+        res.status(403).json({ error: 'Banned users cannot update their profile' })
+        return
       }
 
       // Update display name
@@ -93,7 +100,8 @@ async function userByIdHandler(req: VercelRequest, res: VercelResponse): Promise
       if (updateError) {
         // Check if it's a unique constraint violation (display name taken)
         if (updateError.code === '23505') {
-          return res.status(409).json({ error: 'Display name already taken' })
+          res.status(409).json({ error: 'Display name already taken' })
+          return
         }
         throw updateError
       }
@@ -107,10 +115,11 @@ async function userByIdHandler(req: VercelRequest, res: VercelResponse): Promise
         userId: id
       })
 
-      return res.status(200).json(response)
+      res.status(200).json(response)
+      return
     }
 
-    return res.status(405).json({ error: 'Method not allowed' })
+    res.status(405).json({ error: 'Method not allowed' })
   } catch (error) {
     const errorResponse = handleApiError(error, 'users/[id]', { correlationId })
 

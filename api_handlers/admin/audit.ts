@@ -5,7 +5,7 @@ import { getPaymentAuditTrail, getPaymentStatistics } from '../../src/server/x40
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
 import { handleApiError } from '../../src/lib/error-tracking.js'
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   // Temporarily disabled in dev
   return res.status(501).json({ message: 'admin audit disabled in dev' })
 

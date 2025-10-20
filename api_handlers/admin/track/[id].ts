@@ -4,7 +4,7 @@ import { supabaseAdmin } from '../../_shared/supabase.js'
 import { getTrackById, updateTrackStatus, getStationState } from '../../../src/server/db.js'
 import { broadcastQueueUpdate, broadcastStationUpdate } from '../../../src/server/realtime.js'
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== 'POST' && req.method !== 'DELETE') {
     return res.status(405).json({ error: 'Method not allowed' })
   }

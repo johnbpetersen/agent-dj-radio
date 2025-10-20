@@ -130,7 +130,8 @@ async function healthHandler(req: VercelRequest, res: VercelResponse): Promise<v
   // Only GET allowed
   if (req.method !== 'GET') {
     res.setHeader('X-Request-Id', requestId)
-    return res.status(405).json({ error: 'Method not allowed', requestId })
+    res.status(405).json({ error: 'Method not allowed', requestId })
+    return
   }
 
   let supabaseCheck: HealthResponse['checks']['supabase'] = { status: 'fail' }

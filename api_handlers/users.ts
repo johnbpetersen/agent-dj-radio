@@ -22,7 +22,8 @@ async function usersHandler(req: VercelRequest, res: VercelResponse): Promise<vo
   const startTime = Date.now()
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    res.status(405).json({ error: 'Method not allowed' })
+    return
   }
 
   logger.request('/api/users', { correlationId })
@@ -32,12 +33,14 @@ async function usersHandler(req: VercelRequest, res: VercelResponse): Promise<vo
 
     if (!display_name || !display_name.trim()) {
       logger.warn('User creation failed - no display name', { correlationId })
-      return res.status(400).json({ error: 'Display name is required' })
+      res.status(400).json({ error: 'Display name is required' })
+      return
     }
 
     if (display_name.trim().length > 50) {
       logger.warn('User creation failed - display name too long', { correlationId })
-      return res.status(400).json({ error: 'Display name too long (max 50 characters)' })
+      res.status(400).json({ error: 'Display name too long (max 50 characters)' })
+      return
     }
 
     // Get or create user by display name
@@ -48,7 +51,8 @@ async function usersHandler(req: VercelRequest, res: VercelResponse): Promise<vo
 
     if (!user) {
       logger.error('Failed to create user', { correlationId })
-      return res.status(500).json({ error: 'Failed to create user' })
+      res.status(500).json({ error: 'Failed to create user' })
+      return
     }
 
     const response: CreateUserResponse = {

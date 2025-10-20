@@ -14,7 +14,8 @@ interface VersionResponse {
 async function versionHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
   // Only GET allowed
   if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    res.status(405).json({ error: 'Method not allowed' })
+    return
   }
 
   const response: VersionResponse = {

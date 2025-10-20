@@ -6,7 +6,7 @@ import { createTrack, pollTrackWithTimeout, fetchToBuffer } from '../../src/serv
 import { uploadAudioBuffer, ensureTracksBucket } from '../../src/server/storage.js'
 import { broadcastQueueUpdate } from '../../src/server/realtime.js'
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
