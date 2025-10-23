@@ -508,7 +508,7 @@ export async function facilitatorVerifyAuthorization(params: {
           console.warn('[x402-facilitator] 404/405 detected - URL path may be incorrect', {
             from: maskedFrom,
             status: res.status,
-            url
+            url: variant.url
           })
 
           // Try with forced absolute path from origin
@@ -517,7 +517,7 @@ export async function facilitatorVerifyAuthorization(params: {
 
           console.log('[x402-facilitator] Retrying with forced absolute path', {
             from: maskedFrom,
-            originalUrl: url,
+            originalUrl: variant.url,
             forcedUrl
           })
 
@@ -622,15 +622,15 @@ export async function facilitatorVerifyAuthorization(params: {
 
           // Build alternative payload structure (signature outside authorization)
           const compatPayload = {
-            ...payload,
-            signature: payload.authorization.signature,
+            ...variant.payload,
+            signature: variant.payload.authorization.signature,
             authorization: {
-              from: payload.authorization.from,
-              to: payload.authorization.to,
-              value: payload.authorization.value,
-              validAfter: payload.authorization.validAfter,
-              validBefore: payload.authorization.validBefore,
-              nonce: payload.authorization.nonce
+              from: variant.payload.authorization.from,
+              to: variant.payload.authorization.to,
+              value: variant.payload.authorization.value,
+              validAfter: variant.payload.authorization.validAfter,
+              validBefore: variant.payload.authorization.validBefore,
+              nonce: variant.payload.authorization.nonce
             }
           }
 
@@ -640,7 +640,7 @@ export async function facilitatorVerifyAuthorization(params: {
           })
 
           try {
-            const compatRes = await fetch(url, {
+            const compatRes = await fetch(variant.url, {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify(compatPayload),
