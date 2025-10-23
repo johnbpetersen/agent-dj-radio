@@ -1,9 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
 
-async function privacyPolicyHandler(req: VercelRequest, res: VercelResponse) {
+async function privacyPolicyHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    res.status(405).json({ error: 'Method not allowed' })
+    return
   }
 
   const privacyPolicy = {

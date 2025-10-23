@@ -8,16 +8,19 @@ import { broadcastQueueUpdate } from '../../src/server/realtime.js'
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    res.status(405).json({ error: 'Method not allowed' })
+    return
   }
 
   // Admin authentication
   const authError = requireAdminAuth(req)
   if (authError === 'NOT_FOUND') {
-    return res.status(404).json({ error: 'Not found' })
+    res.status(404).json({ error: 'Not found' })
+    return
   }
   if (authError) {
-    return res.status(401).json({ error: 'Unauthorized' })
+    res.status(401).json({ error: 'Unauthorized' })
+    return
   }
 
   try {
@@ -27,10 +30,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     const trackToGenerate = await claimNextPaidTrack(supabaseAdmin)
     
     if (!trackToGenerate) {
-      return res.status(200).json({ 
+      res.status(200).json({
         message: 'No tracks to generate',
-        processed: false 
+        processed: false
       })
+      return
     }
 
     console.log(`Admin: Processing track ${trackToGenerate.id} with ElevenLabs=${elevenEnabled}`)
@@ -43,7 +47,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     )
 
     if (!generatingTrack) {
-      return res.status(500).json({ error: 'Failed to update track to GENERATING' })
+      res.status(500).json({ error: 'Failed to update track to GENERATING' })
+      return
     }
 
     // Broadcast status update
@@ -135,13 +140,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
             eleven_request_id: elevenRequestId || null
           }
         )
-        
-        return res.status(200).json({
+
+        res.status(200).json({
           message: 'Track generation failed',
           processed: true,
           error: error instanceof Error ? error.message : 'Generation failed',
           track_id: trackToGenerate.id
         })
+        return
       }
     }
 
@@ -157,7 +163,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     )
 
     if (!readyTrack) {
-      return res.status(500).json({ error: 'Failed to update track to READY' })
+      res.status(500).json({ error: 'Failed to update track to READY' })
+      return
     }
 
     // Broadcast final status update

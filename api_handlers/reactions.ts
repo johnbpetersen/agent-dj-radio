@@ -7,9 +7,10 @@ import type { ReactionRequest, ReactionResponse, ReactionKind } from '../src/typ
 
 const VALID_REACTION_KINDS: ReactionKind[] = ['LOVE', 'FIRE', 'SKIP']
 
-async function reactionsHandler(req: VercelRequest, res: VercelResponse) {
+async function reactionsHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    res.status(405).json({ error: 'Method not allowed' })
+    return
   }
 
   try {
@@ -17,15 +18,17 @@ async function reactionsHandler(req: VercelRequest, res: VercelResponse) {
 
     // Validation
     if (!track_id || !user_id || !kind) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: track_id, user_id, kind' 
+      res.status(400).json({
+        error: 'Missing required fields: track_id, user_id, kind'
       })
+      return
     }
 
     if (!VALID_REACTION_KINDS.includes(kind)) {
-      return res.status(400).json({ 
-        error: `Invalid reaction kind. Must be one of: ${VALID_REACTION_KINDS.join(', ')}` 
+      res.status(400).json({
+        error: `Invalid reaction kind. Must be one of: ${VALID_REACTION_KINDS.join(', ')}`
       })
+      return
     }
 
     // Verify track exists
@@ -36,7 +39,8 @@ async function reactionsHandler(req: VercelRequest, res: VercelResponse) {
       .single()
 
     if (trackError || !track) {
-      return res.status(404).json({ error: 'Track not found' })
+      res.status(404).json({ error: 'Track not found' })
+      return
     }
 
     // Verify user exists and is not banned
@@ -47,23 +51,27 @@ async function reactionsHandler(req: VercelRequest, res: VercelResponse) {
       .single()
 
     if (userError || !user) {
-      return res.status(404).json({ error: 'User not found' })
+      res.status(404).json({ error: 'User not found' })
+      return
     }
 
     if (user.banned) {
-      return res.status(403).json({ error: 'User is banned' })
+      res.status(403).json({ error: 'User is banned' })
+      return
     }
 
     // Upsert reaction (replaces existing reaction from same user)
     const reaction = await upsertReaction(supabaseAdmin, track_id, user_id, kind)
     if (!reaction) {
-      return res.status(500).json({ error: 'Failed to save reaction' })
+      res.status(500).json({ error: 'Failed to save reaction' })
+      return
     }
 
     // Recompute track rating
     const updatedTrack = await updateTrackRating(supabaseAdmin, track_id)
     if (!updatedTrack) {
-      return res.status(500).json({ error: 'Failed to update track rating' })
+      res.status(500).json({ error: 'Failed to update track rating' })
+      return
     }
 
     const response: ReactionResponse = {
@@ -76,16 +84,17 @@ async function reactionsHandler(req: VercelRequest, res: VercelResponse) {
     res.status(200).json(response)
   } catch (error) {
     console.error('Reaction error:', error)
-    
+
     // Handle Postgres unique constraint violation (23505) - double-click case
     if (error && typeof error === 'object' && 'code' in error && error.code === '23505') {
       console.warn('[Reactions] Duplicate reaction ignored (23505):', { track_id, user_id, kind })
-      return res.status(200).json({ 
-        ok: true, 
+      res.status(200).json({
+        ok: true,
         already_applied: true
       })
+      return
     }
-    
+
     res.status(500).json({ error: 'Internal server error' })
   }
 }

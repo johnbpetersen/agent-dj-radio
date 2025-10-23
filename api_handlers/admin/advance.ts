@@ -8,23 +8,27 @@ import { broadcastStationUpdate, broadcastTrackAdvance } from '../../src/server/
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    res.status(405).json({ error: 'Method not allowed' })
+    return
   }
 
   // Admin authentication
   const authError = requireAdminAuth(req)
   if (authError === 'NOT_FOUND') {
-    return res.status(404).json({ error: 'Not found' })
+    res.status(404).json({ error: 'Not found' })
+    return
   }
   if (authError) {
-    return res.status(401).json({ error: 'Unauthorized' })
+    res.status(401).json({ error: 'Unauthorized' })
+    return
   }
 
   try {
     // Get current station state
     const stationState = await getStationState(supabaseAdmin)
     if (!stationState) {
-      return res.status(500).json({ error: 'Failed to get station state' })
+      res.status(500).json({ error: 'Failed to get station state' })
+      return
     }
 
     const currentTrack = stationState.current_track || null
@@ -79,13 +83,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         })
       }
 
-      return res.status(200).json({
+      res.status(200).json({
         message: 'No tracks available to play',
         advanced: true,
         current_track: null,
         playhead_seconds: 0,
         replay_created: null
       })
+      return
     }
 
     // Update track to PLAYING
@@ -96,7 +101,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     )
 
     if (!playingTrack) {
-      return res.status(500).json({ error: 'Failed to update track to PLAYING' })
+      res.status(500).json({ error: 'Failed to update track to PLAYING' })
+      return
     }
 
     // Update station state
@@ -106,7 +112,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     })
 
     if (!newStationState) {
-      return res.status(500).json({ error: 'Failed to update station state' })
+      res.status(500).json({ error: 'Failed to update station state' })
+      return
     }
 
     // Broadcast station update

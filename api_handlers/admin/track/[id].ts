@@ -6,28 +6,33 @@ import { broadcastQueueUpdate, broadcastStationUpdate } from '../../../src/serve
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== 'POST' && req.method !== 'DELETE') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    res.status(405).json({ error: 'Method not allowed' })
+    return
   }
 
   // Admin authentication
   const authError = requireAdminAuth(req)
   if (authError === 'NOT_FOUND') {
-    return res.status(404).json({ error: 'Not found' })
+    res.status(404).json({ error: 'Not found' })
+    return
   }
   if (authError) {
-    return res.status(401).json({ error: 'Unauthorized' })
+    res.status(401).json({ error: 'Unauthorized' })
+    return
   }
 
   const trackId = req.query.id as string
   if (!trackId) {
-    return res.status(400).json({ error: 'Track ID required' })
+    res.status(400).json({ error: 'Track ID required' })
+    return
   }
 
   try {
     // Get track to verify it exists
     const track = await getTrackById(supabaseAdmin, trackId)
     if (!track) {
-      return res.status(404).json({ error: 'Track not found' })
+      res.status(404).json({ error: 'Track not found' })
+      return
     }
 
     if (req.method === 'DELETE') {
@@ -39,7 +44,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
       if (error) {
         console.error('Admin delete track error:', error)
-        return res.status(500).json({ error: 'Failed to delete track' })
+        res.status(500).json({ error: 'Failed to delete track' })
+        return
       }
 
       // Broadcast queue update to remove from UI
@@ -51,25 +57,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
       console.log(`Admin: Deleted track ${trackId}`)
 
-      return res.status(200).json({
+      res.status(200).json({
         message: 'Track deleted successfully',
         track_id: trackId
       })
+      return
     }
 
     if (req.method === 'POST') {
       const { action } = req.body
 
       if (!action || (action !== 'skip' && action !== 'requeue')) {
-        return res.status(400).json({ 
-          error: 'Invalid action. Must be "skip" or "requeue"' 
+        res.status(400).json({
+          error: 'Invalid action. Must be "skip" or "requeue"'
         })
+        return
       }
 
       if (action === 'skip') {
         // Skip: mark track as DONE
         if (track.status === 'DONE') {
-          return res.status(400).json({ error: 'Track is already done' })
+          res.status(400).json({ error: 'Track is already done' })
+          return
         }
 
         const skippedTrack = await updateTrackStatus(
@@ -80,7 +89,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         )
 
         if (!skippedTrack) {
-          return res.status(500).json({ error: 'Failed to skip track' })
+          res.status(500).json({ error: 'Failed to skip track' })
+          return
         }
 
         // If this was the currently playing track, update station state
@@ -114,18 +124,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
         console.log(`Admin: Skipped track ${trackId}`)
 
-        return res.status(200).json({
+        res.status(200).json({
           message: 'Track skipped successfully',
           track: skippedTrack
         })
+        return
       }
 
       if (action === 'requeue') {
         // Requeue: change DONE/FAILED back to READY
         if (track.status !== 'DONE' && track.status !== 'FAILED') {
-          return res.status(400).json({ 
-            error: 'Can only requeue DONE or FAILED tracks' 
+          res.status(400).json({
+            error: 'Can only requeue DONE or FAILED tracks'
           })
+          return
         }
 
         const requeuedTrack = await updateTrackStatus(
@@ -139,7 +151,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         )
 
         if (!requeuedTrack) {
-          return res.status(500).json({ error: 'Failed to requeue track' })
+          res.status(500).json({ error: 'Failed to requeue track' })
+          return
         }
 
         // Broadcast queue update
@@ -151,15 +164,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
         console.log(`Admin: Requeued track ${trackId}`)
 
-        return res.status(200).json({
+        res.status(200).json({
           message: 'Track requeued successfully',
           track: requeuedTrack
         })
+        return
       }
     }
 
-    return res.status(400).json({ error: 'Invalid request' })
-    
+    res.status(400).json({ error: 'Invalid request' })
+
   } catch (error) {
     console.error('Admin track operation error:', error)
     res.status(500).json({ error: 'Internal server error' })

@@ -7,26 +7,30 @@ import { handleApiError } from '../../src/lib/error-tracking.js'
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   // Temporarily disabled in dev
-  return res.status(501).json({ message: 'admin audit disabled in dev' })
+  res.status(501).json({ message: 'admin audit disabled in dev' })
+  return
 
   const correlationId = generateCorrelationId()
   const startTime = Date.now()
 
   if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    res.status(405).json({ error: 'Method not allowed' })
+    return
   }
 
   // Admin authentication
   const authError = requireAdminAuth(req)
   if (authError === 'NOT_FOUND') {
-    return res.status(404).json({ error: 'Not found' })
+    res.status(404).json({ error: 'Not found' })
+    return
   }
   if (authError) {
     logger.requestComplete(req.url || '/api/admin/audit', correlationId, {
       statusCode: 401,
       authError
     })
-    return res.status(401).json({ error: authError, correlationId })
+    res.status(401).json({ error: authError, correlationId })
+    return
   }
 
   logger.request(req.url || '/api/admin/audit', { correlationId, method: req.method })
@@ -41,7 +45,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
           statusCode: 400,
           error: 'Invalid track_id parameter'
         })
-        return res.status(400).json({ error: 'track_id must be a string', correlationId })
+        res.status(400).json({ error: 'track_id must be a string', correlationId })
+        return
       }
 
       logger.info('Getting payment audit trail for track', {
@@ -57,11 +62,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         eventsCount: auditTrail.length
       })
 
-      return res.status(200).json({
+      res.status(200).json({
         track_id,
         audit_trail: auditTrail,
         correlationId
       })
+      return
     }
 
     if (stats === 'true') {
@@ -74,7 +80,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
             statusCode: 400,
             error: 'Invalid since parameter'
           })
-          return res.status(400).json({ error: 'Invalid since date format', correlationId })
+          res.status(400).json({ error: 'Invalid since date format', correlationId })
+          return
         }
       }
 
@@ -90,7 +97,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
           statusCode: 500,
           error: 'Failed to get payment statistics'
         })
-        return res.status(500).json({ error: 'Failed to get payment statistics', correlationId })
+        res.status(500).json({ error: 'Failed to get payment statistics', correlationId })
+        return
       }
 
       logger.requestComplete(req.url || '/api/admin/audit', correlationId, {
@@ -98,7 +106,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         successRate: statistics.successRate
       })
 
-      return res.status(200).json({
+      res.status(200).json({
         statistics,
         period: {
           since: startDate?.toISOString() || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
@@ -106,6 +114,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         },
         correlationId
       })
+      return
     }
 
     // Default: get recent audit events
@@ -115,7 +124,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         statusCode: 400,
         error: 'Invalid limit parameter'
       })
-      return res.status(400).json({ error: 'limit must be between 1 and 1000', correlationId })
+      res.status(400).json({ error: 'limit must be between 1 and 1000', correlationId })
+      return
     }
 
     const { data: recentEvents, error } = await supabaseAdmin
