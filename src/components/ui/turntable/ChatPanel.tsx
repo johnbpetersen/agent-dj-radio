@@ -24,7 +24,7 @@ export default function ChatPanel() {
   const [error, setError] = useState<string | null>(null)
   const [isChatEnabled, setIsChatEnabled] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const { identity: ephemeralIdentity, loading: ephemeralLoading } = useEphemeralUser()
+  const { identity: ephemeralIdentity } = useEphemeralUser()
   const { identity, loading } = useIdentity()
 
   // Check if chat feature is enabled

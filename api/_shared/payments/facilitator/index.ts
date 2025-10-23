@@ -4,10 +4,9 @@
 // Supports multiple facilitator dialects (flat canonical, PayAI v1)
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any */
 
-import { buildCanonical, buildCompat, buildLegacy, type PayloadParams } from './variants.js'
+import { buildCanonical, buildCompat, type PayloadParams } from './variants.js'
 import { postToFacilitator, joinUrl } from './transport.js'
 import { parseFacilitatorResponse, FacilitatorError, type FacilitatorSuccess } from './response.js'
-import { DEFAULT_RETRY_POLICY } from './policy.js'
 import { buildPayAiVerifyBody, parsePayAiVerifyResponse, type PayAiVerifyParams } from './dialects/payaiv1.js'
 import { serverEnv } from '../../../../src/config/env.server.js'
 import {
@@ -139,7 +138,6 @@ export async function facilitatorVerifyAuthorization(
     console.log('[x402-facilitator] FULL PayAI body →\n' + JSON.stringify(payload, null, 2))
     console.log('[x402-facilitator] POST', url)
 
-    const startTime = Date.now()
     const httpResult = await postToFacilitator(url, payload)
     const durationMs = httpResult.durationMs
 
@@ -255,7 +253,6 @@ export async function facilitatorVerifyAuthorization(
       }
 
       // Send request (never throws - returns structured result)
-      const startTime = Date.now()
       const httpResult = await postToFacilitator(url, payload)
       const durationMs = httpResult.durationMs
 

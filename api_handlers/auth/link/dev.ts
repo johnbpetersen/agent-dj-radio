@@ -6,7 +6,7 @@ import { supabaseAdmin } from '../../_shared/supabase.js'
 import { secureHandler, securityConfigs } from '../../_shared/secure-handler.js'
 import { ensureSession, setSessionCookie } from '../../_shared/session-helpers.js'
 import { logger, generateCorrelationId } from '../../../src/lib/logger.js'
-import { httpError, AppError } from '../../_shared/errors.js'
+import { httpError } from '../../_shared/errors.js'
 
 interface LinkDevResponse {
   userId: string

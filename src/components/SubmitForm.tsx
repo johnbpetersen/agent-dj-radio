@@ -111,7 +111,7 @@ export default function SubmitForm({ onSubmitSuccess }: SubmitFormProps) {
     }
   }
 
-  const handlePaymentSuccess = (trackId: string) => {
+  const handlePaymentSuccess = (_trackId: string) => {
     setPrompt('')
     setPriceQuote(null)
     setParsedChallenge(null)

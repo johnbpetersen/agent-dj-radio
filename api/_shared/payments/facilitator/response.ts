@@ -46,7 +46,7 @@ export class FacilitatorError extends Error {
  */
 export function parseFacilitatorResponse(
   httpResult: { ok: boolean; status?: number; text: string; error?: string },
-  url: string
+  _url: string
 ): FacilitatorSuccess {
   const status = httpResult.status ?? 0
   const text = httpResult.text ?? ''

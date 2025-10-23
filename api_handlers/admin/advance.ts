@@ -3,7 +3,6 @@ import { requireAdminAuth } from '../_shared/admin-auth.js'
 import { supabaseAdmin } from '../_shared/supabase.js'
 import { getStationState, updateStationState, getTracksByStatus, updateTrackStatus, createTrack } from '../../src/server/db.js'
 import { selectNextTrack, createReplayTrack } from '../../src/server/selectors.js'
-import { calculatePlayhead } from '../../src/server/station.js'
 import { broadcastStationUpdate, broadcastTrackAdvance } from '../../src/server/realtime.js'
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
@@ -32,8 +31,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
 
     const currentTrack = stationState.current_track || null
-    const _playheadSeconds = calculatePlayhead(stationState)
-    
+
     console.log(`Admin: Advancing station - current track: ${currentTrack?.id || 'none'}`)
 
     const previousTrackId = currentTrack?.id || null

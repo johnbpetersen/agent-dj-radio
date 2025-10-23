@@ -230,7 +230,7 @@ async function attemptVerify(
     tokenAddress?: string
     chainId?: number
   },
-  attemptNum: number
+  _attemptNum: number
 ): Promise<{ res?: Response; error?: any }> {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS)
@@ -379,7 +379,6 @@ export async function facilitatorVerifyAuthorization(params: {
 
   // Build payload variants for multi-variant retry strategy
   const baseUrl = joinFacilitator(base, 'verify')
-  const forcedUrl = new URL('/facilitator/verify', new URL(base).origin).toString()
 
   // Variant A: Canonical (chainId as number, all numerics as strings)
   const payloadA = {

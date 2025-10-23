@@ -3,7 +3,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
-export default function handler(req: VercelRequest, res: VercelResponse) {
+export default function handler(_req: VercelRequest, res: VercelResponse) {
   // Block in production
   if (process.env.NODE_ENV === 'production') {
     return res.status(404).json({ error: 'Not found' })

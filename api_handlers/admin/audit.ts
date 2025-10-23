@@ -10,8 +10,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   res.status(501).json({ message: 'admin audit disabled in dev' })
   return
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const correlationId = generateCorrelationId()
-  const startTime = Date.now()
 
   if (req.method !== 'GET') {
     res.status(405).json({ error: 'Method not allowed' })

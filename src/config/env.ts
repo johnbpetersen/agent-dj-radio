@@ -168,7 +168,6 @@ export function validateEnvironmentConsistency(serverEnv: ReturnType<typeof load
   // Service role key host consistency (if present) - completely optional in all stages
   if (serverEnv.SUPABASE_SERVICE_ROLE_KEY) {
     try {
-      const serverHost = new URL(serverEnv.SUPABASE_URL).hostname
       // We can't decode the JWT easily, but we can assume it should match the same project
       // This is a basic check - in practice, service role keys are project-specific
     } catch (error) {

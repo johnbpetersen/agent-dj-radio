@@ -50,6 +50,7 @@ interface HealthResponse {
 /**
  * Convert unknown error types to readable string
  */
+/*
 async function toErrorString(x: unknown): Promise<string> {
   if (x instanceof Response) {
     try {
@@ -67,6 +68,7 @@ async function toErrorString(x: unknown): Promise<string> {
 
   return toErrorStringSync(x)
 }
+*/
 
 function toErrorStringSync(x: unknown): string {
   if (x && typeof x === 'object' && 'error' in x) {

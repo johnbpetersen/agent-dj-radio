@@ -5,7 +5,7 @@ import { selectNextTrack, createReplayTrack } from '../../src/server/selectors.j
 import { calculatePlayhead, isTrackFinished } from '../../src/server/station.js'
 import { broadcastStationUpdate, broadcastTrackAdvance } from '../../src/server/realtime.js'
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
-import { errorTracker, handleApiError } from '../../src/lib/error-tracking.js'
+import { handleApiError } from '../../src/lib/error-tracking.js'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
 
 async function advanceHandler(req: VercelRequest, res: VercelResponse): Promise<void> {

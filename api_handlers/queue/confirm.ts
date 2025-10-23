@@ -25,7 +25,6 @@ import { logger, generateCorrelationId } from '../../src/lib/logger.js'
 import { errorTracker } from '../../src/lib/error-tracking.js'
 import { broadcastQueueUpdate } from '../../src/server/realtime.js'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
-import { sanitizeForClient } from '../_shared/security.js'
 import { maskTxHash, maskAddress } from '../../src/lib/crypto-utils.js'
 import { normalizeEvmAddress, addressesMatch } from '../../src/lib/binding-utils.js'
 
@@ -262,7 +261,6 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
 
       const originalTrackId = joinedData.track_id
       const originalConfirmedAt = existingByTxHash.created_at
-      const originalBoundAddress = joinedData.bound_address
 
       logger.warn('queue/confirm tx_hash reused across different challenges', {
         requestId,
