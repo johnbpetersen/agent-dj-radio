@@ -15,7 +15,7 @@ export interface FacilitatorSuccess {
 /**
  * Facilitator error response
  */
-export interface FacilitatorError {
+export interface FacilitatorErrorResponse {
   error: string
   message?: string
   details?: string
@@ -26,12 +26,15 @@ export interface FacilitatorError {
  * Custom error class with HTTP status
  */
 export class FacilitatorError extends Error {
+  public status: number
+
   constructor(
     message: string,
-    public status: number
+    status: number
   ) {
     super(message)
     this.name = 'FacilitatorError'
+    this.status = status
   }
 }
 

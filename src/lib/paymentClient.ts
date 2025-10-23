@@ -150,15 +150,27 @@ export async function confirmPayment(
  * Preserves error codes and request IDs for debugging
  */
 export class PaymentError extends Error {
+  public code: string
+  public status: number
+  public requestId: string
+  public detail?: string
+  public data?: {
+    originalChallengeId?: string
+    originalTrackId?: string
+    originalConfirmedAt?: string
+    payerAddress?: string | null
+    boundAddress?: string | null
+    reasonCodes?: string[]
+  }
   public error?: any // Store full error object for new response shapes
 
   constructor(
-    public code: string,
+    code: string,
     message: string,
-    public status: number,
-    public requestId: string,
-    public detail?: string,
-    public data?: {
+    status: number,
+    requestId: string,
+    detail?: string,
+    data?: {
       originalChallengeId?: string
       originalTrackId?: string
       originalConfirmedAt?: string
@@ -170,6 +182,11 @@ export class PaymentError extends Error {
   ) {
     super(message)
     this.name = 'PaymentError'
+    this.code = code
+    this.status = status
+    this.requestId = requestId
+    this.detail = detail
+    this.data = data
     this.error = errorObject
   }
 
