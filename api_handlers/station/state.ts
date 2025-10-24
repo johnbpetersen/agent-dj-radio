@@ -78,7 +78,7 @@ async function stationStateHandler(req: VercelRequest, res: VercelResponse): Pro
 
     // 3) Resolve the current track
     let currentTrack: Record<string, unknown> | null = null
-    let currentTrackId = state.current_track_id as string | null
+    let currentTrackId: string | null | undefined = state.current_track_id as string | null
     let currentStartedAt = state.current_started_at as string | null
 
     if (currentTrackId) {
@@ -131,7 +131,7 @@ async function stationStateHandler(req: VercelRequest, res: VercelResponse): Pro
           correlationId,
           targetUrl: 'supabase://tracks',
           operation: 'update',
-          trackId: currentTrackId
+          trackId: currentTrackId || undefined
         }, markErr)
       }
     }

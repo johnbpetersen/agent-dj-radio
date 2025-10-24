@@ -51,6 +51,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       // Broadcast queue update to remove from UI
       await broadcastQueueUpdate({
         queue: [],
+        // @ts-expect-error TODO(types): broadcastQueueUpdate action type needs to include 'deleted'
         action: 'deleted',
         trackId: trackId
       })

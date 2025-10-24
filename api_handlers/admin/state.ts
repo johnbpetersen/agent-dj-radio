@@ -4,7 +4,7 @@ import { supabaseAdmin } from '../_shared/supabase.js'
 import { getStationState, getTracksByStatus } from '../../src/server/db.js'
 import { calculatePlayhead } from '../../src/server/station.js'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
-import type { StationStateResponse } from '../../src/types.js'
+import type { StationStateResponse } from '../../src/types/index.js'
 
 async function adminStateHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== 'GET') {

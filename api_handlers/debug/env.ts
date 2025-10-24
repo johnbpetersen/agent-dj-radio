@@ -3,10 +3,11 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
-export default function handler(_req: VercelRequest, res: VercelResponse) {
+export default async function handler(_req: VercelRequest, res: VercelResponse): Promise<void> {
   // Block in production
   if (process.env.NODE_ENV === 'production') {
-    return res.status(404).json({ error: 'Not found' })
+    res.status(404).json({ error: 'Not found' })
+    return
   }
 
   // Return only VITE_* vars that client code relies on
@@ -19,7 +20,7 @@ export default function handler(_req: VercelRequest, res: VercelResponse) {
     VITE_AVATAR_CACHE_MAX_AGE_SEC: process.env.VITE_AVATAR_CACHE_MAX_AGE_SEC || '300 (default)',
   }
 
-  return res.status(200).json({
+  res.status(200).json({
     message: 'Client environment variables (VITE_*)',
     note: 'This endpoint is only available in development',
     env: clientEnvs,

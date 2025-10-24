@@ -59,7 +59,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     })
 
     let audioUrl: string
-    let elevenRequestId: string
+    let elevenRequestId: string | undefined
 
     if (!elevenEnabled) {
       // Mock generation path - upload sample track to Supabase

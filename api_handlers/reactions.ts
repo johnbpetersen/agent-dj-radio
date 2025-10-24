@@ -3,7 +3,7 @@ import { supabaseAdmin } from './_shared/supabase.js'
 import { upsertReaction, updateTrackRating } from '../src/server/db.js'
 import { secureHandler, securityConfigs } from './_shared/secure-handler.js'
 import { sanitizeForClient } from './_shared/security.js'
-import type { ReactionRequest, ReactionResponse, ReactionKind } from '../src/types.js'
+import type { ReactionRequest, ReactionResponse, ReactionKind } from '../src/types/index.js'
 
 const VALID_REACTION_KINDS: ReactionKind[] = ['LOVE', 'FIRE', 'SKIP']
 
@@ -87,7 +87,7 @@ async function reactionsHandler(req: VercelRequest, res: VercelResponse): Promis
 
     // Handle Postgres unique constraint violation (23505) - double-click case
     if (error && typeof error === 'object' && 'code' in error && error.code === '23505') {
-      console.warn('[Reactions] Duplicate reaction ignored (23505):', { track_id, user_id, kind })
+      console.warn('[Reactions] Duplicate reaction ignored (23505)')
       res.status(200).json({
         ok: true,
         already_applied: true

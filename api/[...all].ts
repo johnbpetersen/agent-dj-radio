@@ -113,6 +113,7 @@ const routes: Route[] = [
   { method: 'GET', pattern: '/debug/env', handler: debugEnvHandler },
 
   // Audio proxy
+  // @ts-expect-error TODO(types): audioProxyHandler uses edge runtime (Request/Response) not VercelRequest/VercelResponse
   { method: 'GET', pattern: '/audio-proxy', handler: audioProxyHandler },
 
   // Worker

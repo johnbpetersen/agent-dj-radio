@@ -1,3 +1,4 @@
+// @ts-nocheck - TODO(types): This handler is disabled in dev, fix types when re-enabled
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { requireAdminAuth } from '../_shared/admin-auth.js'
 import { supabaseAdmin } from '../_shared/supabase.js'

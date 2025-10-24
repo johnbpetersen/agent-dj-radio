@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { calculatePrice, validateDuration } from '../../src/server/pricing.js'
 import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
-import type { PriceQuoteRequest, PriceQuoteResponse } from '../../src/types.js'
+import type { PriceQuoteRequest, PriceQuoteResponse } from '../../src/types/index.js'
 
 async function priceQuoteHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== 'POST') {

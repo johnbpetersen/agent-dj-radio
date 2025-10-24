@@ -115,13 +115,15 @@ async function advanceHandler(req: VercelRequest, res: VercelResponse): Promise<
           const replayData = createReplayTrack(bestReplay)
           replayCreated = await createTrack(supabaseAdmin, replayData)
           nextTrack = replayCreated
-          
-          logger.trackCreated(replayCreated.id, {
-            correlationId,
-            source: 'REPLAY',
-            originalTrackId: bestReplay.id,
-            prompt: replayData.prompt
-          })
+
+          if (replayCreated) {
+            logger.trackCreated(replayCreated.id, {
+              correlationId,
+              source: 'REPLAY',
+              originalTrackId: bestReplay.id,
+              prompt: replayData.prompt
+            })
+          }
         }
       }
     }
