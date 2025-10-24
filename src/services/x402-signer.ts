@@ -3,7 +3,6 @@
 // Creates EIP-712 signatures for ERC-3009 transferWithAuthorization
 
 import type { WalletClient, Address, Hex } from 'viem'
-import { keccak256, toBytes } from 'viem'
 
 // USDC contract addresses
 export const USDC_CONTRACTS = {

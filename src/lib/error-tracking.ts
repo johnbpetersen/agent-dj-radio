@@ -1,7 +1,7 @@
 // Minimal error tracking system for production monitoring
 // Uses structured logging as the foundation with optional external service integration
 
-import { logger, LogContext } from './logger.js'
+import { logger, type LogContext } from './logger.js'
 
 export interface ErrorContext extends LogContext {
   userAgent?: string

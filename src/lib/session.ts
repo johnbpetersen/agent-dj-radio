@@ -49,7 +49,8 @@ export function getClientSessionId(): string {
     return id;
   } catch {
     // No localStorage? Generate per-tab UUID
-    cached = (crypto as any).randomUUID?.() ?? makeUuidV4();
-    return cached;
+    const tempId = (crypto as any).randomUUID?.() ?? makeUuidV4();
+    cached = tempId;
+    return tempId;
   }
 }

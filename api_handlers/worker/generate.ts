@@ -163,7 +163,7 @@ async function generateHandler(req: VercelRequest, res: VercelResponse): Promise
     })
 
     let audioUrl: string
-    let elevenRequestId: string
+    let elevenRequestId: string | undefined
 
     if (!elevenEnabled) {
       // Mock path (uploads sample) — prompt contents don't change output,

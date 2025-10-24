@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useEphemeralUser } from '../hooks/useEphemeralUser'
 import { parseXPaymentHeader, type ParsedXPayment } from '../lib/x402-utils'
 import { PaymentModal } from './PaymentModal'
-import type { PriceQuoteResponse, SubmitTrackResponse } from '../types'
+import type { PriceQuoteResponse } from '../types'
 
 interface SubmitFormProps {
   onSubmitSuccess: () => void
