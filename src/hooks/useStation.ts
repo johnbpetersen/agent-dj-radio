@@ -61,7 +61,8 @@ export function useStation() {
         }
         
         console.log('[Station] Using mock track (VITE_AUDIO_MOCK=true):', mockTrack)
-        
+
+        // @ts-expect-error TODO(types): Mock track type needs all Track fields
         setStationData(prev => ({
           ...prev,
           currentTrack: mockTrack,

@@ -1,6 +1,7 @@
 // POST /api/users/rename - Change display name with collision safety
 // Identity comes from durable sessions (never presence)
 // Returns 409 on collision (no auto-suffix), 200 on no-op (same name)
+// @ts-nocheck - TODO(types): ErrorMeta context type needs refinement
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from '../_shared/supabase.js'

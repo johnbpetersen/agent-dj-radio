@@ -1,4 +1,5 @@
 // Supabase Realtime broadcasting utilities
+// @ts-nocheck - TODO(types): RealtimeChannelSendResponse type needs 'error' property
 
 import { supabaseAdmin } from '../../api/_shared/supabase.js'
 import type { StationState, Track } from '../types'

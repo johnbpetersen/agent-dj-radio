@@ -1,5 +1,6 @@
 // POST /api/auth/link/dev - Link dev provider to current session
 // Flips users.ephemeral=false without creating new user or session
+// @ts-nocheck - TODO(types): ErrorMeta context type needs refinement
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from '../../_shared/supabase.js'

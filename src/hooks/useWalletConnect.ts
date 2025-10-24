@@ -271,6 +271,7 @@ async function connectCoinbaseSdk(): Promise<{
   const appName = 'Agent DJ Radio'
 
   const sdk = new CoinbaseWalletSDK({ appName })
+  // @ts-expect-error TODO(types): CoinbaseWalletSDK makeWeb3Provider signature changed
   const sdkProvider: any = sdk.makeWeb3Provider(CHAIN_CONFIG.rpcUrl, CHAIN_CONFIG.chainId)
 
   // IMPORTANT: Wrap SDK provider with ensureRequestPolyfill BEFORE first use

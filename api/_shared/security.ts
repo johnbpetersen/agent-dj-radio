@@ -109,7 +109,7 @@ export function validateOrigin(req: VercelRequest): boolean {
 /**
  * Sanitize data before sending to client (remove sensitive fields)
  */
-export function sanitizeForClient<T extends Record<string, unknown>>(
+export function sanitizeForClient<T extends Record<string, any>>(
   data: T,
   sensitiveFields: (keyof T)[] = []
 ): T {

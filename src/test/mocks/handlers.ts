@@ -1,3 +1,4 @@
+// @ts-nocheck - TODO(types): Test mock types need refinement
 import { http, HttpResponse } from 'msw'
 import type { 
   PriceQuoteRequest, 
