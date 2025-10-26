@@ -253,6 +253,10 @@ function makeReqRes(req: IncomingMessage, res: ServerResponse) {
     getHeader(name: string) {
       return rawGetHeader(name)
     },
+    end(body?: any) {
+      rawEnd(body)
+      return vRes
+    },
     json(data: any) {
       if (!res.getHeader('Content-Type')) {
         rawSetHeader('Content-Type', 'application/json')
@@ -288,7 +292,7 @@ function sendCORS(res: ServerResponse, origin?: string) {
 
 const server = createServer(async (req, res) => {
   const { pathname } = parseUrl(req.url || '', true)
-  sendCORS(res, req.headers.origin as string | undefined)
+  sendCORS(res, (req.headers.origin as string | undefined))
 
   if (req.method === 'OPTIONS') {
     res.statusCode = 200
