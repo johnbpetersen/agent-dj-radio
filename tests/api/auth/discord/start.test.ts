@@ -82,7 +82,11 @@ describe('GET /api/auth/discord/start', () => {
 
     // Mock session helpers to return a fixed session ID
     const { ensureSession, setSessionCookie } = await import('../../../../api/_shared/session-helpers.js')
-    vi.mocked(ensureSession).mockResolvedValue('test-session-123')
+    vi.mocked(ensureSession).mockResolvedValue({
+      userId: 'test-user-123',
+      sessionId: 'test-session-123',
+      shouldSetCookie: true
+    })
     vi.mocked(setSessionCookie).mockImplementation(() => {})
 
     // Set default env
@@ -229,7 +233,11 @@ describe('GET /api/auth/discord/start', () => {
 
       // Override the default mock for this specific test
       const { ensureSession } = await import('../../../../api/_shared/session-helpers.js')
-      vi.mocked(ensureSession).mockResolvedValue(sessionId)
+      vi.mocked(ensureSession).mockResolvedValue({
+        userId: 'test-user-456',
+        sessionId: sessionId,
+        shouldSetCookie: true
+      })
 
       let insertedRow: any
       const mockFrom = vi.fn().mockReturnValue({

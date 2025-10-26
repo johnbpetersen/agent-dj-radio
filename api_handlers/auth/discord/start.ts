@@ -86,8 +86,10 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
   }
 
   // 3. Ensure session exists
-  const sessionId = await ensureSession(req, res)
-  setSessionCookie(res, sessionId, req)
+  const { sessionId, shouldSetCookie } = await ensureSession(req, res)
+  if (shouldSetCookie) {
+    setSessionCookie(res, sessionId, req)
+  }
 
   logger.info('Discord OAuth start for session', {
     correlationId,
