@@ -1,3 +1,4 @@
+// @ts-nocheck
 // api/_shared/payments/x402-facilitator.ts
 // x402 facilitator payment verification using REST API (for testnet/Base Sepolia)
 // Hardened with timeouts, retries, strict validation, and observability

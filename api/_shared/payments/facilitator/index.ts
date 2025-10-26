@@ -173,10 +173,11 @@ export async function facilitatorVerifyAuthorization(
     const result = parsePayAiVerifyResponse(json)
 
     if (!result.ok) {
-      const err = new Error(result.message)
-      ;(err as any).code = result.code
+      const r: any = result
+      const err = new Error(r.message)
+      ;(err as any).code = r.code
       ;(err as any).status = httpResult.status
-      ;(err as any).detail = result.detail
+      ;(err as any).detail = r.detail
       throw err
     }
 

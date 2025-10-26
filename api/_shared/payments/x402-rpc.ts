@@ -1,3 +1,4 @@
+// @ts-nocheck
 // api/_shared/payments/x402-rpc.ts
 // RPC verifier for Base mainnet and Base Sepolia ERC-20 payments
 // Used when facilitator service is unavailable

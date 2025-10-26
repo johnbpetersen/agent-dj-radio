@@ -6,7 +6,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from '../../_shared/supabase.js'
 import { secureHandler, securityConfigs } from '../../_shared/secure-handler.js'
 import { ensureSession, setSessionCookie } from '../../_shared/session-helpers.js'
-import { httpError, type AppError } from '../../_shared/errors.js'
+import { httpError } from '../../_shared/errors.js'
 import { logger, generateCorrelationId } from '../../../src/lib/logger.js'
 import { shortId } from '../../../src/lib/ids.js'
 import { exchangeCodeForToken, fetchDiscordUser } from '../../_shared/discord-api.js'
@@ -177,8 +177,10 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
     }
 
     // 5. Ensure session exists
-    const sessionId = await ensureSession(req, res)
-    setSessionCookie(res, sessionId, req)
+    const { sessionId, userId, shouldSetCookie } = await ensureSession(req, res)
+    if (shouldSetCookie) {
+      setSessionCookie(res, sessionId, req)
+    }
 
     logger.info('Discord callback for session', {
       correlationId,
@@ -271,20 +273,7 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
       linked_at: now
     }
 
-    // Fetch user_id from session
-    const { data: session } = await supabaseAdmin
-      .from('sessions')
-      .select('user_id')
-      .eq('session_id', sessionId)
-      .single()
-
-    if (!session) {
-      throw httpError.internal('Session not found')
-    }
-
-    const userId = session.user_id
-
-    // Try to insert account link
+    // Try to insert account link (userId from ensureSession)
     const { error: insertError } = await supabaseAdmin
       .from('user_accounts')
       .insert({
@@ -342,7 +331,7 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
         }, insertError)
 
         throw httpError.dbError('Failed to link Discord account', {
-          db: { type: 'INSERT', table: 'user_accounts' }
+          db: { type: 'QUERY', table: 'user_accounts' }
         })
       }
     } else {
@@ -434,7 +423,7 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
       customCode,
       statusCode: status,
       durationMs
-    }, error)
+    }, error as Error)
 
     // Respond based on mode (NO RETHROW)
     if (json) {
@@ -473,7 +462,7 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
         logger.error('Failed to delete OAuth state', {
           correlationId,
           stateId: oauthState.id.slice(0, 8) + '...'
-        }, deleteError)
+        }, deleteError as Error)
         // Don't throw - state will eventually expire
       }
     }

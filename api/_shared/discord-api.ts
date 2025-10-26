@@ -185,7 +185,7 @@ export async function exchangeCodeForToken(params: {
     logger.error('Network error during token exchange', {
       correlationId,
       tokenUrl
-    }, error)
+    }, error as Error)
 
     throw httpError.networkError('Failed to connect to Discord', {
       network: {
@@ -327,7 +327,7 @@ export async function fetchDiscordUser(params: {
     logger.error('Network error fetching Discord user', {
       correlationId,
       userUrl
-    }, error)
+    }, error as Error)
 
     throw httpError.networkError('Failed to connect to Discord', {
       network: {

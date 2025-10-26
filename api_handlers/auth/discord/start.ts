@@ -154,7 +154,7 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
         }, insertError)
 
         throw httpError.dbError('Failed to initialize OAuth flow', {
-          db: { type: 'INSERT', operation: 'insert', table: 'oauth_states' },
+          db: { type: 'QUERY', operation: 'insert', table: 'oauth_states' },
           context: {
             route: '/api/auth/discord/start',
             method: 'GET',
@@ -180,7 +180,7 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
       logger.error('Unexpected error storing OAuth state', {
         correlationId,
         sessionId: shortId(sessionId, 8) + '...'
-      }, error)
+      }, error as Error)
 
       res.status(500).json({
         error: {
@@ -217,8 +217,8 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
     apiBase,
     clientId,
     redirectUri,
-    state,
-    codeChallenge,
+    state: state!,
+    codeChallenge: codeChallenge!,
     scope: 'identify'
   })
 

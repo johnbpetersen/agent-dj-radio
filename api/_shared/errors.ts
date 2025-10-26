@@ -148,7 +148,7 @@ export function normalizeError(error: unknown, context?: ErrorMeta['context']): 
     code = 'NETWORK_ERROR'
 
     // Try to extract undici error details from cause chain
-    let cause = originalError.cause as Record<string, unknown> | undefined
+    let cause = (originalError as any)?.cause as Record<string, unknown> | undefined
     while (cause && typeof cause === 'object') {
       if ('code' in cause || 'errno' in cause || 'syscall' in cause) {
         meta.network = {
@@ -160,7 +160,7 @@ export function normalizeError(error: unknown, context?: ErrorMeta['context']): 
         }
         break
       }
-      cause = cause.cause as Record<string, unknown> | undefined
+      cause = (cause as any)?.cause as Record<string, unknown> | undefined
     }
   }
 
