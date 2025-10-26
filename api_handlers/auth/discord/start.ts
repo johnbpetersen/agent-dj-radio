@@ -8,6 +8,7 @@ import { secureHandler, securityConfigs } from '../../_shared/secure-handler.js'
 import { ensureSession, setSessionCookie } from '../../_shared/session-helpers.js'
 import { httpError } from '../../_shared/errors.js'
 import { logger, generateCorrelationId } from '../../../src/lib/logger.js'
+import { shortId } from '../../../src/lib/ids.js'
 import {
   generateState,
   generateCodeVerifier,
@@ -90,7 +91,7 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
 
   logger.info('Discord OAuth start for session', {
     correlationId,
-    sessionId: sessionId.slice(0, 8) + '...',
+    sessionId: shortId(sessionId, 8) + '...',
     hasClientId: !!clientId,
     hasRedirectUri: !!redirectUri
   })
@@ -145,7 +146,7 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
         // Other database error
         logger.error('Failed to store OAuth state', {
           correlationId,
-          sessionId: sessionId.slice(0, 8) + '...',
+          sessionId: shortId(sessionId, 8) + '...',
           errorCode: insertError.code,
           errorMessage: insertError.message
         }, insertError)
@@ -163,7 +164,7 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
       insertSuccess = true
       logger.info('OAuth state stored successfully', {
         correlationId,
-        sessionId: sessionId.slice(0, 8) + '...',
+        sessionId: shortId(sessionId, 8) + '...',
         attempt: attempts
       })
 
@@ -176,7 +177,7 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
       // Unexpected error
       logger.error('Unexpected error storing OAuth state', {
         correlationId,
-        sessionId: sessionId.slice(0, 8) + '...'
+        sessionId: shortId(sessionId, 8) + '...'
       }, error)
 
       res.status(500).json({
@@ -236,7 +237,7 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
       correlationId,
       statusCode: 200,
       responseType: 'json',
-      sessionId: sessionId.slice(0, 8) + '...'
+      sessionId: shortId(sessionId, 8) + '...'
     })
 
     res.status(200).json({ authorizeUrl })
@@ -246,7 +247,7 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
       correlationId,
       statusCode: 302,
       responseType: 'redirect',
-      sessionId: sessionId.slice(0, 8) + '...'
+      sessionId: shortId(sessionId, 8) + '...'
     })
 
     res.status(302).setHeader('Location', authorizeUrl).end()

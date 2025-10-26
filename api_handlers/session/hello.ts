@@ -8,6 +8,7 @@ import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
 import { sanitizeForClient } from '../_shared/security.js'
 import { ensureSession, setSessionCookie } from '../_shared/session-helpers.js'
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
+import { shortId } from '../../src/lib/ids.js'
 import { httpError } from '../_shared/errors.js'
 import { computeIdentityPayload, type Identity } from '../_shared/identity.js'
 
@@ -92,7 +93,7 @@ async function sessionHelloHandler(req: VercelRequest, res: VercelResponse): Pro
     logger.requestComplete('/api/session/hello', Date.now() - startTime, {
       correlationId,
       userId,
-      sessionId: sessionId.slice(-6),
+      sessionId: shortId(sessionId, -6),
       action: shouldSetCookie ? 'new_session' : 'existing_session',
       isWalletLinked
     })

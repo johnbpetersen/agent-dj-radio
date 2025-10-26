@@ -5,6 +5,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from './supabase.js'
 import { generateCorrelationId } from '../../src/lib/logger.js'
 import { httpError } from './errors.js'
+import { shortId } from '../../src/lib/ids.js'
 import * as crypto from 'crypto'
 
 /**
@@ -111,7 +112,7 @@ export function setSessionCookie(
 
   // Strategy 1: Node ServerResponse (has setHeader/getHeader methods)
   if (typeof res.setHeader === 'function' && typeof res.getHeader === 'function') {
-    debugOAuth('cookie-path-node', { sidSuffix: sid.slice(-6) })
+    debugOAuth('cookie-path-node', { sidSuffix: shortId(sid, -6) })
 
     const existing = res.getHeader('Set-Cookie')
     if (existing) {
@@ -125,14 +126,14 @@ export function setSessionCookie(
 
   // Strategy 2: Fetch-style Response (has headers with append method)
   if (res.headers && typeof res.headers.append === 'function') {
-    debugOAuth('cookie-path-fetch', { sidSuffix: sid.slice(-6) })
+    debugOAuth('cookie-path-fetch', { sidSuffix: shortId(sid, -6) })
     res.headers.append('Set-Cookie', cookieValue)
     return
   }
 
   // Strategy 3: Plain object bag (mutate headers property)
   if (res.headers && typeof res.headers === 'object') {
-    debugOAuth('cookie-path-plain', { sidSuffix: sid.slice(-6) })
+    debugOAuth('cookie-path-plain', { sidSuffix: shortId(sid, -6) })
 
     const existing = res.headers['Set-Cookie']
     if (existing) {
@@ -276,7 +277,7 @@ export async function ensureSession(
 
   // Validate existing sid (treat invalid UUID as missing)
   if (sid && !isValidUuid(sid)) {
-    debugOAuth('invalid-uuid-in-cookie', { sidPrefix: sid.slice(0, 8) })
+    debugOAuth('invalid-uuid-in-cookie', { sidPrefix: shortId(sid, 8) })
     sid = null
   }
 
@@ -317,7 +318,7 @@ export async function ensureSession(
         })
 
       debugOAuth('session-hit', {
-        sidSuffix: sid.slice(-6),
+        sidSuffix: shortId(sid, -6),
         userId: existingSession.user_id
       })
 
@@ -336,13 +337,13 @@ export async function ensureSession(
     if (sessionError?.code !== 'PGRST116') {
       // Unexpected error
       debugOAuth('session-lookup-error', {
-        sidSuffix: sid.slice(-6),
+        sidSuffix: shortId(sid, -6),
         errorCode: sessionError?.code
       })
     } else {
       // Session mapping missing (data loss scenario)
       console.warn('[session-mapping-missing] Cookie present but no session row', {
-        sidSuffix: sid.slice(-6)
+        sidSuffix: shortId(sid, -6)
       })
     }
 
@@ -377,7 +378,7 @@ export async function ensureSession(
       // If 23505 (unique constraint), another request won - retry by reading
       if (sessionInsertError.code === '23505') {
         debugOAuth('session-insert-conflict', {
-          sidSuffix: sid.slice(-6),
+          sidSuffix: shortId(sid, -6),
           willRetryRead: true
         })
 
@@ -426,7 +427,7 @@ export async function ensureSession(
       })
 
     debugOAuth('session-created', {
-      sidSuffix: sid.slice(-6),
+      sidSuffix: shortId(sid, -6),
       userId,
       displayName
     })

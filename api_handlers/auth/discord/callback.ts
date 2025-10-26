@@ -8,6 +8,7 @@ import { secureHandler, securityConfigs } from '../../_shared/secure-handler.js'
 import { ensureSession, setSessionCookie } from '../../_shared/session-helpers.js'
 import { httpError, type AppError } from '../../_shared/errors.js'
 import { logger, generateCorrelationId } from '../../../src/lib/logger.js'
+import { shortId } from '../../../src/lib/ids.js'
 import { exchangeCodeForToken, fetchDiscordUser } from '../../_shared/discord-api.js'
 
 const DEFAULT_STATE_TTL_SEC = 600 // 10 minutes
@@ -181,7 +182,7 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
 
     logger.info('Discord callback for session', {
       correlationId,
-      sessionId: sessionId.slice(0, 8) + '...',
+      sessionId: shortId(sessionId, 8) + '...',
       codeLength: code.length,
       stateLength: state.length
     })
@@ -224,8 +225,8 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
     if (oauthState.session_id !== sessionId) {
       logger.warn('OAuth state session mismatch', {
         correlationId,
-        stateSessionId: oauthState.session_id.slice(0, 8) + '...',
-        currentSessionId: sessionId.slice(0, 8) + '...'
+        stateSessionId: shortId(oauthState.session_id, 8) + '...',
+        currentSessionId: shortId(sessionId, 8) + '...'
       })
       const err = httpError.badRequest('State belongs to different session')
       ;(err as any).customCode = 'WRONG_SESSION'
