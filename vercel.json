@@ -1,20 +1,7 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "api/**/*.ts": {
-      "runtime": "@vercel/node@3"
+      "runtime": "nodejs20.x"
     }
-  },
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" },
-    { "source": "/((?!api).*)", "destination": "/index.html" }
-  ],
-  "headers": [
-    {
-      "source": "/(.*)\\.(js|css|svg|woff2|png|jpg|jpeg|webp)",
-      "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
-      ]
-    }
-  ]
+  }
 }
