@@ -47,6 +47,7 @@ import x402MockProofsHandler from '../api_handlers/x402/mock-proofs.js'
 import authLinkDevHandler from '../api_handlers/auth/link/dev.js'
 import authUnlinkDevHandler from '../api_handlers/auth/unlink/dev.js'
 import authDiscordStartHandler from '../api_handlers/auth/discord/start.js'
+import authDiscordCallbackHandler from '../api_handlers/auth/discord/callback.js'
 
 // Route table - order matters! Specific routes before dynamic ones
 const routes: Route[] = [
@@ -64,6 +65,7 @@ const routes: Route[] = [
   { method: 'POST', pattern: '/auth/link/dev', handler: authLinkDevHandler },
   { method: 'POST', pattern: '/auth/unlink/dev', handler: authUnlinkDevHandler },
   { method: 'GET', pattern: '/auth/discord/start', handler: authDiscordStartHandler },
+  { method: 'GET', pattern: '/auth/discord/callback', handler: authDiscordCallbackHandler },
 
   // Chat
   { method: 'GET', pattern: '/chat/recent', handler: chatRecentHandler },
