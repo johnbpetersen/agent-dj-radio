@@ -48,6 +48,7 @@ import authLinkDevHandler from '../api_handlers/auth/link/dev.js'
 import authUnlinkDevHandler from '../api_handlers/auth/unlink/dev.js'
 import authDiscordStartHandler from '../api_handlers/auth/discord/start.js'
 import authDiscordCallbackHandler from '../api_handlers/auth/discord/callback.js'
+import authDiscordUnlinkHandler from '../api_handlers/auth/discord/unlink.js'
 
 // Route table - order matters! Specific routes before dynamic ones
 const routes: Route[] = [
@@ -66,6 +67,7 @@ const routes: Route[] = [
   { method: 'POST', pattern: '/auth/unlink/dev', handler: authUnlinkDevHandler },
   { method: 'GET', pattern: '/auth/discord/start', handler: authDiscordStartHandler },
   { method: 'GET', pattern: '/auth/discord/callback', handler: authDiscordCallbackHandler },
+  { method: 'POST', pattern: '/auth/discord/unlink', handler: authDiscordUnlinkHandler },
 
   // Chat
   { method: 'GET', pattern: '/chat/recent', handler: chatRecentHandler },

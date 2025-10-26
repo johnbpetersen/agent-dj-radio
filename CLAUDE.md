@@ -17,14 +17,21 @@ You are Claude Code working on this repo. Follow these rules on every task:
 - **Env**: No hardcoded secrets. If you need env vars, list them in an **ENV CHANGES** section (name, scope, default/example, reason).
 
 ## Current Sprint (Simple Identity)
-- **No Discord** anywhere—do not reintroduce it.
-- **Sessions are the source of identity**. Presence TTL must not gate identity.
-- Default = **guest/ephemeral** user with a long-lived session cookie.
-- Future steps may add **wallet link/unlink** to flip ephemeral ↔ persistent, but do **not** skip ahead.
+- Discord OAuth linking/unlinking is in-scope, behind flags:
+  - `ENABLE_DISCORD_LINKING=true`
+  - `ALLOW_DISCORD_UNLINK=true`
+- Sessions remain the source of identity (`ensureSession`); no presence TTL gating identity.
+- Default user is guest/ephemeral until a provider is linked.
+- Linking Discord → `users.ephemeral=false`.
+- Unlinking Discord → recompute based on remaining `user_accounts` (ephemeral iff zero accounts).
+- Keep scope tight: no wallet linking in this sprint.
 
 ## Definition of Done (each step)
 - Tests pass (unit/integration per your plan).
 - Typecheck & build pass; no console spam.
 - Structured logs on error paths.
 - Smoke script demonstrates the feature.
-- ENV CHANGES are explicitly documented, or “none”.
+- ENV CHANGES are explicitly documented, or "none".
+
+## ADR
+- **Discord OAuth** (start/callback/unlink) shipped under feature flags; deterministic tests; no presence reads; session-bound state.
