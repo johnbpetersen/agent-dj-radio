@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronRight, MessageCircle, Send } from 'lucide-react'
 import { useEphemeralUser } from '../../../hooks/useEphemeralUser'
 import { useIdentity } from '../../../hooks/useIdentity'
 import { apiFetch } from '../../../lib/api'
+import { asMessage } from '../../../lib/errors'
 import Avatar from '../Avatar'
 
 interface ChatMessage {
@@ -21,11 +22,14 @@ export default function ChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [inputMessage, setInputMessage] = useState('')
   const [sending, setSending] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string>('')
   const [isChatEnabled, setIsChatEnabled] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const { identity: ephemeralIdentity } = useEphemeralUser()
   const { identity, loading } = useIdentity()
+
+  // Compute canChat capability
+  const canChat = identity?.capabilities?.canChat === true
 
   // Check if chat feature is enabled
   useEffect(() => {
@@ -74,10 +78,24 @@ export default function ChatPanel() {
     messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' })
   }, [messages])
 
+  // Clear error on identity refresh (e.g., after linking/unlinking Discord)
+  useEffect(() => {
+    const handleRefresh = () => setError('')
+    window.addEventListener('user-identity-refresh', handleRefresh)
+    return () => window.removeEventListener('user-identity-refresh', handleRefresh)
+  }, [])
+
   const handleSendMessage = async () => {
+    setError('')
+
+    // Guard: canChat check
+    if (!canChat) {
+      setError('Link Discord to chat.')
+      return
+    }
+
     if (!inputMessage.trim() || sending) return
 
-    setError(null)
     setSending(true)
 
     try {
@@ -88,12 +106,7 @@ export default function ChatPanel() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}))
-
-        if (response.status === 429) {
-          setError(errorData.message || 'Too many messages. Please wait.')
-        } else {
-          setError(errorData.error || 'Failed to send message')
-        }
+        setError(asMessage(errorData))
         return
       }
 
@@ -107,7 +120,7 @@ export default function ChatPanel() {
       }
     } catch (err) {
       console.error('Failed to send message:', err)
-      setError('Network error. Please try again.')
+      setError(asMessage(err))
     } finally {
       setSending(false)
     }
@@ -211,13 +224,14 @@ export default function ChatPanel() {
                       onChange={(e) => setInputMessage(e.target.value)}
                       onKeyPress={handleKeyPress}
                       placeholder="Type a message..."
-                      disabled={sending}
+                      disabled={!canChat || sending}
                       className="flex-1 bg-black/30 border border-white/20 rounded-lg px-3 py-2 text-sm text-white placeholder-white/40 focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:opacity-50"
                     />
                     <button
                       onClick={handleSendMessage}
-                      disabled={!inputMessage.trim() || sending}
+                      disabled={!canChat || !inputMessage.trim() || sending}
                       className="bg-blue-500 hover:bg-blue-600 disabled:bg-blue-500/50 text-white p-2 rounded-lg transition-colors flex items-center justify-center"
+                      aria-label="Send message"
                     >
                       <Send className="w-4 h-4" />
                     </button>
