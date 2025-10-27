@@ -28,6 +28,11 @@ vi.mock('../../../api/_shared/session-helpers.js', () => ({
   setSessionCookie: vi.fn()
 }))
 
+vi.mock('../../../api/_shared/display-name.js', () => ({
+  getPreferredDisplayName: vi.fn(),
+  formatDiscordHandle: vi.fn()
+}))
+
 // Helper to create mock request
 function createMockRequest(
   method: 'GET' | 'POST' = 'GET',
@@ -107,8 +112,13 @@ describe('/api/session/whoami', () => {
         shouldSetCookie: false
       })
 
+      // Mock getPreferredDisplayName
+      const { getPreferredDisplayName } = await import('../../../api/_shared/display-name.js')
+      vi.mocked(getPreferredDisplayName).mockResolvedValue('cosmic_dolphin')
+
       // Mock user fetch for response
-      const mockUsersFetch = {
+      const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
+      vi.mocked(supabaseAdmin.from).mockReturnValueOnce({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             single: vi.fn().mockResolvedValue({
@@ -124,10 +134,7 @@ describe('/api/session/whoami', () => {
             })
           })
         })
-      }
-
-      const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
-      vi.mocked(supabaseAdmin.from).mockReturnValueOnce(mockUsersFetch as any)
+      } as any)
 
       await whoamiHandler(req, res)
 
@@ -140,7 +147,7 @@ describe('/api/session/whoami', () => {
         banned: false,
         createdAt: '2025-01-17T10:00:00Z',
         capabilities: {
-          canChat: true
+          canChat: false
         }
       })
 
@@ -161,7 +168,10 @@ describe('/api/session/whoami', () => {
         shouldSetCookie: false
       })
 
-      // Mock user fetch
+      // Mock getPreferredDisplayName
+      const { getPreferredDisplayName } = await import('../../../api/_shared/display-name.js')
+      vi.mocked(getPreferredDisplayName).mockResolvedValue('test_user')
+
       const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
       vi.mocked(supabaseAdmin.from).mockReturnValueOnce({
         select: vi.fn().mockReturnValue({
@@ -200,7 +210,10 @@ describe('/api/session/whoami', () => {
         shouldSetCookie: false
       })
 
-      // Mock user fetch
+      // Mock getPreferredDisplayName
+      const { getPreferredDisplayName } = await import('../../../api/_shared/display-name.js')
+      vi.mocked(getPreferredDisplayName).mockResolvedValue('test_user')
+
       const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
       vi.mocked(supabaseAdmin.from).mockReturnValueOnce({
         select: vi.fn().mockReturnValue({
@@ -243,8 +256,12 @@ describe('/api/session/whoami', () => {
         shouldSetCookie: true
       })
 
-      // Mock user fetch for response
-      const mockUsersFetch = {
+      // Mock getPreferredDisplayName
+      const { getPreferredDisplayName } = await import('../../../api/_shared/display-name.js')
+      vi.mocked(getPreferredDisplayName).mockResolvedValue(mockDisplayName)
+
+      const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
+      vi.mocked(supabaseAdmin.from).mockReturnValueOnce({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             single: vi.fn().mockResolvedValue({
@@ -260,10 +277,7 @@ describe('/api/session/whoami', () => {
             })
           })
         })
-      }
-
-      const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
-      vi.mocked(supabaseAdmin.from).mockReturnValueOnce(mockUsersFetch as any)
+      } as any)
 
       await whoamiHandler(req, res)
 
@@ -276,7 +290,7 @@ describe('/api/session/whoami', () => {
         banned: false,
         createdAt: '2025-01-17T12:00:00Z',
         capabilities: {
-          canChat: true
+          canChat: false
         }
       })
 
@@ -286,7 +300,7 @@ describe('/api/session/whoami', () => {
   })
 
   describe('Never queries presence for identity', () => {
-    it('resolves identity via sessions → users only', async () => {
+    it('does not query presence table', async () => {
       const req = createMockRequest('GET', { sid: 'session-123' })
       const res = createMockResponse()
 
@@ -297,6 +311,10 @@ describe('/api/session/whoami', () => {
         sessionId: 'session-123',
         shouldSetCookie: false
       })
+
+      // Mock getPreferredDisplayName
+      const { getPreferredDisplayName } = await import('../../../api/_shared/display-name.js')
+      vi.mocked(getPreferredDisplayName).mockResolvedValue('test_user')
 
       // Track which tables whoami handler queries directly
       const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
@@ -330,8 +348,8 @@ describe('/api/session/whoami', () => {
 
       await whoamiHandler(req, res)
 
-      // Verify: whoami handler ONLY queries users table, never presence
-      // (ensureSession may query presence, but that's tested separately)
+      // Verify: whoami handler queries users table only (getPreferredDisplayName is mocked)
+      // Never presence (ensureSession may query presence, but that's tested separately)
       expect(queriedTables).toEqual(['users'])
       expect(queriedTables).not.toContain('presence')
     })
@@ -348,6 +366,170 @@ describe('/api/session/whoami', () => {
       expect(res._status).toBe(400)
       expect(res._body).toHaveProperty('error')
       expect(res._body.error.message).toContain('Method not allowed')
+    })
+  })
+
+  describe('Display name preference (Discord > ephemeral)', () => {
+    it('returns Discord global_name when linked', async () => {
+      const req = createMockRequest('GET', { sid: 'session-123' })
+      const res = createMockResponse()
+
+      const { ensureSession } = await import('../../../api/_shared/session-helpers.js')
+      vi.mocked(ensureSession).mockResolvedValue({
+        userId: 'user-linked-123',
+        sessionId: 'session-123',
+        shouldSetCookie: false
+      })
+
+      // Mock getPreferredDisplayName to return Discord global_name
+      const { getPreferredDisplayName } = await import('../../../api/_shared/display-name.js')
+      vi.mocked(getPreferredDisplayName).mockResolvedValue('Cool User')
+
+      const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
+      vi.mocked(supabaseAdmin.from).mockReturnValueOnce({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            single: vi.fn().mockResolvedValue({
+              data: {
+                id: 'user-linked-123',
+                display_name: 'cosmic_dolphin', // Ephemeral name (not used)
+                ephemeral: false,
+                kind: 'human',
+                banned: false,
+                created_at: '2025-01-17T10:00:00Z'
+              },
+              error: null
+            })
+          })
+        })
+      } as any)
+
+      await whoamiHandler(req, res)
+
+      expect(res._status).toBe(200)
+      expect(res._body.displayName).toBe('Cool User')
+      expect(res._body.ephemeral).toBe(false)
+    })
+
+    it('returns username#discriminator when Discord uses legacy format', async () => {
+      const req = createMockRequest('GET', { sid: 'session-123' })
+      const res = createMockResponse()
+
+      const { ensureSession } = await import('../../../api/_shared/session-helpers.js')
+      vi.mocked(ensureSession).mockResolvedValue({
+        userId: 'user-legacy-123',
+        sessionId: 'session-123',
+        shouldSetCookie: false
+      })
+
+      // Mock getPreferredDisplayName to return username#discriminator
+      const { getPreferredDisplayName } = await import('../../../api/_shared/display-name.js')
+      vi.mocked(getPreferredDisplayName).mockResolvedValue('olduser#1234')
+
+      const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
+      vi.mocked(supabaseAdmin.from).mockReturnValueOnce({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            single: vi.fn().mockResolvedValue({
+              data: {
+                id: 'user-legacy-123',
+                display_name: 'happy_raccoon',
+                ephemeral: false,
+                kind: 'human',
+                banned: false,
+                created_at: '2025-01-17T10:00:00Z'
+              },
+              error: null
+            })
+          })
+        })
+      } as any)
+
+      await whoamiHandler(req, res)
+
+      expect(res._status).toBe(200)
+      expect(res._body.displayName).toBe('olduser#1234')
+    })
+
+    it('falls back to ephemeral name when not linked', async () => {
+      const req = createMockRequest('GET', { sid: 'session-123' })
+      const res = createMockResponse()
+
+      const { ensureSession } = await import('../../../api/_shared/session-helpers.js')
+      vi.mocked(ensureSession).mockResolvedValue({
+        userId: 'user-ephemeral-123',
+        sessionId: 'session-123',
+        shouldSetCookie: false
+      })
+
+      // Mock getPreferredDisplayName to return ephemeral name
+      const { getPreferredDisplayName } = await import('../../../api/_shared/display-name.js')
+      vi.mocked(getPreferredDisplayName).mockResolvedValue('cosmic_dolphin')
+
+      const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
+      vi.mocked(supabaseAdmin.from).mockReturnValueOnce({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            single: vi.fn().mockResolvedValue({
+              data: {
+                id: 'user-ephemeral-123',
+                display_name: 'cosmic_dolphin',
+                ephemeral: true,
+                kind: 'human',
+                banned: false,
+                created_at: '2025-01-17T10:00:00Z'
+              },
+              error: null
+            })
+          })
+        })
+      } as any)
+
+      await whoamiHandler(req, res)
+
+      expect(res._status).toBe(200)
+      expect(res._body.displayName).toBe('cosmic_dolphin')
+      expect(res._body.ephemeral).toBe(true)
+    })
+
+    it('falls back to ephemeral name when Discord meta is invalid', async () => {
+      const req = createMockRequest('GET', { sid: 'session-123' })
+      const res = createMockResponse()
+
+      const { ensureSession } = await import('../../../api/_shared/session-helpers.js')
+      vi.mocked(ensureSession).mockResolvedValue({
+        userId: 'user-invalid-meta',
+        sessionId: 'session-123',
+        shouldSetCookie: false
+      })
+
+      // Mock getPreferredDisplayName to return ephemeral name (fallback for invalid meta)
+      const { getPreferredDisplayName } = await import('../../../api/_shared/display-name.js')
+      vi.mocked(getPreferredDisplayName).mockResolvedValue('happy_raccoon')
+
+      const { supabaseAdmin } = await import('../../../api/_shared/supabase.js')
+      vi.mocked(supabaseAdmin.from).mockReturnValueOnce({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            single: vi.fn().mockResolvedValue({
+              data: {
+                id: 'user-invalid-meta',
+                display_name: 'happy_raccoon',
+                ephemeral: false,
+                kind: 'human',
+                banned: false,
+                created_at: '2025-01-17T10:00:00Z'
+              },
+              error: null
+            })
+          })
+        })
+      } as any)
+
+      await whoamiHandler(req, res)
+
+      expect(res._status).toBe(200)
+      expect(res._body.displayName).toBe('happy_raccoon')
     })
   })
 })

@@ -53,15 +53,10 @@ export function UserPill() {
     try {
       setActionLoading(true)
       setError(null)
-      const result = await unlinkDiscord()
+      await unlinkDiscord()
 
-      // Update local state with new ephemeral status
-      if (identity) {
-        setIdentity({
-          ...identity,
-          ephemeral: result.ephemeral
-        })
-      }
+      // Refresh identity to get updated displayName (reverts to ephemeral name)
+      await fetchIdentity()
     } catch (err) {
       setError('Failed to unlink Discord')
       console.error('Unlink error:', err)

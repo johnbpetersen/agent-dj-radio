@@ -9,6 +9,7 @@ import { checkSessionRateLimit } from '../../src/server/rate-limit.js'
 import { validateChatMessage } from '../../src/lib/profanity.js'
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
 import { httpError } from '../_shared/errors.js'
+import { getPreferredDisplayName } from '../_shared/display-name.js'
 
 interface ChatPostRequest {
   message: string
@@ -144,13 +145,16 @@ async function chatPostHandler(req: VercelRequest, res: VercelResponse): Promise
       throw httpError.tooManyRequests('Please wait 2 seconds between messages')
     }
 
+    // Get preferred display name (Discord handle if linked, else ephemeral name)
+    const displayName = await getPreferredDisplayName(userId)
+
     // Insert chat message with denormalized data
     const { data: insertedMessage, error: insertError } = await supabaseAdmin
       .from('chat_messages')
       .insert({
         session_id: sessionId,
         user_id: userId,
-        display_name: user.display_name,
+        display_name: displayName,
         message: trimmedMessage
       })
       .select('id')

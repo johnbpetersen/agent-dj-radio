@@ -8,6 +8,7 @@ import { secureHandler, securityConfigs } from '../_shared/secure-handler.js'
 import { ensureSession, setSessionCookie } from '../_shared/session-helpers.js'
 import { logger, generateCorrelationId } from '../../src/lib/logger.js'
 import { httpError } from '../_shared/errors.js'
+import { getPreferredDisplayName } from '../_shared/display-name.js'
 
 interface WhoAmIResponse {
   userId: string
@@ -66,10 +67,20 @@ async function whoamiHandler(req: VercelRequest, res: VercelResponse): Promise<v
       })
     }
 
+    // Get preferred display name (Discord handle if linked, else ephemeral name)
+    let displayName: string
+    try {
+      displayName = await getPreferredDisplayName(userId)
+    } catch (error) {
+      // Fallback to ephemeral name if helper fails
+      logger.error('Failed to get preferred display name, using fallback', { userId }, error as Error)
+      displayName = user.display_name
+    }
+
     // Build response payload
     const response: WhoAmIResponse = {
       userId: user.id,
-      displayName: user.display_name,
+      displayName,
       ephemeral: user.ephemeral ?? true, // Default to true for safety
       kind: user.kind || 'human',
       banned: user.banned ?? false,

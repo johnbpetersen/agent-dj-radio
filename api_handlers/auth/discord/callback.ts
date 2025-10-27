@@ -268,6 +268,7 @@ async function discordCallbackHandler(req: VercelRequest, res: VercelResponse): 
     const accountMeta = {
       id: discordUser.id,
       username: discordUser.username,
+      discriminator: discordUser.discriminator,
       global_name: discordUser.global_name,
       avatar: discordUser.avatar,
       linked_at: now
