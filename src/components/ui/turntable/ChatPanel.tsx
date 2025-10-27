@@ -120,10 +120,7 @@ export default function ChatPanel() {
     }
   }
 
-  if (!isChatEnabled) {
-    return null // Chat feature not enabled
-  }
-
+  // Always render chat panel, even if feature disabled or user can't chat
   return (
     <div className="absolute top-1/2 -translate-y-1/2 right-0 z-20">
       <AnimatePresence>
@@ -187,11 +184,17 @@ export default function ChatPanel() {
                   </div>
                 </div>
               ) : !identity?.capabilities.canChat ? (
-                // Chat gate: user cannot chat
-                <div className="bg-black/30 border border-white/20 rounded-lg p-3 text-center">
+                // Chat gate: user cannot chat - show CTA
+                <div className="bg-black/30 border border-white/20 rounded-lg p-3 text-center space-y-2">
                   <div className="text-sm text-white/60">
-                    Link an account to chat
+                    Link Discord to chat
                   </div>
+                  <button
+                    onClick={() => { window.location.href = '/api/auth/discord/start' }}
+                    className="bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-semibold px-4 py-2 rounded border border-indigo-400/30 transition-colors w-full"
+                  >
+                    Link Discord
+                  </button>
                 </div>
               ) : (
                 // Chat input for authorized users

@@ -89,7 +89,7 @@ describe('ChatPanel - Composer Gate', () => {
     render(<ChatPanel />)
 
     await waitFor(() => {
-      expect(screen.getByText(/link an account to chat/i)).toBeInTheDocument()
+      expect(screen.getByText(/link discord to chat/i)).toBeInTheDocument()
     })
   })
 
@@ -146,7 +146,7 @@ describe('ChatPanel - Composer Gate', () => {
     render(<ChatPanel />)
 
     await waitFor(() => {
-      expect(screen.queryByText(/link an account to chat/i)).not.toBeInTheDocument()
+      expect(screen.queryByText(/link discord to chat/i)).not.toBeInTheDocument()
     })
   })
 })
