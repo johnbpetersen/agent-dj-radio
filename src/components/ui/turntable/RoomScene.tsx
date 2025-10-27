@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Users, ChevronLeft, ChevronRight, Heart, ThumbsDown, Radio, Mic } from "lucide-react";
 import ChatPanel from "./ChatPanel";
+import { UserPill } from "../../UserPill.js";
 
 // --- TYPE DEFINITIONS for props ---
 // These define the "shape" of the data our component expects.
@@ -164,6 +165,7 @@ export default function RoomScene({ nowPlaying, listeners, djs, onQueueTrack }: 
       <ChatPanel />
 
       <div className="absolute top-4 right-4 z-30 flex items-center gap-3">
+        <UserPill />
         <button
           onClick={onQueueTrack}
           className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-bold px-5 py-3 rounded-lg shadow-lg border border-white/20 transition-all duration-200 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white/50 group flex items-center gap-2"

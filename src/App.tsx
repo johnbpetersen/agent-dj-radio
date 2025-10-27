@@ -22,6 +22,8 @@ function App() {
     // Handle Discord OAuth callback
     if (discordLinked) {
       setCallbackMessage({ type: 'success', text: 'Discord linked successfully!' });
+      // Trigger UserPill refresh
+      window.dispatchEvent(new Event('user-identity-refresh'));
       // Clean up URL
       urlParams.delete('discord_linked');
       const newUrl = `${window.location.pathname}${urlParams.toString() ? '?' + urlParams.toString() : ''}`;
