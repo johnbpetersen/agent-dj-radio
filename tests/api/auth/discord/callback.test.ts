@@ -86,9 +86,13 @@ describe('GET /api/auth/discord/callback', () => {
       end: vi.fn(() => mockRes as VercelResponse)
     }
 
-    // Mock session helpers
+    // Mock session helpers - ensureSession returns object with sessionId, userId, shouldSetCookie
     const { ensureSession, setSessionCookie } = await import('../../../../api/_shared/session-helpers.js')
-    vi.mocked(ensureSession).mockResolvedValue('test-session-123')
+    vi.mocked(ensureSession).mockResolvedValue({
+      sessionId: 'test-session-123',
+      userId: 'user-id-456',
+      shouldSetCookie: false
+    } as any)
     vi.mocked(setSessionCookie).mockImplementation(() => {})
 
     // Set default env
@@ -281,11 +285,21 @@ describe('GET /api/auth/discord/callback', () => {
                 })
               })
             }),
-            delete: vi.fn().mockImplementation(() => {
-              deleteCalled = true
-              return {
-                eq: vi.fn().mockResolvedValue({ error: null })
-              }
+            delete: vi.fn().mockReturnValue({
+              eq: vi.fn().mockImplementation((field, value) => {
+                if (field === 'id' && value === stateId) {
+                  deleteCalled = true
+                }
+                return Promise.resolve({ error: null })
+              })
+            })
+          }
+        }
+        // Handle users table for ephemeral flag update
+        if (table === 'users') {
+          return {
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ error: null })
             })
           }
         }
@@ -293,8 +307,11 @@ describe('GET /api/auth/discord/callback', () => {
       })
       vi.mocked(supabaseAdmin.from).mockImplementation(mockFrom as any)
 
-      // Mock token exchange to fail
-      vi.mocked(exchangeCodeForToken).mockRejectedValue(new Error('Network error'))
+      // Mock token exchange to fail with proper error structure
+      const error = new Error('Network error')
+      ;(error as any).code = 'NETWORK_ERROR'
+      ;(error as any).httpStatus = 503
+      vi.mocked(exchangeCodeForToken).mockRejectedValue(error)
 
       await handler(mockReq as VercelRequest, mockRes as VercelResponse)
 
@@ -322,6 +339,14 @@ describe('GET /api/auth/discord/callback', () => {
           return {
             select,
             delete: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ error: null })
+            })
+          }
+        }
+        // Handle users table for ephemeral flag update
+        if (table === 'users') {
+          return {
+            update: vi.fn().mockReturnValue({
               eq: vi.fn().mockResolvedValue({ error: null })
             })
           }
