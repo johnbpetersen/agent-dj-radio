@@ -139,6 +139,8 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
   const [txHash, setTxHash] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [errorDetails, setErrorDetails] = useState<any | null>(null)
+  const [showErrorDetails, setShowErrorDetails] = useState(false)
   const [countdown, setCountdown] = useState(0)
   const [copied, setCopied] = useState(false)
   const [retryAfter, setRetryAfter] = useState<number | null>(null)
@@ -200,13 +202,16 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
         })
 
         // Debug log challenge after health is loaded
-        console.debug('[PaymentModal] Challenge from server', {
-          challengeId: challenge.challengeId,
-          amount: (challenge as any).amount,
-          amountAtomic: (challenge as any).amountAtomic,
+        const amountAtomic = (challenge as any).amountAtomic ?? (challenge as any).amount_atomic ?? (challenge as any).amount
+        const amountUSD = amountAtomic ? (Number(amountAtomic) / 1_000_000).toFixed(6) : 'N/A'
+        console.log('[x402] challenge:', {
+          amount_atomic: amountAtomic,
+          amountUSD: `$${amountUSD}`,
+          payTo: challenge.payTo,
           expiresAt: challenge.expiresAt,
-          chain: challenge.chain,
-          chainId: (challenge as any).chainId
+          nonce: (challenge as any).nonce,
+          chain: challenge.chain ?? (challenge as any).chainId,
+          challengeId: challenge.challengeId
         })
       })
       .catch(err => {
@@ -245,6 +250,8 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
           clearInterval(interval)
           setIsSubmitting(false)
           setError(null)
+          setErrorDetails(null)
+          setShowErrorDetails(false)
           return null
         }
         setError(`RATE_LIMITED: Please wait ${prev - 1}s`)
@@ -272,6 +279,8 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
     }
 
     setError(null)
+    setErrorDetails(null)
+    setShowErrorDetails(false)
 
     try {
       // Build message
@@ -305,6 +314,8 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
 
     setIsSubmitting(true)
     setError(null)
+    setErrorDetails(null)
+    setShowErrorDetails(false)
     setWrongPayerDetail(null)
     setTxReuseError(null)
 
@@ -342,6 +353,14 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
 
       const response = await confirmPayment(payload)
 
+      // Log confirmation response
+      console.log('[x402] confirm:', {
+        status: 200,
+        ok: response.ok,
+        trackId: response.trackId?.slice(0, 8) + '...',
+        requestId: response.requestId
+      })
+
       // Success!
       if (response.ok && response.trackId) {
         onSuccess(response.trackId)
@@ -349,7 +368,20 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
         setError('Payment verified but track ID not returned')
       }
     } catch (err) {
-      console.error('Sign & Pay error:', err)
+      // Log error response
+      if (err instanceof PaymentError) {
+        console.log('[x402] confirm:', {
+          status: err.status,
+          code: err.code,
+          detail: err.detail,
+          message: err.message
+        })
+        // Store full error details for UI display
+        setErrorDetails({ status: err.status, code: err.code, detail: err.detail, message: err.message })
+      } else {
+        console.error('[x402] confirm: unexpected error', err)
+        setErrorDetails(null)
+      }
 
       if (err instanceof PaymentError) {
         // Handle special error codes
@@ -392,6 +424,8 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
 
     setIsSubmitting(true)
     setError(null)
+    setErrorDetails(null)
+    setShowErrorDetails(false)
     setWrongPayerDetail(null)
     setTxReuseError(null)
 
@@ -399,10 +433,17 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
       challengeId: challenge.challengeId,
       txHash: txHash.trim()
     }
-    console.debug('[confirm] payload', payload)
 
     try {
       const response = await confirmPayment(payload)
+
+      // Log confirmation response
+      console.log('[x402] confirm:', {
+        status: 200,
+        ok: response.ok,
+        trackId: response.trackId?.slice(0, 8) + '...',
+        requestId: response.requestId
+      })
 
       // Success!
       if (response.ok && response.trackId) {
@@ -411,7 +452,20 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
         setError('Payment verified but track ID not returned')
       }
     } catch (err) {
-      console.error('Payment verification error:', err)
+      // Log error response
+      if (err instanceof PaymentError) {
+        console.log('[x402] confirm:', {
+          status: err.status,
+          code: err.code,
+          detail: err.detail,
+          message: err.message
+        })
+        // Store full error details for UI display
+        setErrorDetails({ status: err.status, code: err.code, detail: err.detail, message: err.message })
+      } else {
+        console.error('[x402] confirm: unexpected error', err)
+        setErrorDetails(null)
+      }
 
       if (err instanceof PaymentError) {
         // Handle special error codes
@@ -456,6 +510,8 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
     // Reset binding state and errors
     binding.reset()
     setError(null)
+    setErrorDetails(null)
+    setShowErrorDetails(false)
     setWrongPayerDetail(null)
   }
 
@@ -619,7 +675,27 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
                       </p>
                     </div>
 
-                    {error && <div className="error-message">{error}</div>}
+                    {error && errorDetails && (
+                      <div className="error-banner">
+                        <div className="error-header">
+                          <span className="error-icon">⚠️</span>
+                          <span className="error-code">Payment failed: {errorDetails.code}</span>
+                          {errorDetails.detail && (
+                            <button
+                              className="error-toggle"
+                              onClick={() => setShowErrorDetails(!showErrorDetails)}
+                              title="Toggle details"
+                            >
+                              {showErrorDetails ? '▼' : '▶'} Details
+                            </button>
+                          )}
+                        </div>
+                        {showErrorDetails && errorDetails.detail && (
+                          <pre className="error-details">{JSON.stringify(errorDetails, null, 2)}</pre>
+                        )}
+                      </div>
+                    )}
+                    {error && !errorDetails && <div className="error-message">{error}</div>}
 
                     <button
                       className="sign-pay-button"
@@ -678,7 +754,27 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
                       </a>
                     )}
 
-                    {error && <div className="error-message">{error}</div>}
+                    {error && errorDetails && (
+                      <div className="error-banner">
+                        <div className="error-header">
+                          <span className="error-icon">⚠️</span>
+                          <span className="error-code">Payment failed: {errorDetails.code}</span>
+                          {errorDetails.detail && (
+                            <button
+                              className="error-toggle"
+                              onClick={() => setShowErrorDetails(!showErrorDetails)}
+                              title="Toggle details"
+                            >
+                              {showErrorDetails ? '▼' : '▶'} Details
+                            </button>
+                          )}
+                        </div>
+                        {showErrorDetails && errorDetails.detail && (
+                          <pre className="error-details">{JSON.stringify(errorDetails, null, 2)}</pre>
+                        )}
+                      </div>
+                    )}
+                    {error && !errorDetails && <div className="error-message">{error}</div>}
 
                 {/* TX_ALREADY_USED specific UI */}
                 {txReuseError && (
@@ -1380,6 +1476,59 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
           border-radius: 4px;
           margin-top: 1rem;
           font-size: 0.9rem;
+        }
+
+        .error-banner {
+          background: #3a1a1a;
+          border: 1px solid #ef4444;
+          border-radius: 4px;
+          margin-top: 1rem;
+          overflow: hidden;
+        }
+
+        .error-header {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.75rem;
+        }
+
+        .error-icon {
+          font-size: 1.2rem;
+        }
+
+        .error-code {
+          flex: 1;
+          color: #fca5a5;
+          font-size: 0.9rem;
+          font-weight: 600;
+        }
+
+        .error-toggle {
+          background: none;
+          border: none;
+          color: #fca5a5;
+          cursor: pointer;
+          font-size: 0.8rem;
+          padding: 0.25rem 0.5rem;
+          border-radius: 3px;
+          transition: background 0.2s;
+        }
+
+        .error-toggle:hover {
+          background: rgba(252, 165, 165, 0.1);
+        }
+
+        .error-details {
+          background: #2a1a1a;
+          border-top: 1px solid #ef4444;
+          padding: 0.75rem;
+          margin: 0;
+          font-size: 0.75rem;
+          color: #fca5a5;
+          overflow-x: auto;
+          white-space: pre-wrap;
+          word-break: break-all;
         }
 
         .button-group {

@@ -187,23 +187,18 @@ export async function signX402Payment(
     ]
   } as const
 
-  console.log('[x402-signer] Signing payment:', {
-    from: userAddress,
-    to: payTo,
-    value: normalizedValue,
-    chainId: chainIdNumber,
-    network,
-    usdcAddress
-  })
+  // Human-readable amount for debugging
+  const amountUSD = (Number(normalizedValue) / 1_000_000).toFixed(6)
 
-  // Debug: Typed data sanity check before signing
-  console.debug('[x402-signer] typed-data sanity', {
+  console.log('[x402] signing:', {
     value: normalizedValue,
-    validAfter: validAfter.toString(),
-    validBefore: validBefore.toString(),
-    chainId: Number(chainId),
-    expiresAtIso: iso,
-    nonceLen: nonce.length
+    amountUSD: `$${amountUSD}`,
+    to: payTo,
+    from: userAddress,
+    validAfter: Number(validAfter),
+    validBefore: Number(validBefore),
+    nonce: nonce.slice(0, 10) + '...',
+    chainId: chainIdNumber
   })
 
   try {
@@ -216,21 +211,7 @@ export async function signX402Payment(
       message: authorization
     })
 
-    // Final typed data debug
-    console.debug('[x402-signer] signature complete', {
-      value: normalizedValue,
-      validAfter: Number(authorization.validAfter),
-      validBefore: Number(authorization.validBefore),
-      nonceLen: authorization.nonce.length,
-      sigLen: signature.length
-    })
-
-    console.log('[x402-signer] Signature created:', {
-      signature: signature.slice(0, 10) + '...',
-      sigLen: signature.length,
-      nonce: authorization.nonce.slice(0, 10) + '...',
-      nonceLen: authorization.nonce.length
-    })
+    console.log('[x402] signature created:', signature.slice(0, 10) + '...')
 
     // Return normalized structure (all lowercase addresses, no leading zeros in value)
     return {
