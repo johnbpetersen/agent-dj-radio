@@ -45,12 +45,20 @@ export interface ConfirmPaymentResponse {
   ok: true
   trackId: string
   status: string
+  txHash?: string
+  requestId: string
+}
+
+export interface ConfirmPaymentPending {
+  status: 'TX_PENDING'
+  txHash: string
+  message: string
   requestId: string
 }
 
 export interface ConfirmPaymentError {
   error: {
-    code: 'WALLET_NOT_BOUND' | 'WRONG_PAYER' | 'TX_ALREADY_USED' | 'AUTH_REUSED' | 'NO_MATCH' | 'WRONG_AMOUNT' | 'WRONG_ASSET' | 'WRONG_CHAIN' | 'WRONG_TOKEN' | 'WRONG_PAYTO' | 'INVALID_EXPIRY' | 'NOT_YET_VALID' | 'INVALID_NONCE' | 'PROVIDER_ERROR' | 'PROVIDER_NO_SETTLEMENT' | 'EXPIRED' | 'VALIDATION_ERROR' | 'DB_ERROR' | 'INTERNAL'
+    code: 'WALLET_NOT_BOUND' | 'WRONG_PAYER' | 'TX_ALREADY_USED' | 'AUTH_REUSED' | 'NO_MATCH' | 'WRONG_AMOUNT' | 'WRONG_ASSET' | 'WRONG_CHAIN' | 'WRONG_TOKEN' | 'WRONG_PAYTO' | 'INVALID_EXPIRY' | 'NOT_YET_VALID' | 'INVALID_NONCE' | 'PROVIDER_ERROR' | 'PROVIDER_NO_SETTLEMENT' | 'TX_FAILED' | 'NO_TRANSFER_EVENT' | 'UNDERPAID' | 'EXPIRED' | 'VALIDATION_ERROR' | 'DB_ERROR' | 'INTERNAL'
     message: string
     detail?: string
     reasonCodes?: string[]
@@ -120,7 +128,7 @@ export async function proveWallet(
  */
 export async function confirmPayment(
   request: ConfirmPaymentRequest
-): Promise<ConfirmPaymentResponse> {
+): Promise<ConfirmPaymentResponse | ConfirmPaymentPending> {
   const response = await fetch('/api/queue/confirm', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -128,6 +136,11 @@ export async function confirmPayment(
   })
 
   const data = await response.json()
+
+  // Handle 202 TX_PENDING (payment submitted but not yet confirmed)
+  if (response.status === 202) {
+    return data as ConfirmPaymentPending
+  }
 
   if (!response.ok) {
     const errorResponse = data as ConfirmPaymentError

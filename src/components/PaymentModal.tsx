@@ -353,17 +353,33 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
 
       const response = await confirmPayment(payload)
 
+      // Handle TX_PENDING (202) - payment submitted but not yet confirmed on-chain
+      if ('status' in response && response.status === 'TX_PENDING') {
+        console.log('[x402] confirm:', {
+          status: 202,
+          code: 'TX_PENDING',
+          txHash: response.txHash?.slice(0, 10) + '...',
+          requestId: response.requestId
+        })
+        setError(`Payment submitted. Waiting for on-chain confirmation... View on BaseScan: https://basescan.org/tx/${response.txHash}`)
+        return
+      }
+
+      // At this point, response is ConfirmPaymentResponse (type narrowed)
+      const successResponse = response as { ok: true; trackId: string; status: string; txHash?: string; requestId: string }
+
       // Log confirmation response
       console.log('[x402] confirm:', {
         status: 200,
-        ok: response.ok,
-        trackId: response.trackId?.slice(0, 8) + '...',
-        requestId: response.requestId
+        ok: successResponse.ok,
+        trackId: successResponse.trackId?.slice(0, 8) + '...',
+        txHash: successResponse.txHash?.slice(0, 10) + '...',
+        requestId: successResponse.requestId
       })
 
       // Success!
-      if (response.ok && response.trackId) {
-        onSuccess(response.trackId)
+      if (successResponse.ok && successResponse.trackId) {
+        onSuccess(successResponse.trackId)
       } else {
         setError('Payment verified but track ID not returned')
       }
@@ -385,7 +401,13 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
 
       if (err instanceof PaymentError) {
         // Handle special error codes
-        if (err.code === 'PROVIDER_NO_SETTLEMENT') {
+        if (err.code === 'TX_FAILED') {
+          setError('Transaction failed on-chain. Please check the transaction on BaseScan and try again with a successful transaction.')
+        } else if (err.code === 'NO_TRANSFER_EVENT') {
+          setError('No USDC transfer found in transaction. Please ensure the transaction transferred USDC to the correct recipient.')
+        } else if (err.code === 'UNDERPAID') {
+          setError('Payment amount too low. Please send the exact amount specified.')
+        } else if (err.code === 'PROVIDER_NO_SETTLEMENT') {
           setError('Payment verified but not settled on-chain yet. This is unusual - please contact support.')
         // @ts-expect-error TODO(types): PaymentError data type needs 'fallback' field
         } else if (err.code === 'PROVIDER_UNAVAILABLE' && err.data?.fallback === 'rpc') {
@@ -439,17 +461,33 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
     try {
       const response = await confirmPayment(payload)
 
+      // Handle TX_PENDING (202) - payment submitted but not yet confirmed on-chain
+      if ('status' in response && response.status === 'TX_PENDING') {
+        console.log('[x402] confirm:', {
+          status: 202,
+          code: 'TX_PENDING',
+          txHash: response.txHash?.slice(0, 10) + '...',
+          requestId: response.requestId
+        })
+        setError(`Payment submitted. Waiting for on-chain confirmation... View on BaseScan: https://basescan.org/tx/${response.txHash}`)
+        return
+      }
+
+      // At this point, response is ConfirmPaymentResponse (type narrowed)
+      const successResponse = response as { ok: true; trackId: string; status: string; txHash?: string; requestId: string }
+
       // Log confirmation response
       console.log('[x402] confirm:', {
         status: 200,
-        ok: response.ok,
-        trackId: response.trackId?.slice(0, 8) + '...',
-        requestId: response.requestId
+        ok: successResponse.ok,
+        trackId: successResponse.trackId?.slice(0, 8) + '...',
+        txHash: successResponse.txHash?.slice(0, 10) + '...',
+        requestId: successResponse.requestId
       })
 
       // Success!
-      if (response.ok && response.trackId) {
-        onSuccess(response.trackId)
+      if (successResponse.ok && successResponse.trackId) {
+        onSuccess(successResponse.trackId)
       } else {
         setError('Payment verified but track ID not returned')
       }

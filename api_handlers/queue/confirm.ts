@@ -9,6 +9,8 @@ import { verifyPayment } from '../_shared/payments/x402-cdp.js'
 // Use old facilitator for txHash mode (legacy), new modular facilitator for authorization mode
 import { facilitatorVerify } from '../_shared/payments/x402-facilitator.js'
 import { facilitatorVerifyAuthorization } from '../_shared/payments/facilitator/index.js'
+import { createPublicClient, http, parseAbiItem, type Hash } from 'viem'
+import { base } from 'viem/chains'
 
 // ERC-3009 authorization type (flattened for facilitator)
 type ERC3009Authorization = {
@@ -74,6 +76,222 @@ async function verifyMockPayment(
   // Mock always pays exact amount
   logger.info('Mock payment verification (always succeeds)', { challengeId, txHash, amountAtomic })
   return { ok: true, amountPaidAtomic: amountAtomic }
+}
+
+/**
+ * Verify settlement transaction on Base mainnet with bounded retry
+ * Returns receipt if found and successful within retry window
+ */
+async function verifySettlementOnChain(
+  txHash: Hash,
+  params: {
+    expectedRecipient: string
+    expectedAmountAtomic: number | string
+    expectedSender?: string
+    tokenAddress: string
+    requestId: string
+    challengeId: string
+  }
+): Promise<
+  | { ok: true; receipt: any; amountPaid: string; from: string }
+  | { ok: false; code: 'TX_PENDING' | 'TX_FAILED' | 'WRONG_RECIPIENT' | 'UNDERPAID' | 'NO_TRANSFER_EVENT'; message: string }
+> {
+  const { expectedRecipient, expectedAmountAtomic, expectedSender, tokenAddress, requestId, challengeId } = params
+
+  // Create RPC client
+  const rpcUrl = serverEnv.BASE_MAINNET_RPC_URL || 'https://mainnet.base.org'
+  const publicClient = createPublicClient({
+    chain: base,
+    transport: http(rpcUrl)
+  })
+
+  logger.info('verifySettlement: checking receipt on Base mainnet', {
+    requestId,
+    challengeId,
+    txHash: maskTxHash(txHash),
+    rpcUrl: rpcUrl.substring(0, 30) + '...'
+  })
+
+  // Bounded retry: 3 attempts with increasing delays
+  const delays = [500, 1000, 1500] // ms
+  let receipt: any = null
+
+  for (let attempt = 0; attempt < delays.length; attempt++) {
+    try {
+      receipt = await publicClient.getTransactionReceipt({ hash: txHash })
+      if (receipt) {
+        logger.info('verifySettlement: receipt found', {
+          requestId,
+          challengeId,
+          txHash: maskTxHash(txHash),
+          attempt: attempt + 1,
+          status: receipt.status
+        })
+        break
+      }
+    } catch (err: any) {
+      logger.debug('verifySettlement: receipt not yet available', {
+        requestId,
+        challengeId,
+        txHash: maskTxHash(txHash),
+        attempt: attempt + 1,
+        error: err?.message
+      })
+    }
+
+    // Wait before next attempt (skip delay on last attempt)
+    if (attempt < delays.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, delays[attempt]))
+    }
+  }
+
+  // No receipt after retries
+  if (!receipt) {
+    logger.info('verifySettlement: no receipt after retries', {
+      requestId,
+      challengeId,
+      txHash: maskTxHash(txHash),
+      attempts: delays.length
+    })
+    return {
+      ok: false,
+      code: 'TX_PENDING',
+      message: 'Transaction not yet confirmed on-chain. Please wait a moment and try again.'
+    }
+  }
+
+  // Check receipt status
+  if (receipt.status !== 'success') {
+    logger.warn('verifySettlement: transaction failed', {
+      requestId,
+      challengeId,
+      txHash: maskTxHash(txHash),
+      status: receipt.status
+    })
+    return {
+      ok: false,
+      code: 'TX_FAILED',
+      message: 'Transaction failed on-chain'
+    }
+  }
+
+  // Parse Transfer events from receipt logs
+  const transferEventSignature = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)')
+
+  let transferFound = false
+  let transferFrom: string | null = null
+  let transferTo: string | null = null
+  let transferAmount: bigint | null = null
+
+  for (const log of receipt.logs) {
+    // Check if this is a Transfer event from the USDC token contract
+    if (
+      log.address?.toLowerCase() === tokenAddress.toLowerCase() &&
+      log.topics[0] === transferEventSignature.signature
+    ) {
+      try {
+        // Decode indexed params from topics (from, to)
+        transferFrom = '0x' + log.topics[1].slice(26) // Remove first 26 chars (0x + 24 zeros)
+        transferTo = '0x' + log.topics[2].slice(26)
+        // Decode value from data
+        transferAmount = BigInt(log.data)
+
+        transferFound = true
+        logger.info('verifySettlement: Transfer event found', {
+          requestId,
+          challengeId,
+          txHash: maskTxHash(txHash),
+          from: maskAddress(transferFrom),
+          to: maskAddress(transferTo),
+          amount: transferAmount.toString()
+        })
+        break
+      } catch (parseErr: any) {
+        logger.warn('verifySettlement: failed to parse Transfer event', {
+          requestId,
+          challengeId,
+          error: parseErr?.message
+        })
+      }
+    }
+  }
+
+  if (!transferFound || !transferFrom || !transferTo || transferAmount === null) {
+    logger.warn('verifySettlement: no Transfer event found', {
+      requestId,
+      challengeId,
+      txHash: maskTxHash(txHash),
+      logsCount: receipt.logs.length
+    })
+    return {
+      ok: false,
+      code: 'NO_TRANSFER_EVENT',
+      message: 'No USDC transfer found in transaction'
+    }
+  }
+
+  // Validate recipient
+  if (transferTo.toLowerCase() !== expectedRecipient.toLowerCase()) {
+    logger.warn('verifySettlement: wrong recipient', {
+      requestId,
+      challengeId,
+      txHash: maskTxHash(txHash),
+      expected: maskAddress(expectedRecipient),
+      got: maskAddress(transferTo)
+    })
+    return {
+      ok: false,
+      code: 'WRONG_RECIPIENT',
+      message: `Payment sent to wrong address. Expected ${expectedRecipient.substring(0, 10)}..., got ${transferTo.substring(0, 10)}...`
+    }
+  }
+
+  // Validate amount (must be >= expected)
+  const expectedAmount = BigInt(expectedAmountAtomic)
+  if (transferAmount < expectedAmount) {
+    logger.warn('verifySettlement: underpaid', {
+      requestId,
+      challengeId,
+      txHash: maskTxHash(txHash),
+      expected: expectedAmount.toString(),
+      got: transferAmount.toString()
+    })
+    return {
+      ok: false,
+      code: 'UNDERPAID',
+      message: `Payment amount too low. Expected ${expectedAmount.toString()}, got ${transferAmount.toString()}`
+    }
+  }
+
+  // Validate sender (if provided)
+  if (expectedSender && transferFrom.toLowerCase() !== expectedSender.toLowerCase()) {
+    logger.warn('verifySettlement: wrong sender', {
+      requestId,
+      challengeId,
+      txHash: maskTxHash(txHash),
+      expected: maskAddress(expectedSender),
+      got: maskAddress(transferFrom)
+    })
+    // Note: This is logged but not a hard failure in facilitator mode
+    // ERC-3009 authorization already binds the sender
+  }
+
+  // All validations passed
+  logger.info('verifySettlement: success', {
+    requestId,
+    challengeId,
+    txHash: maskTxHash(txHash),
+    from: maskAddress(transferFrom),
+    to: maskAddress(transferTo),
+    amount: transferAmount.toString()
+  })
+
+  return {
+    ok: true,
+    receipt,
+    amountPaid: transferAmount.toString(),
+    from: transferFrom
+  }
 }
 
 async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
@@ -1018,9 +1236,77 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
           txHash = vr.txHash
         }
 
-        verificationResult = {
-          ok: true,
-          amountPaidAtomic: Number(vr.amountPaidAtomic)
+        // Verify settlement on-chain (Base mainnet)
+        if (authorization && txHash) {
+          logger.info('queue/confirm verifying settlement on Base mainnet', {
+            requestId,
+            challengeId,
+            txHash: maskTxHash(txHash)
+          })
+
+          const settlementResult = await verifySettlementOnChain(txHash as Hash, {
+            expectedRecipient: challenge.pay_to,
+            expectedAmountAtomic: challenge.amount_atomic,
+            expectedSender: authorization.authorization.from,
+            tokenAddress: serverEnv.X402_TOKEN_ADDRESS!,
+            requestId,
+            challengeId
+          })
+
+          if (!settlementResult.ok) {
+            // Handle TX_PENDING separately (202 response)
+            if (settlementResult.code === 'TX_PENDING') {
+              logger.info('queue/confirm settlement pending', {
+                requestId,
+                challengeId,
+                txHash: maskTxHash(txHash)
+              })
+              res.status(202).json({
+                status: 'TX_PENDING',
+                txHash,
+                message: settlementResult.message,
+                requestId
+              })
+              return
+            }
+
+            // Other errors (TX_FAILED, WRONG_RECIPIENT, UNDERPAID) are 400
+            logger.warn('queue/confirm settlement verification failed', {
+              requestId,
+              challengeId,
+              txHash: maskTxHash(txHash),
+              code: settlementResult.code,
+              message: settlementResult.message
+            })
+            res.status(400).json({
+              error: {
+                code: settlementResult.code,
+                message: settlementResult.message
+              },
+              requestId
+            })
+            return
+          }
+
+          // Settlement verified - use actual paid amount from on-chain
+          logger.info('queue/confirm settlement verified on-chain', {
+            requestId,
+            challengeId,
+            txHash: maskTxHash(txHash),
+            amountPaid: settlementResult.amountPaid
+          })
+
+          verificationResult = {
+            ok: true,
+            amountPaidAtomic: settlementResult.amountPaid,
+            tokenFrom: settlementResult.from
+          }
+        } else {
+          // Legacy path (no authorization or no txHash)
+          verificationResult = {
+            ok: true,
+            amountPaidAtomic: Number(vr.amountPaidAtomic)
+          }
         }
       }
     } else if (serverEnv.ENABLE_X402 && serverEnv.X402_MODE === 'cdp') {
@@ -1429,6 +1715,7 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
       ok: true,
       trackId: paidTrack.id,
       status: 'AUGMENTING',
+      txHash: txHash || undefined,
       requestId
     })
   } catch (error) {
