@@ -22,6 +22,8 @@
     "doctor": "tsx scripts/doctor.ts",
     "ci:forbidden-refs": "bash scripts/ci-check-discord-refs.sh",
     "smoke:baseline": "bash scripts/smoke-baseline.sh",
+    "x402:check-rpc": "tsx scripts/x402/check-rpc.ts",
+    "x402:price-quote": "tsx scripts/x402/price-quote.ts",
     "prebuild": "npm run check:env:strict"
   },
   "dependencies": {

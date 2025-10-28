@@ -174,11 +174,27 @@ describe('GET /api/auth/discord/start', () => {
     it('uses default DISCORD_API_BASE when not provided', async () => {
       delete process.env.DISCORD_API_BASE
 
-      // Mock successful session and DB insert
+      // Mock successful session and DB operations
       mockReq.cookies = { session_id: 'existing-session-id' }
-      const mockFrom = vi.fn().mockReturnValue({
-        insert: vi.fn().mockResolvedValue({ error: null })
-      })
+      const mockFrom = vi.fn()
+        // First call: rate limit check (returns null - no recent state)
+        .mockReturnValueOnce({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+                  })
+                })
+              })
+            })
+          })
+        })
+        // Second call: insert state
+        .mockReturnValueOnce({
+          insert: vi.fn().mockResolvedValue({ error: null })
+        })
       vi.mocked(supabaseAdmin.from).mockImplementation(mockFrom as any)
 
       await handler(mockReq as VercelRequest, mockRes as VercelResponse)
@@ -193,10 +209,26 @@ describe('GET /api/auth/discord/start', () => {
       // Mock session exists
       mockReq.cookies = { session_id: 'test-session-123' }
 
-      // Mock successful DB insert
-      const mockFrom = vi.fn().mockReturnValue({
-        insert: vi.fn().mockResolvedValue({ error: null })
-      })
+      // Mock DB operations (rate limit check + insert)
+      const mockFrom = vi.fn()
+        // First call: rate limit check (returns null - no recent state)
+        .mockReturnValueOnce({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+                  })
+                })
+              })
+            })
+          })
+        })
+        // Second call: insert state
+        .mockReturnValueOnce({
+          insert: vi.fn().mockResolvedValue({ error: null })
+        })
       vi.mocked(supabaseAdmin.from).mockImplementation(mockFrom as any)
 
       await handler(mockReq as VercelRequest, mockRes as VercelResponse)
@@ -210,9 +242,25 @@ describe('GET /api/auth/discord/start', () => {
     it('generates valid authorize URL with all required params', async () => {
       mockReq.cookies = { session_id: 'test-session-123' }
 
-      const mockFrom = vi.fn().mockReturnValue({
-        insert: vi.fn().mockResolvedValue({ error: null })
-      })
+      const mockFrom = vi.fn()
+        // First call: rate limit check
+        .mockReturnValueOnce({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+                  })
+                })
+              })
+            })
+          })
+        })
+        // Second call: insert state
+        .mockReturnValueOnce({
+          insert: vi.fn().mockResolvedValue({ error: null })
+        })
       vi.mocked(supabaseAdmin.from).mockImplementation(mockFrom as any)
 
       await handler(mockReq as VercelRequest, mockRes as VercelResponse)
@@ -240,12 +288,28 @@ describe('GET /api/auth/discord/start', () => {
       })
 
       let insertedRow: any
-      const mockFrom = vi.fn().mockReturnValue({
-        insert: vi.fn().mockImplementation((row) => {
-          insertedRow = row
-          return Promise.resolve({ error: null })
+      const mockFrom = vi.fn()
+        // First call: rate limit check
+        .mockReturnValueOnce({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+                  })
+                })
+              })
+            })
+          })
         })
-      })
+        // Second call: insert state
+        .mockReturnValueOnce({
+          insert: vi.fn().mockImplementation((row) => {
+            insertedRow = row
+            return Promise.resolve({ error: null })
+          })
+        })
       vi.mocked(supabaseAdmin.from).mockImplementation(mockFrom as any)
 
       await handler(mockReq as VercelRequest, mockRes as VercelResponse)
@@ -266,13 +330,29 @@ describe('GET /api/auth/discord/start', () => {
       let storedVerifier: string
       let returnedState: string
 
-      const mockFrom = vi.fn().mockReturnValue({
-        insert: vi.fn().mockImplementation((row) => {
-          storedVerifier = row.code_verifier
-          returnedState = row.state
-          return Promise.resolve({ error: null })
+      const mockFrom = vi.fn()
+        // First call: rate limit check
+        .mockReturnValueOnce({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+                  })
+                })
+              })
+            })
+          })
         })
-      })
+        // Second call: insert state
+        .mockReturnValueOnce({
+          insert: vi.fn().mockImplementation((row) => {
+            storedVerifier = row.code_verifier
+            returnedState = row.state
+            return Promise.resolve({ error: null })
+          })
+        })
       vi.mocked(supabaseAdmin.from).mockImplementation(mockFrom as any)
 
       await handler(mockReq as VercelRequest, mockRes as VercelResponse)
@@ -293,9 +373,25 @@ describe('GET /api/auth/discord/start', () => {
       // No existing session
       mockReq.cookies = {}
 
-      const mockFrom = vi.fn().mockReturnValue({
-        insert: vi.fn().mockResolvedValue({ error: null })
-      })
+      const mockFrom = vi.fn()
+        // First call: rate limit check
+        .mockReturnValueOnce({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+                  })
+                })
+              })
+            })
+          })
+        })
+        // Second call: insert state
+        .mockReturnValueOnce({
+          insert: vi.fn().mockResolvedValue({ error: null })
+        })
       vi.mocked(supabaseAdmin.from).mockImplementation(mockFrom as any)
 
       const { setSessionCookie } = await import('../../../../api/_shared/session-helpers.js')
@@ -313,9 +409,25 @@ describe('GET /api/auth/discord/start', () => {
       mockReq.headers!.accept = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
       mockReq.cookies = { session_id: 'test-session-html' }
 
-      const mockFrom = vi.fn().mockReturnValue({
-        insert: vi.fn().mockResolvedValue({ error: null })
-      })
+      const mockFrom = vi.fn()
+        // First call: rate limit check
+        .mockReturnValueOnce({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+                  })
+                })
+              })
+            })
+          })
+        })
+        // Second call: insert state
+        .mockReturnValueOnce({
+          insert: vi.fn().mockResolvedValue({ error: null })
+        })
       vi.mocked(supabaseAdmin.from).mockImplementation(mockFrom as any)
 
       await handler(mockReq as VercelRequest, mockRes as VercelResponse)
@@ -330,9 +442,25 @@ describe('GET /api/auth/discord/start', () => {
       delete mockReq.headers!.accept
       mockReq.cookies = { session_id: 'test-session-no-accept' }
 
-      const mockFrom = vi.fn().mockReturnValue({
-        insert: vi.fn().mockResolvedValue({ error: null })
-      })
+      const mockFrom = vi.fn()
+        // First call: rate limit check
+        .mockReturnValueOnce({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+                  })
+                })
+              })
+            })
+          })
+        })
+        // Second call: insert state
+        .mockReturnValueOnce({
+          insert: vi.fn().mockResolvedValue({ error: null })
+        })
       vi.mocked(supabaseAdmin.from).mockImplementation(mockFrom as any)
 
       await handler(mockReq as VercelRequest, mockRes as VercelResponse)
@@ -346,12 +474,28 @@ describe('GET /api/auth/discord/start', () => {
       mockReq.cookies = { session_id: 'test-session-redirect' }
 
       let insertCalled = false
-      const mockFrom = vi.fn().mockReturnValue({
-        insert: vi.fn().mockImplementation(() => {
-          insertCalled = true
-          return Promise.resolve({ error: null })
+      const mockFrom = vi.fn()
+        // First call: rate limit check
+        .mockReturnValueOnce({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+                  })
+                })
+              })
+            })
+          })
         })
-      })
+        // Second call: insert state
+        .mockReturnValueOnce({
+          insert: vi.fn().mockImplementation(() => {
+            insertCalled = true
+            return Promise.resolve({ error: null })
+          })
+        })
       vi.mocked(supabaseAdmin.from).mockImplementation(mockFrom as any)
 
       await handler(mockReq as VercelRequest, mockRes as VercelResponse)
@@ -361,18 +505,150 @@ describe('GET /api/auth/discord/start', () => {
     })
   })
 
+  describe('Rate limiting', () => {
+    it('returns 429 when called twice within 3 seconds', async () => {
+      mockReq.cookies = { session_id: 'test-session-rate-limit' }
+
+      // First call: recent state exists (created 1 second ago)
+      const recentTimestamp = new Date(Date.now() - 1000).toISOString() // 1 second ago
+
+      const mockFrom = vi.fn()
+        // Rate limit check query (returns recent state)
+        .mockReturnValueOnce({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({
+                      data: { created_at: recentTimestamp },
+                      error: null
+                    })
+                  })
+                })
+              })
+            })
+          })
+        })
+
+      vi.mocked(supabaseAdmin.from).mockImplementation(mockFrom as any)
+
+      await handler(mockReq as VercelRequest, mockRes as VercelResponse)
+
+      expect(statusCode).toBe(429)
+      expect(responseBody).toHaveProperty('error')
+      expect(responseBody.error.code).toBe('TOO_MANY_REQUESTS')
+      expect(responseBody.error.message).toMatch(/wait a moment/)
+      expect(responseBody.error.retryAfter).toBeGreaterThanOrEqual(1)
+      expect(responseBody.error.retryAfter).toBeLessThanOrEqual(3)
+      expect(headers['retry-after']).toBeDefined()
+    })
+
+    it('allows call after 3 seconds have passed', async () => {
+      mockReq.cookies = { session_id: 'test-session-rate-limit-ok' }
+
+      // Recent state exists but is older than 3 seconds (4 seconds ago)
+      const oldTimestamp = new Date(Date.now() - 4000).toISOString()
+
+      const mockFrom = vi.fn()
+        // Rate limit check query (returns old state)
+        .mockReturnValueOnce({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({
+                      data: { created_at: oldTimestamp },
+                      error: null
+                    })
+                  })
+                })
+              })
+            })
+          })
+        })
+        // Insert new state (succeeds)
+        .mockReturnValueOnce({
+          insert: vi.fn().mockResolvedValue({
+            error: null
+          })
+        })
+
+      vi.mocked(supabaseAdmin.from).mockImplementation(mockFrom as any)
+
+      await handler(mockReq as VercelRequest, mockRes as VercelResponse)
+
+      expect(statusCode).toBe(200)
+      expect(responseBody).toHaveProperty('authorizeUrl')
+      expect(responseBody.authorizeUrl).toContain('discord.com')
+    })
+
+    it('allows first call when no recent state exists', async () => {
+      mockReq.cookies = { session_id: 'test-session-first-call' }
+
+      const mockFrom = vi.fn()
+        // Rate limit check query (no recent state)
+        .mockReturnValueOnce({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({
+                      data: null,
+                      error: null
+                    })
+                  })
+                })
+              })
+            })
+          })
+        })
+        // Insert new state (succeeds)
+        .mockReturnValueOnce({
+          insert: vi.fn().mockResolvedValue({
+            error: null
+          })
+        })
+
+      vi.mocked(supabaseAdmin.from).mockImplementation(mockFrom as any)
+
+      await handler(mockReq as VercelRequest, mockRes as VercelResponse)
+
+      expect(statusCode).toBe(200)
+      expect(responseBody).toHaveProperty('authorizeUrl')
+    })
+  })
+
   describe('Database errors', () => {
     it('returns 503 on DB insert error (non-collision)', async () => {
       mockReq.cookies = { session_id: 'test-session-db-error' }
 
-      const mockFrom = vi.fn().mockReturnValue({
-        insert: vi.fn().mockResolvedValue({
-          error: {
-            code: 'PGRST116',
-            message: 'Database connection failed'
-          }
+      const mockFrom = vi.fn()
+        // First call: rate limit check
+        .mockReturnValueOnce({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+                  })
+                })
+              })
+            })
+          })
         })
-      })
+        // Second call: insert state (fails)
+        .mockReturnValueOnce({
+          insert: vi.fn().mockResolvedValue({
+            error: {
+              code: 'PGRST116',
+              message: 'Database connection failed'
+            }
+          })
+        })
       vi.mocked(supabaseAdmin.from).mockImplementation(mockFrom as any)
 
       await handler(mockReq as VercelRequest, mockRes as VercelResponse)
@@ -391,19 +667,37 @@ describe('GET /api/auth/discord/start', () => {
       mockReq.cookies = { session_id: 'test-session-collision' }
 
       let attemptCount = 0
-      const mockFrom = vi.fn().mockReturnValue({
-        insert: vi.fn().mockImplementation(() => {
-          attemptCount++
-          if (attemptCount === 1) {
-            // First attempt: collision
+      const mockFrom = vi.fn()
+        // First call: rate limit check
+        .mockReturnValueOnce({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+                  })
+                })
+              })
+            })
+          })
+        })
+        // Second call: first insert attempt (collision)
+        .mockReturnValueOnce({
+          insert: vi.fn().mockImplementation(() => {
+            attemptCount++
             return Promise.resolve({
               error: { code: '23505', message: 'duplicate key value violates unique constraint' }
             })
-          }
-          // Second attempt: success
-          return Promise.resolve({ error: null })
+          })
         })
-      })
+        // Third call: second insert attempt (success)
+        .mockReturnValueOnce({
+          insert: vi.fn().mockImplementation(() => {
+            attemptCount++
+            return Promise.resolve({ error: null })
+          })
+        })
       vi.mocked(supabaseAdmin.from).mockImplementation(mockFrom as any)
 
       await handler(mockReq as VercelRequest, mockRes as VercelResponse)
@@ -416,12 +710,28 @@ describe('GET /api/auth/discord/start', () => {
     it('returns 500 after max collision retries', async () => {
       mockReq.cookies = { session_id: 'test-session-max-collision' }
 
-      // Always return collision error
-      const mockFrom = vi.fn().mockReturnValue({
-        insert: vi.fn().mockResolvedValue({
-          error: { code: '23505', message: 'duplicate key' }
+      // Always return collision error for all attempts
+      const mockFrom = vi.fn()
+        // First call: rate limit check
+        .mockReturnValueOnce({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+                  })
+                })
+              })
+            })
+          })
         })
-      })
+        // Subsequent calls: insert attempts (all fail with collision)
+        .mockReturnValue({
+          insert: vi.fn().mockResolvedValue({
+            error: { code: '23505', message: 'duplicate key' }
+          })
+        })
       vi.mocked(supabaseAdmin.from).mockImplementation(mockFrom as any)
 
       await handler(mockReq as VercelRequest, mockRes as VercelResponse)

@@ -16,15 +16,22 @@ You are Claude Code working on this repo. Follow these rules on every task:
 - **Logging**: Structured logs with correlation IDs; never secrets; only show ID suffixes.
 - **Env**: No hardcoded secrets. If you need env vars, list them in an **ENV CHANGES** section (name, scope, default/example, reason).
 
-## Current Sprint (Simple Identity)
-- Discord OAuth linking/unlinking is in-scope, behind flags:
-  - `ENABLE_DISCORD_LINKING=true`
-  - `ALLOW_DISCORD_UNLINK=true`
-- Sessions remain the source of identity (`ensureSession`); no presence TTL gating identity.
-- Default user is guest/ephemeral until a provider is linked.
-- Linking Discord → `users.ephemeral=false`.
-- Unlinking Discord → recompute based on remaining `user_accounts` (ephemeral iff zero accounts).
-- Keep scope tight: no wallet linking in this sprint.
+## Current Sprint: Discord OAuth + Linked-Only Chat
+- **Discord OAuth** (start/callback/unlink) is fully implemented and production-ready:
+  - Feature flags: `ENABLE_DISCORD_LINKING=true`, `ALLOW_DISCORD_UNLINK=true`
+  - PKCE flow with session-bound state, rate limiting, TTL cleanup
+  - Account linking with idempotency (ACCOUNT_IN_USE conflict detection)
+  - Display name preference: Discord handle > ephemeral name
+- **Linked-Only Chat** enforced on server (`canChat = !banned && !ephemeral`)
+- Sessions remain the source of identity (`ensureSession`); no presence TTL gating identity
+- Default user is guest/ephemeral until a provider is linked
+- Linking Discord → `users.ephemeral=false`
+- Unlinking Discord → recompute based on remaining `user_accounts` (ephemeral iff zero accounts)
+- Keep scope tight: no wallet linking in this sprint
+
+## Previous Sprint Notes
+- Early prototyping phase: No Discord linking, ephemeral-only identity
+- Simple session management without OAuth providers
 
 ## Definition of Done (each step)
 - Tests pass (unit/integration per your plan).

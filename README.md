@@ -73,42 +73,79 @@ graph LR
     J --> K[Station Playback]
 ```
 
-## Payment Flow (Alpha) 💳
+## x402 Payments (Base Sepolia) 💳
 
 ### Overview
 
-Agent DJ Radio supports real cryptocurrency payments via the x402 protocol for track submissions. Payments are verified on **Base Sepolia** testnet using **USDC** (6 decimals).
+Agent DJ Radio uses the **x402 protocol** (HTTP 402 Payment Required) with **ERC-3009** transfer authorizations for micropayments. Payments are verified on **Base Sepolia testnet** using **USDC**.
+
+**Key Features:**
+- ✅ Instant verification via facilitator (<5 seconds)
+- ✅ Gasless UX (user only signs message, no TX broadcast)
+- ✅ Idempotent payment confirmation (retry-safe)
+- ✅ Granular error codes (EXPIRED, WRONG_CHAIN, UNDERPAID, etc.)
+- ✅ 10-minute challenge TTL with clock skew tolerance
+
+**Architecture:** See comprehensive documentation:
+- 📊 **Audit Report:** `docs/x402/2025-10-27-audit.md` (full system analysis)
+- 📋 **ADR Baseline:** `docs/adr/2025-10-27-x402-baseline.md` (architecture decisions)
 
 ### Quick Setup
 
-**Development/Staging (Mock Payments):**
+**Development (Free Mode):**
 ```bash
-ENABLE_MOCK_PAYMENTS=true
-ENABLE_X402=false
+ENABLE_X402=false              # Skip payments, create PAID tracks immediately
+ENABLE_MOCK_PAYMENTS=false     # No mock shortcuts
 ```
 
-**Alpha/Production (Real Payments):**
+**Staging (Facilitator + Mock Proofs):**
 ```bash
 ENABLE_X402=true
-ENABLE_MOCK_PAYMENTS=false
-X402_PROVIDER_URL=https://api.cdp.coinbase.com/x402
-X402_API_KEY=your-coinbase-cdp-api-key
+X402_MODE=facilitator
+X402_FACILITATOR_URL=https://x402.org/facilitator
+X402_RECEIVING_ADDRESS=0x5563f81AA5e6ae358D3752147A67198C8a528EA6
 X402_CHAIN=base-sepolia
 X402_ACCEPTED_ASSET=USDC
-X402_RECEIVING_ADDRESS=0x... # Your Base Sepolia address
+ENABLE_MOCK_PAYMENTS=true      # Allow /x402/mock-proofs for E2E tests
+```
+
+**Production (Base Sepolia Testnet):**
+```bash
+ENABLE_X402=true
+X402_MODE=facilitator
+X402_FACILITATOR_URL=https://x402.org/facilitator
+X402_RECEIVING_ADDRESS=0x...   # Your production wallet
+X402_CHAIN=base-sepolia
+X402_ACCEPTED_ASSET=USDC
+ENABLE_MOCK_PAYMENTS=false     # No mocks in production
+BASE_SEPOLIA_RPC_URL=https://sepolia.base.org  # Optional (default: public node)
 ```
 
 ### How It Works
 
-1. **Submit Track** → Returns HTTP 402 with `X-PAYMENT` header
-2. **X-PAYMENT Header Format** (semicolon-delimited):
-   ```
-   payTo=0x...; amount=150000; asset=USDC; chain=base-sepolia;
-   expiresAt=2025-10-07T12:34:56Z; challengeId=uuid; nonce=abc123
-   ```
-3. **User Pays** → Send USDC to `payTo` address on Base Sepolia
-4. **Verify Payment** → POST `/api/queue/confirm` with `{ challengeId, txHash }`
-5. **Track Queued** → Returns 200, track moves to PAID → GENERATING → READY
+**Payment Flow:**
+1. **Price Quote** → POST `/api/queue/price-quote` {duration_seconds: 60}
+2. **Submit Track** → POST `/api/queue/submit` {prompt, duration, user_id}
+   - Returns **402 Payment Required** with challenge
+   - Challenge expires in 10 minutes
+3. **Wallet Signature** → User signs ERC-3009 authorization (EIP-712 typed data)
+   - Gasless: No transaction broadcast, just message signature
+4. **Verify Payment** → POST `/api/queue/confirm` {challengeId, authorization}
+   - Facilitator validates signature + nonce
+   - Instant confirmation (<5 seconds)
+5. **Track Queued** → Returns 200 {paid: true, track_id}
+   - Track status: PENDING_PAYMENT → PAID → GENERATING → READY
+
+**X-PAYMENT Header Format (semicolon-delimited):**
+```
+payTo=0x5563f81AA5e6ae358D3752147A67198C8a528EA6;
+amount=50000000000000000;
+asset=USDC;
+chain=base-sepolia;
+expiresAt=2025-10-27T19:15:00Z;
+challengeId=550e8400-e29b-41d4-a716-446655440000;
+nonce=0xabcd1234...
+```
 
 ### Payment Modal
 
@@ -180,16 +217,55 @@ When `code === "RATE_LIMITED"`, response includes standard rate limit headers:
 
 The UI displays a countdown and disables the verify button until the rate limit expires.
 
-### Demo Flow (RPC-Only Mode - Base Sepolia)
+### Smoke Tests 🧪
 
-**⚠️ Note on x402 Protocol:**
-This implementation uses **simplified transaction verification** (RPC-only mode), NOT the full x402 protocol. The full x402 protocol requires cryptographic payment authorizations (ERC-3009 transferWithAuthorization) verified BEFORE settlement. Our current flow verifies completed transactions AFTER they've been sent to the blockchain. This works for testing but is not production-grade x402.
+Verify x402 connectivity and endpoint functionality without modifying server behavior:
 
-**Environment Setup:**
+**1. Check Base Sepolia RPC:**
 ```bash
-# .env.local for testnet development
-ENABLE_X402=true
-ENABLE_MOCK_PAYMENTS=false
+npm run x402:check-rpc
+```
+- Tests RPC connection to Base Sepolia
+- Verifies chain ID (84532)
+- Shows latest block number and age
+
+**2. Test Price Quote Endpoint:**
+```bash
+npm run x402:price-quote [base_url]
+```
+- Tests `/api/queue/price-quote` for all durations (60/90/120s)
+- Validates response format
+- Confirms error handling for invalid durations
+
+**3. Simulate Payment Verification:**
+```bash
+./scripts/x402/simulate-verify.sh [base_url]
+```
+- Demonstrates `/api/queue/confirm` behavior
+- Tests validation errors (missing fields, invalid formats)
+- Shows expected error codes for various scenarios
+
+**Example Output:**
+```
+✅ Chain ID: 84532 (Base Sepolia)
+✅ Latest block: 5824013
+✅ 60s → $0.05 USD
+✅ 90s → $0.08 USD
+✅ 120s → $0.10 USD
+```
+
+### Mainnet Migration (Future)
+
+**⚠️ Current Status:** Testnet-only (Base Sepolia)
+
+**To migrate to Base mainnet:**
+```bash
+# Update environment
+X402_CHAIN=base              # Remove `-sepolia`
+X402_RECEIVING_ADDRESS=0x... # Production wallet (SECURE THIS!)
+BASE_SEPOLIA_RPC_URL=https://mainnet.base.org
+CDP_API_KEY_ID=<mainnet_key>
+CDP_API_KEY_SECRET=<mainnet_secret>
 
 # RPC-only mode (direct blockchain verification)
 X402_MODE=rpc-only

@@ -98,7 +98,51 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
     hasRedirectUri: !!redirectUri
   })
 
-  // 4. Generate PKCE parameters with collision retry
+  // 4. Rate limit check: session-scoped cooldown (3 seconds)
+  const rateLimitWindowMs = 3000 // 3 seconds
+  const { data: recentState } = await supabaseAdmin
+    .from('oauth_states')
+    .select('created_at')
+    .eq('session_id', sessionId)
+    .eq('provider', 'discord')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (recentState) {
+    const ageMs = Date.now() - new Date(recentState.created_at).getTime()
+    if (ageMs < rateLimitWindowMs) {
+      const retryAfterSeconds = Math.ceil((rateLimitWindowMs - ageMs) / 1000)
+
+      logger.warn('Rate limit exceeded for Discord OAuth start', {
+        correlationId,
+        sessionId: shortId(sessionId, 8) + '...',
+        ageMs,
+        rateLimitWindowMs,
+        retryAfterSeconds
+      })
+
+      logger.requestComplete('/api/auth/discord/start', Date.now() - startTime, {
+        correlationId,
+        statusCode: 429,
+        reason: 'rate_limited'
+      })
+
+      res.status(429)
+        .setHeader('Retry-After', retryAfterSeconds.toString())
+        .json({
+          error: {
+            code: 'TOO_MANY_REQUESTS',
+            message: 'Please wait a moment and try again',
+            retryAfter: retryAfterSeconds
+          },
+          requestId: correlationId
+        })
+      return
+    }
+  }
+
+  // 5. Generate PKCE parameters with collision retry
   let state: string
   let codeVerifier: string
   let codeChallenge: string
@@ -121,7 +165,7 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
       challengeLength: codeChallenge.length
     })
 
-    // 5. Store state in database
+    // 6. Store state in database
     try {
       const { error: insertError } = await supabaseAdmin
         .from('oauth_states')
@@ -212,7 +256,7 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
     return
   }
 
-  // 6. Build Discord authorize URL
+  // 7. Build Discord authorize URL
   const authorizeUrl = buildDiscordAuthorizeUrl({
     apiBase,
     clientId,
@@ -229,7 +273,7 @@ async function discordStartHandler(req: VercelRequest, res: VercelResponse): Pro
     hasChallenge: authorizeUrl.includes('code_challenge=')
   })
 
-  // 7. Respond based on Accept header
+  // 8. Respond based on Accept header
   const acceptHeader = req.headers.accept || ''
   const wantsJson = acceptHeader.includes('application/json')
 

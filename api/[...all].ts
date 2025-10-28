@@ -33,6 +33,7 @@ import adminGenerateHandler from '../api_handlers/admin/generate.js'
 import adminAdvanceHandler from '../api_handlers/admin/advance.js'
 import adminTrackHandler from '../api_handlers/admin/track/[id].js'
 import adminCleanupTestDataHandler from '../api_handlers/admin/cleanup-test-data.js'
+import adminCleanupOAuthStatesHandler from '../api_handlers/admin/cleanup.js'
 import adminDebugTracksHandler from '../api_handlers/admin/debug-tracks.js'
 import adminFixAudioUrlsHandler from '../api_handlers/admin/fix-audio-urls.js'
 import legalPrivacyHandler from '../api_handlers/legal/privacy.js'
@@ -105,6 +106,7 @@ const routes: Route[] = [
   { method: 'POST', pattern: '/admin/generate', handler: adminGenerateHandler },
   { method: 'GET', pattern: '/admin/advance', handler: adminAdvanceHandler },
   { method: 'POST', pattern: '/admin/cleanup-test-data', handler: adminCleanupTestDataHandler },
+  { method: 'GET', pattern: '/admin/cleanup/oauth-states', handler: adminCleanupOAuthStatesHandler },
   { method: 'GET', pattern: '/admin/debug-tracks', handler: adminDebugTracksHandler },
   { method: 'POST', pattern: '/admin/fix-audio-urls', handler: adminFixAudioUrlsHandler },
   { method: 'GET', pattern: '/admin/track/:id', handler: adminTrackHandler },

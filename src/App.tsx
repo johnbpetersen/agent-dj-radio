@@ -31,7 +31,12 @@ function App() {
       // Auto-clear message after 5 seconds
       setTimeout(() => setCallbackMessage(null), 5000);
     } else if (discordError) {
-      setCallbackMessage({ type: 'error', text: `Discord error: ${discordError}` });
+      // Show user-friendly error message based on error code
+      let errorText = `Discord error: ${discordError}`;
+      if (discordError === 'ACCOUNT_IN_USE') {
+        errorText = 'This Discord account is already linked to a different user. Please use that session or unlink it first.';
+      }
+      setCallbackMessage({ type: 'error', text: errorText });
       // Clean up URL
       urlParams.delete('discord_error');
       const newUrl = `${window.location.pathname}${urlParams.toString() ? '?' + urlParams.toString() : ''}`;

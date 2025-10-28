@@ -64,11 +64,11 @@ function extractHost(url: string): string {
 
 function checkEnvironment(): CheckResult[] {
   const results: CheckResult[] = []
-  const stage = (process.env.STAGE || 'dev') as 'dev' | 'staging' | 'alpha'
+  const stage = (process.env.STAGE || 'dev') as 'dev' | 'staging' | 'alpha' | 'prod'
 
   // Stage validation
   try {
-    z.enum(['dev', 'staging', 'alpha']).parse(stage)
+    z.enum(['dev', 'staging', 'alpha', 'prod']).parse(stage)
     results.push({
       name: 'STAGE',
       status: 'PASS',
@@ -78,7 +78,7 @@ function checkEnvironment(): CheckResult[] {
     results.push({
       name: 'STAGE',
       status: 'FAIL',
-      message: `Invalid stage: ${stage} (must be dev/staging/alpha)`
+      message: `Invalid stage: ${stage} (must be dev/staging/alpha/prod)`
     })
   }
 
@@ -227,6 +227,124 @@ function checkEnvironment(): CheckResult[] {
       status: 'SKIP',
       message: 'optional in all stages'
     })
+  }
+
+  // Discord OAuth configuration (prod guardrails)
+  const discordLinkingEnabled = process.env.ENABLE_DISCORD_LINKING
+  const discordClientId = process.env.DISCORD_CLIENT_ID
+  const discordRedirectUri = process.env.DISCORD_REDIRECT_URI
+  const requireLinkedForChat = process.env.REQUIRE_LINKED_FOR_CHAT
+  const debugAuth = process.env.DEBUG_AUTH
+
+  if (stage === 'prod') {
+    // FAIL checks for prod
+    if (discordLinkingEnabled !== 'true') {
+      results.push({
+        name: 'ENABLE_DISCORD_LINKING',
+        status: 'FAIL',
+        message: 'must be "true" in prod (Discord OAuth required)'
+      })
+    } else {
+      results.push({
+        name: 'ENABLE_DISCORD_LINKING',
+        status: 'PASS',
+        message: 'enabled'
+      })
+    }
+
+    if (!discordClientId || discordClientId.trim() === '') {
+      results.push({
+        name: 'DISCORD_CLIENT_ID',
+        status: 'FAIL',
+        message: 'required in prod'
+      })
+    } else {
+      results.push({
+        name: 'DISCORD_CLIENT_ID',
+        status: 'PASS',
+        message: maskToken(discordClientId)
+      })
+    }
+
+    if (!discordRedirectUri || discordRedirectUri.trim() === '') {
+      results.push({
+        name: 'DISCORD_REDIRECT_URI',
+        status: 'FAIL',
+        message: 'required in prod'
+      })
+    } else {
+      try {
+        urlSchema.parse(discordRedirectUri)
+        results.push({
+          name: 'DISCORD_REDIRECT_URI',
+          status: 'PASS',
+          message: discordRedirectUri
+        })
+      } catch {
+        results.push({
+          name: 'DISCORD_REDIRECT_URI',
+          status: 'FAIL',
+          message: 'invalid URL'
+        })
+      }
+    }
+
+    // WARN checks for prod
+    if (debugAuth === '1') {
+      results.push({
+        name: 'DEBUG_AUTH',
+        status: 'WARN',
+        message: 'enabled in prod (should be disabled)'
+      })
+    } else {
+      results.push({
+        name: 'DEBUG_AUTH',
+        status: 'PASS',
+        message: 'disabled'
+      })
+    }
+
+    if (requireLinkedForChat !== 'true') {
+      results.push({
+        name: 'REQUIRE_LINKED_FOR_CHAT',
+        status: 'WARN',
+        message: 'not enabled (linked-only chat recommended)'
+      })
+    } else {
+      results.push({
+        name: 'REQUIRE_LINKED_FOR_CHAT',
+        status: 'PASS',
+        message: 'enabled'
+      })
+    }
+
+    // Success message if all Discord OAuth checks pass
+    const discordOAuthReady =
+      discordLinkingEnabled === 'true' &&
+      discordClientId &&
+      discordRedirectUri
+    if (discordOAuthReady) {
+      results.push({
+        name: 'Discord OAuth',
+        status: 'PASS',
+        message: '✅ ready for production'
+      })
+    }
+  } else {
+    // Non-prod: just check if configured
+    if (discordLinkingEnabled === 'true' && discordClientId && discordRedirectUri) {
+      results.push({
+        name: 'Discord OAuth',
+        status: 'PASS',
+        message: `configured for ${stage}`
+      })
+    } else {
+      results.push({
+        name: 'Discord OAuth',
+        status: 'SKIP',
+        message: `optional in ${stage}`
+      })
+    }
   }
 
   // X402 configuration (required in alpha)
