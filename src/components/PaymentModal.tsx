@@ -385,8 +385,10 @@ export function PaymentModal({ challenge, onSuccess, onRefresh, onClose }: Payme
 
       if (err instanceof PaymentError) {
         // Handle special error codes
+        if (err.code === 'PROVIDER_NO_SETTLEMENT') {
+          setError('Payment verified but not settled on-chain yet. This is unusual - please contact support.')
         // @ts-expect-error TODO(types): PaymentError data type needs 'fallback' field
-        if (err.code === 'PROVIDER_UNAVAILABLE' && err.data?.fallback === 'rpc') {
+        } else if (err.code === 'PROVIDER_UNAVAILABLE' && err.data?.fallback === 'rpc') {
           // Facilitator is down, switch to RPC paste-tx flow
           console.log('[PaymentModal] Facilitator unavailable, switching to RPC fallback')
           setUseRpcFallback(true)

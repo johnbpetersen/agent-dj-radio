@@ -993,7 +993,31 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
           return
         }
       } else {
-        // Facilitator succeeded
+        // Facilitator succeeded - check for settlement tx hash
+        // In authorization mode, we require a real settlement transaction hash
+        if (authorization && (!vr.txHash || !/^0x[0-9a-fA-F]{64}$/.test(vr.txHash))) {
+          logger.warn('queue/confirm facilitator verified but no settlement tx hash', {
+            requestId,
+            challengeId,
+            hasTxHash: !!vr.txHash,
+            txHashPreview: vr.txHash ? vr.txHash.substring(0, 10) + '...' : 'missing',
+            providerRaw: vr.providerRaw ? JSON.stringify(vr.providerRaw).substring(0, 200) : 'none'
+          })
+          res.status(502).json({
+            error: {
+              code: 'PROVIDER_NO_SETTLEMENT',
+              message: 'Facilitator verified signature but did not settle on-chain. Payment not completed.'
+            },
+            requestId
+          })
+          return
+        }
+
+        // Store facilitator tx hash for later use
+        if (vr.txHash && !txHash) {
+          txHash = vr.txHash
+        }
+
         verificationResult = {
           ok: true,
           amountPaidAtomic: Number(vr.amountPaidAtomic)
