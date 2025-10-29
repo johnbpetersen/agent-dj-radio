@@ -11,6 +11,7 @@ import { facilitatorVerify } from '../_shared/payments/x402-facilitator.js'
 import { facilitatorVerifyAuthorization } from '../_shared/payments/facilitator/index.js'
 import { createPublicClient, http, parseAbiItem, type Hash } from 'viem'
 import { base } from 'viem/chains'
+import { settleWithFacilitator, settleLocally, type ERC3009Authorization as SettleAuth } from '../_shared/payments/settle.js'
 
 // ERC-3009 authorization type (flattened for facilitator)
 type ERC3009Authorization = {
@@ -1214,21 +1215,154 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
         // Facilitator succeeded - check for settlement tx hash
         // In authorization mode, we require a real settlement transaction hash
         if (authorization && (!vr.txHash || !/^0x[0-9a-fA-F]{64}$/.test(vr.txHash))) {
-          logger.warn('queue/confirm facilitator verified but no settlement tx hash', {
+          logger.info('queue/confirm facilitator verified but no settlement tx hash - initiating settlement', {
             requestId,
             challengeId,
             hasTxHash: !!vr.txHash,
             txHashPreview: vr.txHash ? vr.txHash.substring(0, 10) + '...' : 'missing',
-            providerRaw: vr.providerRaw ? JSON.stringify(vr.providerRaw).substring(0, 200) : 'none'
+            strategy: serverEnv.X402_SETTLE_STRATEGY || 'auto'
           })
-          res.status(502).json({
-            error: {
-              code: 'PROVIDER_NO_SETTLEMENT',
-              message: 'Facilitator verified signature but did not settle on-chain. Payment not completed.'
-            },
-            requestId
+
+          // =====================================================================
+          // SETTLEMENT LAYER: facilitator settle API → local broadcast fallback
+          // =====================================================================
+
+          const strategy = serverEnv.X402_SETTLE_STRATEGY || 'auto'
+          let settleTxHash: string | null = null
+          let facilitatorSettleTried = false
+          let facilitatorSettleSuccess = false
+          let localSettleTried = false
+          let localSettleSuccess = false
+
+          // Convert authorization to settle format
+          const settleAuth: SettleAuth = {
+            from: authorization.authorization.from,
+            to: authorization.authorization.to,
+            value: String(authorization.authorization.value),
+            validAfter: Number(authorization.authorization.validAfter),
+            validBefore: Number(authorization.authorization.validBefore),
+            nonce: authorization.authorization.nonce,
+            signature: authorization.signature
+          }
+
+          // Step 1: Try facilitator settle (if strategy allows)
+          if ((strategy === 'facilitator' || strategy === 'auto') && serverEnv.X402_FACILITATOR_URL) {
+            facilitatorSettleTried = true
+
+            try {
+              settleTxHash = await settleWithFacilitator(settleAuth, {
+                facilitatorUrl: serverEnv.X402_FACILITATOR_URL,
+                apiKey: serverEnv.FACILITATOR_API_KEY,
+                challenge: {
+                  challenge_id: challengeId,
+                  pay_to: challenge.pay_to,
+                  amount_atomic: challenge.amount_atomic,
+                  nonce: challenge.nonce
+                },
+                requestId
+              })
+
+              if (settleTxHash) {
+                facilitatorSettleSuccess = true
+                logger.info('queue/confirm facilitator settle succeeded', {
+                  requestId,
+                  challengeId,
+                  txHash: maskTxHash(settleTxHash)
+                })
+              } else {
+                logger.info('queue/confirm facilitator settle returned null', {
+                  requestId,
+                  challengeId,
+                  strategy
+                })
+              }
+            } catch (err: any) {
+              logger.warn('queue/confirm facilitator settle error', {
+                requestId,
+                challengeId,
+                error: err?.message
+              })
+            }
+          }
+
+          // Step 2: Fallback to local settle (if strategy allows and facilitator failed)
+          if (!settleTxHash && (strategy === 'local' || strategy === 'auto') && serverEnv.SETTLER_PRIVATE_KEY) {
+            localSettleTried = true
+
+            try {
+              settleTxHash = await settleLocally(settleAuth, {
+                privateKey: serverEnv.SETTLER_PRIVATE_KEY,
+                rpcUrl: serverEnv.BASE_MAINNET_RPC_URL || 'https://mainnet.base.org',
+                usdcContract: serverEnv.USDC_CONTRACT_ADDRESS_BASE!,
+                challenge: {
+                  pay_to: challenge.pay_to,
+                  amount_atomic: challenge.amount_atomic
+                },
+                requestId
+              })
+
+              if (settleTxHash) {
+                localSettleSuccess = true
+                logger.info('queue/confirm local settle succeeded', {
+                  requestId,
+                  challengeId,
+                  txHash: maskTxHash(settleTxHash)
+                })
+              }
+            } catch (err: any) {
+              logger.warn('queue/confirm local settle error', {
+                requestId,
+                challengeId,
+                error: err?.message
+              })
+
+              // Check for validation errors (pre-flight failures)
+              if (err?.message?.includes('VALIDATION_ERROR')) {
+                res.status(400).json({
+                  error: {
+                    code: 'VALIDATION_ERROR',
+                    message: err.message.replace('VALIDATION_ERROR: ', '')
+                  },
+                  requestId
+                })
+                return
+              }
+            }
+          }
+
+          // Step 3: No settlement achieved
+          if (!settleTxHash) {
+            logger.warn('queue/confirm no settlement achieved', {
+              requestId,
+              challengeId,
+              strategy,
+              facilitatorSettleTried,
+              facilitatorSettleSuccess,
+              localSettleTried,
+              localSettleSuccess
+            })
+
+            res.status(502).json({
+              error: {
+                code: 'PROVIDER_NO_SETTLEMENT',
+                message: 'Payment verification succeeded but settlement failed. No transaction broadcast.'
+              },
+              requestId
+            })
+            return
+          }
+
+          // Success! We have a settlement txHash - store it and continue
+          txHash = settleTxHash
+
+          logger.info('queue/confirm settlement completed', {
+            requestId,
+            challengeId,
+            txHash: maskTxHash(settleTxHash),
+            strategy,
+            facilitatorUsed: facilitatorSettleSuccess,
+            localUsed: localSettleSuccess
           })
-          return
         }
 
         // Store facilitator tx hash for later use

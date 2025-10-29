@@ -99,6 +99,13 @@ const serverSchema = z.object({
 
   // X402 RPC fallback configuration (allow RPC paste-tx flow when facilitator is down)
   X402_FALLBACK_TO_RPC: booleanFromString.default(false),
+
+  // X402 Settlement layer configuration (facilitator settle API + local broadcast)
+  X402_SETTLE_STRATEGY: z.enum(['facilitator', 'local', 'auto']).default('auto'),
+  FACILITATOR_SETTLE_URL: urlSchema.optional(),
+  FACILITATOR_API_KEY: z.string().optional(),
+  SETTLER_PRIVATE_KEY: z.string().regex(/^0x[a-fA-F0-9]{64}$/, 'Must be 0x followed by 64 hex chars').optional(),
+  USDC_CONTRACT_ADDRESS_BASE: hexAddressSchema.optional(),
 }).refine((data) => {
   // Stage-specific validations
   if (data.STAGE === 'alpha') {
@@ -117,6 +124,31 @@ const serverSchema = z.object({
       required.CDP_API_KEY_SECRET = data.CDP_API_KEY_SECRET
     } else if (data.X402_MODE === 'rpc-only') {
       required.X402_TOKEN_ADDRESS = data.X402_TOKEN_ADDRESS
+    }
+
+    // Settlement layer requirements (alpha stage)
+    if (data.X402_MODE === 'facilitator') {
+      // Settlement strategy validation
+      const strategy = data.X402_SETTLE_STRATEGY || 'auto'
+
+      if (strategy === 'local' || strategy === 'auto') {
+        // Local settlement requires private key
+        if (!data.SETTLER_PRIVATE_KEY) {
+          throw new Error(`Alpha stage with X402_SETTLE_STRATEGY=${strategy} requires SETTLER_PRIVATE_KEY`)
+        }
+      }
+
+      // USDC contract address required for settlement
+      if (!data.USDC_CONTRACT_ADDRESS_BASE) {
+        throw new Error('Alpha stage requires USDC_CONTRACT_ADDRESS_BASE for settlement')
+      }
+
+      // Validate USDC contract address matches mainnet (Base 8453)
+      const MAINNET_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+      if (data.USDC_CONTRACT_ADDRESS_BASE.toLowerCase() !== MAINNET_USDC.toLowerCase()) {
+        console.warn(`⚠️  [env] USDC_CONTRACT_ADDRESS_BASE mismatch. Expected Base mainnet: ${MAINNET_USDC}, got: ${data.USDC_CONTRACT_ADDRESS_BASE}`)
+        // Warning only - allow for testnet development
+      }
     }
 
     const missing = Object.entries(required)
@@ -218,5 +250,11 @@ console.log('[startup] Payment configuration:', {
   mockEnabled: serverEnv.ENABLE_MOCK_PAYMENTS,
   facilitatorUrl: serverEnv.X402_FACILITATOR_URL || 'none',
   hasCDPKeys,
-  stage: serverEnv.STAGE
+  stage: serverEnv.STAGE,
+  // Settlement layer config
+  settleStrategy: serverEnv.X402_SETTLE_STRATEGY || 'auto',
+  hasFacilitatorSettleUrl: !!serverEnv.FACILITATOR_SETTLE_URL,
+  hasFacilitatorApiKey: !!serverEnv.FACILITATOR_API_KEY,
+  hasSettlerPrivateKey: !!serverEnv.SETTLER_PRIVATE_KEY,
+  hasUsdcContract: !!serverEnv.USDC_CONTRACT_ADDRESS_BASE
 })

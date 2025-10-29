@@ -397,6 +397,174 @@ function checkEnvironment(): CheckResult[] {
     })
   }
 
+  // X402 Settlement layer configuration (alpha only)
+  if (stage === 'alpha') {
+    // Settlement strategy validation
+    const settleStrategy = process.env.X402_SETTLE_STRATEGY || 'auto'
+    try {
+      z.enum(['facilitator', 'local', 'auto']).parse(settleStrategy)
+      results.push({
+        name: 'X402_SETTLE_STRATEGY',
+        status: 'PASS',
+        message: settleStrategy
+      })
+    } catch {
+      results.push({
+        name: 'X402_SETTLE_STRATEGY',
+        status: 'FAIL',
+        message: `invalid strategy: ${settleStrategy} (must be facilitator, local, or auto)`
+      })
+    }
+
+    // Settler private key validation (required for local/auto strategies)
+    const settlerPrivateKey = process.env.SETTLER_PRIVATE_KEY
+    if (settleStrategy === 'local' || settleStrategy === 'auto') {
+      if (!settlerPrivateKey) {
+        results.push({
+          name: 'SETTLER_PRIVATE_KEY',
+          status: 'FAIL',
+          message: `required for strategy=${settleStrategy}`
+        })
+      } else {
+        // Validate format (0x + 64 hex chars)
+        if (!/^0x[a-fA-F0-9]{64}$/.test(settlerPrivateKey)) {
+          results.push({
+            name: 'SETTLER_PRIVATE_KEY',
+            status: 'FAIL',
+            message: 'invalid format (expected 0x + 64 hex chars)'
+          })
+        } else {
+          // Validate derived address is not 0x0 (requires viem)
+          try {
+            // Lazy-load viem to avoid startup penalty if not needed
+            const { privateKeyToAccount } = require('viem/accounts')
+            const account = privateKeyToAccount(settlerPrivateKey as `0x${string}`)
+            const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
+
+            if (account.address.toLowerCase() === ZERO_ADDRESS.toLowerCase()) {
+              results.push({
+                name: 'SETTLER_PRIVATE_KEY',
+                status: 'FAIL',
+                message: 'derives to zero address (invalid key)'
+              })
+            } else {
+              results.push({
+                name: 'SETTLER_PRIVATE_KEY',
+                status: 'PASS',
+                message: `${settlerPrivateKey.substring(0, 6)}...${settlerPrivateKey.substring(settlerPrivateKey.length - 4)} → ${account.address.substring(0, 10)}...`
+              })
+            }
+          } catch (err: any) {
+            results.push({
+              name: 'SETTLER_PRIVATE_KEY',
+              status: 'FAIL',
+              message: `failed to derive address: ${err?.message}`
+            })
+          }
+        }
+      }
+    } else {
+      // Strategy doesn't require private key
+      if (settlerPrivateKey) {
+        results.push({
+          name: 'SETTLER_PRIVATE_KEY',
+          status: 'WARN',
+          message: `present but not used with strategy=${settleStrategy}`
+        })
+      } else {
+        results.push({
+          name: 'SETTLER_PRIVATE_KEY',
+          status: 'SKIP',
+          message: `not required for strategy=${settleStrategy}`
+        })
+      }
+    }
+
+    // USDC contract address validation (required in alpha)
+    const usdcContract = process.env.USDC_CONTRACT_ADDRESS_BASE
+    const MAINNET_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+
+    if (!usdcContract) {
+      results.push({
+        name: 'USDC_CONTRACT_ADDRESS_BASE',
+        status: 'FAIL',
+        message: 'required in alpha for settlement'
+      })
+    } else {
+      try {
+        hexAddressSchema.parse(usdcContract)
+
+        // Check if it matches mainnet USDC
+        if (usdcContract.toLowerCase() === MAINNET_USDC.toLowerCase()) {
+          results.push({
+            name: 'USDC_CONTRACT_ADDRESS_BASE',
+            status: 'PASS',
+            message: `${usdcContract} (Base mainnet)`
+          })
+        } else {
+          results.push({
+            name: 'USDC_CONTRACT_ADDRESS_BASE',
+            status: 'WARN',
+            message: `${usdcContract} (not mainnet USDC, expected ${MAINNET_USDC})`
+          })
+        }
+      } catch {
+        results.push({
+          name: 'USDC_CONTRACT_ADDRESS_BASE',
+          status: 'FAIL',
+          message: 'invalid hex address format'
+        })
+      }
+    }
+
+    // Facilitator settle URL (optional)
+    const facilitatorSettleUrl = process.env.FACILITATOR_SETTLE_URL
+    if (facilitatorSettleUrl) {
+      try {
+        urlSchema.parse(facilitatorSettleUrl)
+        results.push({
+          name: 'FACILITATOR_SETTLE_URL',
+          status: 'PASS',
+          message: extractHost(facilitatorSettleUrl)
+        })
+      } catch {
+        results.push({
+          name: 'FACILITATOR_SETTLE_URL',
+          status: 'FAIL',
+          message: 'invalid URL format'
+        })
+      }
+    } else {
+      results.push({
+        name: 'FACILITATOR_SETTLE_URL',
+        status: 'SKIP',
+        message: 'optional (defaults to facilitator URL + /settle)'
+      })
+    }
+
+    // Facilitator API key (optional)
+    const facilitatorApiKey = process.env.FACILITATOR_API_KEY
+    if (facilitatorApiKey) {
+      results.push({
+        name: 'FACILITATOR_API_KEY',
+        status: 'PASS',
+        message: maskToken(facilitatorApiKey)
+      })
+    } else {
+      results.push({
+        name: 'FACILITATOR_API_KEY',
+        status: 'SKIP',
+        message: 'optional (for authenticated settle requests)'
+      })
+    }
+  } else {
+    results.push({
+      name: 'X402_SETTLE_* (alpha only)',
+      status: 'SKIP',
+      message: `${stage} stage`
+    })
+  }
+
   // ElevenLabs API key (required in alpha)
   const elevenApiKey = process.env.ELEVEN_API_KEY
   if (stage === 'alpha') {
