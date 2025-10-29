@@ -15,6 +15,60 @@ if (fs.existsSync(envLocal)) {
 // Fallback to .env (load only if not already set)
 dotenv.config() // default .env
 
+const bool = (v?: string) => v === 'true';
+const isAddr = (v?: string) => /^0x[a-fA-F0-9]{40}$/.test(v ?? '');
+const isHex = (v?: string, n?: number) =>
+  new RegExp(`^0x[0-9a-fA-F]{${n ?? 64}}$`).test(v ?? '');
+const requireEnv = (k: string, ok: boolean, why: string) => {
+  if (!ok) throw new Error(`ENV ${k} invalid/missing → ${why}`);
+  console.log(`${k.padEnd(32)} → ✅ PASS`);
+};
+
+// decide if x402 must be validated
+const x402Enabled =
+  bool(process.env.ENABLE_X402) || (process.env.X402_MODE ?? '').length > 0;
+
+if (x402Enabled) {
+  console.log('\nX402 Validation (payments enabled)\n==============================');
+  const chain = process.env.X402_CHAIN ?? 'base';
+  requireEnv('X402_FACILITATOR_URL',
+    !!(process.env.X402_FACILITATOR_URL && process.env.X402_FACILITATOR_URL.includes('://')),
+    'set to https://facilitator.daydreams.systems');
+
+  const strategy = process.env.X402_SETTLE_STRATEGY ?? 'auto';
+  requireEnv('X402_SETTLE_STRATEGY',
+    ['auto','local','facilitator'].includes(strategy),
+    'must be one of auto|local|facilitator');
+
+  // facilitator settle URL optional (default is FACILITATOR_URL + /settle)
+  if (['auto','facilitator'].includes(strategy)) {
+    // no hard require; just warn if missing
+    console.log('FACILITATOR_SETTLE_URL       → (optional; defaults to FACILITATOR_URL/settle)');
+  }
+
+  if (['auto','local'].includes(strategy)) {
+    requireEnv('SETTLER_PRIVATE_KEY',
+      isHex(process.env.SETTLER_PRIVATE_KEY, 66),
+      '0x + 64 hex; used for local settlement broadcast');
+  }
+
+  // mainnet USDC required if base mainnet
+  if (chain === 'base') {
+    requireEnv('USDC_CONTRACT_ADDRESS_BASE',
+      (process.env.USDC_CONTRACT_ADDRESS_BASE ?? '').toLowerCase()
+        === '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+      'must be Base USDC: 0x833589...02913');
+    console.log('BASE_MAINNET_RPC_URL         → ' + (process.env.BASE_MAINNET_RPC_URL ? '✅ PASS' : 'ℹ️ using public RPC'));
+  }
+
+  requireEnv('X402_RECEIVING_ADDRESS',
+    isAddr(process.env.X402_RECEIVING_ADDRESS),
+    'payee address (where USDC lands)');
+  requireEnv('X402_ACCEPTED_ASSET',
+    (process.env.X402_ACCEPTED_ASSET ?? '').toUpperCase() === 'USDC',
+    'must be USDC');
+}
+
 // Define colors for better readability (fallback to plain text in CI)
 const colors = {
   green: (text: string) => process.stdout.isTTY ? `\x1b[32m${text}\x1b[0m` : text,
