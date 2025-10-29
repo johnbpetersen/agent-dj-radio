@@ -1248,6 +1248,14 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
           // Step 1: Try facilitator settle (if strategy allows)
           if ((strategy === 'facilitator' || strategy === 'auto') && serverEnv.X402_FACILITATOR_URL) {
             facilitatorSettleTried = true
+            const settleStartTime = Date.now()
+
+            logger.info('settleWithFacilitator: attempt', {
+              requestId,
+              challengeId,
+              strategy,
+              facilitatorUrl: serverEnv.X402_FACILITATOR_URL
+            })
 
             try {
               settleTxHash = await settleWithFacilitator(settleAuth, {
@@ -1262,18 +1270,28 @@ async function confirmHandler(req: VercelRequest, res: VercelResponse): Promise<
                 requestId
               })
 
+              const settleDurationMs = Date.now() - settleStartTime
+
               if (settleTxHash) {
                 facilitatorSettleSuccess = true
-                logger.info('queue/confirm facilitator settle succeeded', {
+                logger.info('settleWithFacilitator: response', {
                   requestId,
                   challengeId,
-                  txHash: maskTxHash(settleTxHash)
+                  strategy,
+                  facilitatorUrl: serverEnv.X402_FACILITATOR_URL,
+                  success: true,
+                  txHashPreview: maskTxHash(settleTxHash),
+                  durationMs: settleDurationMs
                 })
               } else {
-                logger.info('queue/confirm facilitator settle returned null', {
+                logger.info('settleWithFacilitator: response', {
                   requestId,
                   challengeId,
-                  strategy
+                  strategy,
+                  facilitatorUrl: serverEnv.X402_FACILITATOR_URL,
+                  success: false,
+                  txHashPreview: 'null',
+                  durationMs: settleDurationMs
                 })
               }
             } catch (err: any) {

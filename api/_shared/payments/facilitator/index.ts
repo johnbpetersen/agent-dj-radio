@@ -187,7 +187,7 @@ export async function facilitatorVerifyAuthorization(
     logVerifySuccess({
       variant: 'payai-v1',
       verified: true,
-      txHash: undefined,
+      txHash: json?.txHash,
       durationMs
     })
 
@@ -196,7 +196,7 @@ export async function facilitatorVerifyAuthorization(
       verified: true,
       amountPaidAtomic: String(params.amountAtomic),
       tokenFrom: payer,
-      txHash: normalizedAuth.nonce,
+      txHash: json?.txHash,  // Only use txHash if Daydreams provides it (not nonce!)
       providerRaw: json
     }
   }
