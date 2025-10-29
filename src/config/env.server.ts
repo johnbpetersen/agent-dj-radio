@@ -220,6 +220,78 @@ export function extractHost(url: string): string {
 // Load and export environment configuration
 export const serverEnv = loadServerEnv()
 
+// ============================================================================
+// RUNTIME GUARD: X402 production safety check (defense-in-depth)
+// ============================================================================
+
+if (serverEnv.ENABLE_X402) {
+  const missing: string[] = []
+  const isProduction = process.env.VERCEL_ENV === 'production'
+
+  // Required fields when x402 is enabled
+  if (!serverEnv.X402_FACILITATOR_URL || !serverEnv.X402_FACILITATOR_URL.includes('://')) {
+    missing.push('X402_FACILITATOR_URL')
+  }
+
+  // Settlement strategy validation (conditional on strategy)
+  const strategy = serverEnv.X402_SETTLE_STRATEGY || 'auto'
+  const needsLocalKey = strategy === 'auto' || strategy === 'local'
+
+  if (needsLocalKey && !serverEnv.SETTLER_PRIVATE_KEY) {
+    missing.push('SETTLER_PRIVATE_KEY')
+  }
+
+  const chain = serverEnv.X402_CHAIN || 'base'
+  if (chain === 'base') {
+    const MAINNET_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+    if (!serverEnv.USDC_CONTRACT_ADDRESS_BASE) {
+      missing.push('USDC_CONTRACT_ADDRESS_BASE')
+    } else if (serverEnv.USDC_CONTRACT_ADDRESS_BASE.toLowerCase() !== MAINNET_USDC.toLowerCase()) {
+      missing.push('USDC_CONTRACT_ADDRESS_BASE (address mismatch)')
+    }
+  }
+
+  if (!serverEnv.X402_RECEIVING_ADDRESS) {
+    missing.push('X402_RECEIVING_ADDRESS')
+  }
+
+  const asset = (serverEnv.X402_ACCEPTED_ASSET || '').toUpperCase()
+  if (asset !== 'USDC') {
+    missing.push('X402_ACCEPTED_ASSET (must be USDC)')
+  }
+
+  // Handle missing config
+  if (missing.length > 0) {
+    const errorMsg = `❌ X402 payments enabled but missing required config: ${missing.join(', ')}`
+
+    if (isProduction) {
+      // HARD FAIL in production
+      console.error(errorMsg)
+      console.error('  → Set ENABLE_X402=false or provide all required env vars in Vercel')
+      throw new Error('X402 env misconfig in production')
+    } else {
+      // LOG ERROR in non-prod
+      console.error(errorMsg)
+      console.error('  → X402 may not work correctly. Run `npm run check:env` for details.')
+    }
+  } else {
+    // Success - log sanitized config (no secrets)
+    console.log('[startup] X402 runtime guard: PASS', {
+      strategy,
+      facilitatorHost: serverEnv.X402_FACILITATOR_URL ? extractHost(serverEnv.X402_FACILITATOR_URL) : 'none',
+      hasSettlerKey: !!serverEnv.SETTLER_PRIVATE_KEY,
+      chain,
+      usdc: serverEnv.USDC_CONTRACT_ADDRESS_BASE?.slice(0, 8) + '...',
+      receiving: serverEnv.X402_RECEIVING_ADDRESS?.slice(0, 8) + '...',
+      asset: serverEnv.X402_ACCEPTED_ASSET,
+    })
+  }
+}
+
+// ============================================================================
+// STAGE HELPERS & STARTUP LOG
+// ============================================================================
+
 // Stage helpers
 export const isDev = serverEnv.STAGE === 'dev'
 export const isStaging = serverEnv.STAGE === 'staging'

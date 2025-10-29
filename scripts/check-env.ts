@@ -48,8 +48,15 @@ if (x402Enabled) {
 
   if (['auto','local'].includes(strategy)) {
     requireEnv('SETTLER_PRIVATE_KEY',
-      isHex(process.env.SETTLER_PRIVATE_KEY, 66),
+      isHex(process.env.SETTLER_PRIVATE_KEY, 64),
       '0x + 64 hex; used for local settlement broadcast');
+  } else {
+    // facilitator-only strategy: key not required
+    if (process.env.SETTLER_PRIVATE_KEY) {
+      console.log('SETTLER_PRIVATE_KEY          → ⚠️  present but unused (strategy=facilitator)');
+    } else {
+      console.log('SETTLER_PRIVATE_KEY          → ⏭️  not required (strategy=facilitator)');
+    }
   }
 
   // mainnet USDC required if base mainnet
